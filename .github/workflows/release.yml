@@ -96,10 +96,10 @@ jobs:
         run: npm run tauri build -- ${{ matrix.bundle_args }}
 
       - name: Collect portable assets
-        id: assets
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p release-assets
           if [ "$RUNNER_OS" = "Windows" ]; then
             src="src-tauri/target/release/rustbox.exe"
             if [ ! -f "$src" ]; then
@@ -107,8 +107,7 @@ jobs:
               find src-tauri/target/release -maxdepth 2 -type f -print >&2 || true
               exit 1
             fi
-            cp "$src" "$RUNNER_TEMP/rustbox-windows-x64.exe"
-            echo "files=$RUNNER_TEMP/rustbox-windows-x64.exe" >> "$GITHUB_OUTPUT"
+            cp "$src" release-assets/rustbox-windows-x64.exe
           else
             mapfile -t appimages < <(find src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' | sort)
             if [ "${#appimages[@]}" -ne 1 ]; then
@@ -120,16 +119,17 @@ jobs:
               echo "Linux binary was not produced" >&2
               exit 1
             fi
-            cp "${appimages[0]}" "$RUNNER_TEMP/rustbox-linux-x64.AppImage"
-            tar -C src-tauri/target/release -czf "$RUNNER_TEMP/rustbox-linux-x64.tar.gz" rustbox
-            echo "files=$RUNNER_TEMP/rustbox-linux-x64.AppImage $RUNNER_TEMP/rustbox-linux-x64.tar.gz" >> "$GITHUB_OUTPUT"
+            cp "${appimages[0]}" release-assets/rustbox-linux-x64.AppImage
+            chmod +x release-assets/rustbox-linux-x64.AppImage
+            tar -C src-tauri/target/release -czf release-assets/rustbox-linux-x64.tar.gz rustbox
           fi
+          find release-assets -maxdepth 1 -type f -print
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rustbox-${{ runner.os }}
-          path: ${{ steps.assets.outputs.files }}
+          path: release-assets/*
           if-no-files-found: error
 
       - name: Upload release assets
@@ -139,4 +139,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release upload "${{ github.ref_name }}" ${{ steps.assets.outputs.files }} --clobber
+          gh release upload "${{ github.ref_name }}" release-assets/* --clobber
