@@ -27,8 +27,13 @@ jobs:
 
       # A tag pushed with GITHUB_TOKEN does not start the Release workflow.
       # workflow_dispatch is the exception, so start the asset build on the new tag.
+      # gh needs a checkout or an explicit repo; otherwise it tries to read .git and fails.
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.release_created == 'true'
+
       - name: Publish Windows and Linux assets
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release.yml --ref "${{ steps.release.outputs.tag_name }}"
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run release.yml --repo "${{ github.repository }}" --ref "${{ steps.release.outputs.tag_name }}"
