@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-services-visible"
+description = "Enables the set_services_visible command without any pre-configured scope."
+commands.allow = ["set_services_visible"]
+
+[[permission]]
+identifier = "deny-set-services-visible"
+description = "Denies the set_services_visible command without any pre-configured scope."
+commands.deny = ["set_services_visible"]

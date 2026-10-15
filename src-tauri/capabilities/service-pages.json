@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "service-pages",
+  "description": "Remote service pages may only forward notifications, report a badge, and open an http(s) link externally.",
+  "webviews": ["svc-*", "pop-*"],
+  "remote": {
+    "urls": [
+      "https://*",
+      "https://*/*",
+      "https://*/*/*",
+      "https://*/*/*/*",
+      "https://*/*/*/*/*",
+      "https://*/*/*/*/*/*",
+      "http://*",
+      "http://*/*",
+      "http://*/*/*",
+      "http://*/*/*/*",
+      "http://*/*/*/*/*",
+      "http://*/*/*/*/*/*"
+    ]
+  },
+  "permissions": [
+    "allow-notify-from-service",
+    "allow-set-badge",
+    "allow-open-external-link"
+  ]
+}

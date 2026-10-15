@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rustbox</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">R</span>
+          <div class="brand-text">
+            <strong>rustbox</strong>
+            <small id="version"></small>
+          </div>
+        </div>
+        <nav id="services" aria-label="Services"></nav>
+        <p id="reorder-hint" class="hint" hidden>Drag a row to reorder</p>
+        <p id="error" class="error" role="alert" hidden></p>
+        <button id="add-button" type="button">Add service</button>
+      </aside>
+      <main id="stage">
+        <section id="catalog" aria-label="Add a service"></section>
+        <form id="editor" hidden></form>
+      </main>
+    </div>
+    <div id="menu" class="menu" role="menu" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

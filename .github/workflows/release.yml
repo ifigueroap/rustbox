@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release notes
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Rustbox ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            Portable Rustbox ${{ github.ref_name }} builds. No installer.
+
+            - `rustbox-windows-x64.exe` — Windows 10/11 x64. The WebView2 runtime is required and is already present on current Windows.
+            - `rustbox-linux-x64.AppImage` — Linux x64. `chmod +x` and run it. The host needs FUSE (`libfuse2` on older distributions).
+            - `rustbox-linux-x64.tar.gz` — the raw Linux binary. It needs GTK 3 and WebKitGTK 4.1 installed.
+
+            macOS is not part of this release. See the README for WebKitGTK limitations, per-service sessions, and how external links are chosen.
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: prepare-release
+    if: ${{ !cancelled() && (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: none
+          - os: ubuntu-22.04
+            bundles: appimage
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libxdo-dev \
+            build-essential \
+            pkg-config \
+            file \
+            curl \
+            wget
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Test
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build
+        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+
+      - name: Collect portable assets
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            src="src-tauri/target/release/rustbox.exe"
+            if [ ! -f "$src" ]; then
+              echo "Windows executable was not produced" >&2
+              find src-tauri/target/release -maxdepth 2 -type f -print >&2 || true
+              exit 1
+            fi
+            cp "$src" "$RUNNER_TEMP/rustbox-windows-x64.exe"
+            echo "files=$RUNNER_TEMP/rustbox-windows-x64.exe" >> "$GITHUB_OUTPUT"
+          else
+            mapfile -t appimages < <(find src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' | sort)
+            if [ "${#appimages[@]}" -ne 1 ]; then
+              echo "expected one AppImage, found ${#appimages[@]}" >&2
+              find src-tauri/target/release/bundle -print >&2 || true
+              exit 1
+            fi
+            if [ ! -f src-tauri/target/release/rustbox ]; then
+              echo "Linux binary was not produced" >&2
+              exit 1
+            fi
+            cp "${appimages[0]}" "$RUNNER_TEMP/rustbox-linux-x64.AppImage"
+            tar -C src-tauri/target/release -czf "$RUNNER_TEMP/rustbox-linux-x64.tar.gz" rustbox
+            echo "files=$RUNNER_TEMP/rustbox-linux-x64.AppImage $RUNNER_TEMP/rustbox-linux-x64.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustbox-${{ runner.os }}
+          path: ${{ steps.assets.outputs.files }}
+          if-no-files-found: error
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${{ github.ref_name }}" ${{ steps.assets.outputs.files }} --clobber
