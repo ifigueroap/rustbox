@@ -60,13 +60,13 @@ npm run tauri icon src-tauri/app-icon.png
 
 ## Using the app
 
-The sidebar lists services. Click one to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
+The sidebar lists services by name and icon. Collapse it to an icon rail; the names stay on the tooltips, and that choice is saved in `config.json`. Click **rustbox** at the top of the sidebar to open the desk: a card for each service with its icon, unread count, and Open, Edit, and Remove actions, plus the app version. Click a service to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
 
 **Add** opens the services dialog:
 
-- Presets: WhatsApp Web, Slack, Discord, Zulip, Telegram Web, Grok, ChatGPT, and Claude. Zulip asks for your server URL, for example `https://your-org.zulipchat.com`.
-- A custom service is a name, an `http` or `https` URL, an optional icon (image URL or a short emoji), a color, and a user-agent setting.
-- Drag icons in the sidebar, or use the up and down buttons in the dialog, to reorder. Remove deletes that service's saved session.
+- Presets: WhatsApp Web, Slack, Discord, Zulip, Telegram Web, Grok, ChatGPT, and Claude. Each preset uses a brand icon bundled with the app, so the sidebar still shows it offline. Zulip asks for your server URL, for example `https://your-org.zulipchat.com`.
+- A custom service is a name, an `http` or `https` URL, an optional icon (image URL or a short emoji), a color, and a user-agent setting. With no icon of its own, Rustbox tries that site's favicon and falls back to a letter.
+- Drag icons in the sidebar to reorder. Remove deletes that service's saved session.
 
 Adding the same preset twice creates a second isolated account (`WhatsApp` and `WhatsApp 2`).
 
@@ -79,7 +79,7 @@ The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`
 | Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` |
 | Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` |
 
-`config.json` stores names, URLs, order, icons, and user-agent settings. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile.
+`config.json` stores names, URLs, order, icons, user-agent settings, and whether the sidebar is collapsed. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile.
 
 ### User agent
 

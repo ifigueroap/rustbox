@@ -13,6 +13,7 @@
     "allow-update-service",
     "allow-remove-service",
     "allow-reorder-services",
-    "allow-set-active-service"
+    "allow-set-active-service",
+    "allow-set-sidebar-collapsed"
   ]
 }

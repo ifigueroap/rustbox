@@ -4,7 +4,18 @@ use url::Url;
 /// the reduced Chrome user-agent; the rest is frozen by Chromium.
 const CHROME_VERSION: &str = "155";
 
-pub const SIDEBAR_WIDTH: f64 = 72.0;
+/// Matches `--sidebar-width` in the shell stylesheet. The border is inside the
+/// box, so the service webview starts at this many logical pixels.
+pub const SIDEBAR_COLLAPSED_WIDTH: f64 = 72.0;
+pub const SIDEBAR_EXPANDED_WIDTH: f64 = 228.0;
+
+pub fn sidebar_width(collapsed: bool) -> f64 {
+    if collapsed {
+        SIDEBAR_COLLAPSED_WIDTH
+    } else {
+        SIDEBAR_EXPANDED_WIDTH
+    }
+}
 
 /// Login hosts whose top-level navigations should stay inside the service
 /// webview so redirect and popup sign-in can finish.
@@ -197,6 +208,12 @@ mod tests {
 
     fn url(value: &str) -> Url {
         Url::parse(value).unwrap()
+    }
+
+    #[test]
+    fn sidebar_widths_match_the_shell_stylesheet() {
+        assert_eq!(sidebar_width(true), 72.0);
+        assert_eq!(sidebar_width(false), 228.0);
     }
 
     #[test]

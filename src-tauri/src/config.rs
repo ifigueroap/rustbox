@@ -124,6 +124,9 @@ pub struct Config {
     pub version: u32,
     #[serde(default)]
     pub services: Vec<Service>,
+    /// When true the sidebar is the icon rail. Names stay available as tooltips.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 impl Default for Config {
@@ -131,6 +134,7 @@ impl Default for Config {
         Self {
             version: 1,
             services: Vec::new(),
+            sidebar_collapsed: false,
         }
     }
 }
@@ -546,6 +550,12 @@ mod tests {
         let loaded = Config::load_or_default(&path);
         assert_eq!(loaded, config);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_sidebar_flag_stays_expanded() {
+        let config: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
+        assert!(!config.sidebar_collapsed);
     }
 
     #[test]
