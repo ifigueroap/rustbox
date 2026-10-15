@@ -81,6 +81,16 @@ async fn set_active_service(app: tauri::AppHandle, id: Option<String>) -> Result
 }
 
 #[tauri::command]
+fn set_sidebar_collapsed(app: tauri::AppHandle, collapsed: bool) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.sidebar_collapsed = collapsed;
+        Ok(())
+    })?;
+    services::sync_bounds(&app)?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let url = services::validate_external_url(&url)?;
     policy::open_external_detached(&url);
@@ -130,6 +140,7 @@ pub fn run() {
             remove_service,
             reorder_services,
             set_active_service,
+            set_sidebar_collapsed,
             open_external,
             forward_notification,
         ])

@@ -10,26 +10,47 @@
   <body>
     <div id="shell">
       <aside id="sidebar">
-        <div class="brand" title="Rustbox">rb</div>
-        <div id="service-list" role="listbox" aria-label="Services"></div>
-        <button
-          id="manage-button"
-          class="rail-button"
-          type="button"
-          title="Add or manage services"
-          aria-label="Add or manage services"
-        >
-          +
+        <button id="brand-button" class="brand" type="button" title="rustbox" aria-label="Show the rustbox dashboard">
+          <span class="brand-mark">rb</span>
+          <span class="brand-name">rustbox</span>
         </button>
+        <div id="service-list" role="listbox" aria-label="Services"></div>
+        <div class="rail-footer">
+          <button
+            id="collapse-button"
+            class="rail-button collapse"
+            type="button"
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <span aria-hidden="true">‹</span>
+          </button>
+          <button
+            id="manage-button"
+            class="rail-button"
+            type="button"
+            title="Add a service"
+            aria-label="Add a service"
+          >
+            +
+          </button>
+        </div>
       </aside>
       <section id="stage">
-        <div id="empty">
-          <p class="eyebrow">one window</p>
-          <h1>rustbox</h1>
-          <p class="lede">
-            WhatsApp, Slack, Discord, and the rest of your web apps, each with its own session.
-          </p>
-          <button id="empty-add" type="button">Add a service</button>
+        <div id="dashboard">
+          <header class="dash-head">
+            <div>
+              <p class="eyebrow">desk</p>
+              <h1>rustbox</h1>
+              <p class="lede">Every service in this window, with its own session.</p>
+            </div>
+            <div class="dash-tools">
+              <p id="app-version" class="version"></p>
+              <button id="dash-add" type="button">Add service</button>
+            </div>
+          </header>
+          <div id="dash-grid" class="dash-grid"></div>
+          <p id="dash-empty" class="empty-desk" hidden>No services yet. Add a preset or a custom URL.</p>
         </div>
         <p id="stage-status" hidden></p>
       </section>
@@ -40,7 +61,7 @@
         <header class="manager-head">
           <div>
             <p class="eyebrow">services</p>
-            <h2>Your desk</h2>
+            <h2>Add a service</h2>
           </div>
           <button id="manager-close" class="text-button" type="button">Close</button>
         </header>
@@ -85,11 +106,6 @@
             </label>
           </div>
           <button id="custom-add" type="button">Add custom service</button>
-        </section>
-
-        <section>
-          <h3>On this desk</h3>
-          <div id="managed-list"></div>
         </section>
 
         <footer class="paths">

@@ -9,6 +9,7 @@ fn main() {
             "remove_service",
             "reorder_services",
             "set_active_service",
+            "set_sidebar_collapsed",
             "open_external",
             "forward_notification",
         ]),

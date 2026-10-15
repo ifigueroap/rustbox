@@ -12,7 +12,7 @@ use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
 use crate::config::{Config, PRESETS, PresetInfo, Service};
-use crate::policy::{self, PopupDecision, SIDEBAR_WIDTH};
+use crate::policy::{self, PopupDecision};
 
 pub struct RuntimeState {
     pub config_path: PathBuf,
@@ -46,6 +46,8 @@ pub struct Snapshot {
     pub chrome_user_agent: String,
     pub config_path: String,
     pub sessions_dir: String,
+    pub sidebar_collapsed: bool,
+    pub app_version: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -102,6 +104,8 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         chrome_user_agent: policy::chrome_user_agent(),
         config_path: state.config_path.display().to_string(),
         sessions_dir: state.sessions_dir.display().to_string(),
+        sidebar_collapsed: config.sidebar_collapsed,
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -211,7 +215,7 @@ pub fn sync_bounds(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     };
     let window = main_window(app)?;
-    let (position, size) = content_bounds(&window)?;
+    let (position, size) = content_bounds(app, &window)?;
     #[cfg(target_os = "linux")]
     {
         let scale = window.scale_factor().map_err(|err| err.to_string())?;
@@ -331,7 +335,7 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
         return Ok(());
     }
     let window = main_window(app)?;
-    let (position, size) = content_bounds(&window)?;
+    let (position, size) = content_bounds(app, &window)?;
     let url = Url::parse(&service.url).map_err(|err| err.to_string())?;
     let popup_home = url.clone();
     let service_id = service.id.clone();
@@ -420,7 +424,7 @@ fn store_id(service_id: &str) -> [u8; 16] {
 
 fn show_webview(app: &AppHandle, id: &str) -> Result<(), String> {
     let window = main_window(app)?;
-    let (position, size) = content_bounds(&window)?;
+    let (position, size) = content_bounds(app, &window)?;
     let webview = app
         .get_webview(&label_for(id))
         .ok_or_else(|| "service webview is missing".to_string())?;
@@ -456,17 +460,17 @@ fn close_webview(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 fn content_bounds(
+    app: &AppHandle,
     window: &tauri::Window,
 ) -> Result<(LogicalPosition<f64>, LogicalSize<f64>), String> {
+    let state = app.state::<RuntimeState>();
+    let sidebar = policy::sidebar_width(lock(&state.config).sidebar_collapsed);
     let scale = window.scale_factor().map_err(|err| err.to_string())?;
     let physical = window.inner_size().map_err(|err| err.to_string())?;
     let logical: LogicalSize<f64> = physical.to_logical(scale);
     Ok((
-        LogicalPosition::new(SIDEBAR_WIDTH, 0.0),
-        LogicalSize::new(
-            (logical.width - SIDEBAR_WIDTH).max(0.0),
-            logical.height.max(0.0),
-        ),
+        LogicalPosition::new(sidebar, 0.0),
+        LogicalSize::new((logical.width - sidebar).max(0.0), logical.height.max(0.0)),
     ))
 }
 
