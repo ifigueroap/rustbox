@@ -97,12 +97,34 @@ Ordinary clicks that leave the service's site open in the system browser. Same-s
 
 ## Releases
 
-`.github/workflows/release.yml` runs on a `v*` tag and on manual `workflow_dispatch`. It builds:
+Versions follow [Conventional Commits](https://www.conventionalcommits.org/). `.github/workflows/pull-request.yml` checks the pull request title. Squash-merge so that title becomes the commit on `master`. [Release Please](https://github.com/googleapis/release-please) reads that message.
+
+| Pull request title | Next version |
+| --- | --- |
+| `fix: ...` | patch (`0.1.1` → `0.1.2`) |
+| `feat: ...` | minor (`0.1.1` → `0.2.0`) |
+| `feat!: ...`, `fix!: ...`, or a `BREAKING CHANGE:` footer | major (`0.1.1` → `1.0.0`) |
+| `chore:`, `ci:`, `docs:`, `style:`, `refactor:`, `perf:`, `test:`, `build:`, `revert:` | no release |
+
+A scope is optional (`fix(sidebar): ...`). This mapping is the default Release Please strategy, including before 1.0.0: a breaking change on `0.1.x` releases `1.0.0`.
+
+On every push to `master`, `.github/workflows/release-please.yml` runs Release Please. After a releasable commit, it opens a release pull request that bumps `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the `rustbox` entry in `src-tauri/Cargo.lock`, and writes `CHANGELOG.md`. Merging that pull request creates the tag `vX.Y.Z` and a GitHub Release whose notes are the changelog. The same workflow then starts `.github/workflows/release.yml` on that tag.
+
+`release.yml` also runs when a `v*` tag is pushed and on manual `workflow_dispatch`. It builds:
 
 - `rustbox-windows-x64.exe` on `windows-latest`
 - `rustbox-linux-x64.AppImage` and `rustbox-linux-x64.tar.gz` on `ubuntu-22.04`
 
-and publishes them to a GitHub Release. The tag must match `version` in `src-tauri/tauri.conf.json` (`v0.1.0` for version `0.1.0`).
+and uploads them to the GitHub Release. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets.
+
+The Cargo version lines Release Please rewrites are marked with `x-release-please-version`. Keep that comment on the package version in `src-tauri/Cargo.toml` and on the `rustbox` version in `src-tauri/Cargo.lock`. `cargo update` rewrites the lockfile and drops the comment; put it back on the `rustbox` version line before merging. `node scripts/check-release-versions.mjs` checks that the versions match and that both markers are present.
+
+Release Please uses the workflow `GITHUB_TOKEN`. No extra secret is required. In the repository Actions settings:
+
+- Workflow permissions must allow Actions to read and write repository contents. The workflows request `contents: write` themselves.
+- **Allow GitHub Actions to create and approve pull requests** must be enabled, or Release Please cannot open the release pull request.
+
+A tag created with `GITHUB_TOKEN` does not start `release.yml` on its own. Release Please dispatches it with `workflow_dispatch` on the new tag, which `GITHUB_TOKEN` is allowed to do. A tag you push yourself still starts `release.yml` directly. If GitHub holds checks on a pull request that Actions opened, approve that workflow run so the release pull request can merge.
 
 ## Known limitations
 

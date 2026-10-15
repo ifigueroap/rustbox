@@ -133,6 +133,21 @@ jobs:
             echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect existing release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if body=$(gh release view "${{ steps.tag.outputs.name }}" --json body --jq '.body' 2>/dev/null); then
+            if [ -n "${body//[$' \t\r\n']/}" ]; then
+              echo "has_notes=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "has_notes=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -141,7 +156,25 @@ jobs:
       - name: List assets
         run: ls -la artifacts
 
+      # Release Please writes the changelog into the GitHub Release before this
+      # job runs. Leave those notes in place and only upload the build assets.
       - uses: softprops/action-gh-release@v2
+        if: steps.notes.outputs.has_notes == 'true'
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Rustbox ${{ steps.tag.outputs.name }}
+          draft: false
+          prerelease: false
+          overwrite_files: true
+          files: |
+            artifacts/rustbox-windows-x64.exe
+            artifacts/rustbox-linux-x64.AppImage
+            artifacts/rustbox-linux-x64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: softprops/action-gh-release@v2
+        if: steps.notes.outputs.has_notes != 'true'
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: Rustbox ${{ steps.tag.outputs.name }}
