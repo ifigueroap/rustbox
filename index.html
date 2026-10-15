@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rustbox</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div id="shell">
+      <aside id="sidebar">
+        <div class="brand" title="Rustbox">rb</div>
+        <div id="service-list" role="listbox" aria-label="Services"></div>
+        <button
+          id="manage-button"
+          class="rail-button"
+          type="button"
+          title="Add or manage services"
+          aria-label="Add or manage services"
+        >
+          +
+        </button>
+      </aside>
+      <section id="stage">
+        <div id="empty">
+          <p class="eyebrow">one window</p>
+          <h1>rustbox</h1>
+          <p class="lede">
+            WhatsApp, Slack, Discord, and the rest of your web apps, each with its own session.
+          </p>
+          <button id="empty-add" type="button">Add a service</button>
+        </div>
+        <p id="stage-status" hidden></p>
+      </section>
+    </div>
+
+    <dialog id="manager">
+      <div class="manager-card">
+        <header class="manager-head">
+          <div>
+            <p class="eyebrow">services</p>
+            <h2>Your desk</h2>
+          </div>
+          <button id="manager-close" class="text-button" type="button">Close</button>
+        </header>
+        <p id="manager-error" class="error" hidden></p>
+
+        <section>
+          <h3>Presets</h3>
+          <div id="preset-list" class="preset-grid"></div>
+          <div id="server-url-row" class="server-row" hidden>
+            <label id="server-url-label" for="server-url">Server URL</label>
+            <input id="server-url" type="text" autocomplete="off" spellcheck="false" />
+            <button id="server-url-add" type="button">Add</button>
+          </div>
+        </section>
+
+        <section>
+          <h3>Custom service</h3>
+          <div class="custom-grid">
+            <label>
+              Name
+              <input id="custom-name" type="text" maxlength="80" />
+            </label>
+            <label>
+              URL
+              <input id="custom-url" type="text" placeholder="https://example.com" spellcheck="false" />
+            </label>
+            <label>
+              Icon URL or emoji
+              <input id="custom-icon" type="text" placeholder="optional" />
+            </label>
+            <label>
+              Color
+              <input id="custom-color" type="color" value="#8d8478" />
+            </label>
+            <label class="check">
+              <input id="custom-chrome" type="checkbox" checked />
+              Use a Chrome user agent
+            </label>
+            <label class="wide">
+              Custom user agent
+              <input id="custom-ua" type="text" spellcheck="false" placeholder="Leave blank for the built-in Chrome string" />
+            </label>
+          </div>
+          <button id="custom-add" type="button">Add custom service</button>
+        </section>
+
+        <section>
+          <h3>On this desk</h3>
+          <div id="managed-list"></div>
+        </section>
+
+        <footer class="paths">
+          <p id="config-path"></p>
+          <p id="sessions-path"></p>
+          <p id="ua-hint"></p>
+        </footer>
+      </div>
+    </dialog>
+  </body>
+</html>

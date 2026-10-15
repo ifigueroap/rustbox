@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Check tag matches the app version
+        run: |
+          node -e 'const fs=require("fs"); const version=JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json","utf8")).version; if (process.env.GITHUB_REF_TYPE==="tag" && process.env.GITHUB_REF_NAME!=="v"+version) { console.error("Tag "+process.env.GITHUB_REF_NAME+" does not match app version "+version); process.exit(1); }'
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2 \
+            file \
+            build-essential \
+            libssl-dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build Windows portable executable
+        if: matrix.platform == 'windows-latest'
+        run: npm run tauri build -- --target ${{ matrix.target }} --no-bundle
+
+      - name: Build Linux AppImage and binary
+        if: matrix.platform == 'ubuntu-22.04'
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles appimage
+
+      - name: Package Windows asset
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cp "src-tauri/target/${{ matrix.target }}/release/rustbox.exe" rustbox-windows-x64.exe
+
+      - name: Package Linux assets
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          set -euo pipefail
+          BIN="src-tauri/target/${{ matrix.target }}/release/rustbox"
+          test -x "$BIN"
+          chmod +x "$BIN"
+          tar -C "src-tauri/target/${{ matrix.target }}/release" -czf rustbox-linux-x64.tar.gz rustbox
+          APPIMAGE=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/appimage" -type f -name '*.AppImage' | head -n 1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "AppImage was not produced"
+            find src-tauri/target -type f | head -n 100
+            exit 1
+          fi
+          cp "$APPIMAGE" rustbox-linux-x64.AppImage
+          chmod +x rustbox-linux-x64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'windows-latest'
+        with:
+          name: rustbox-windows-x64
+          path: rustbox-windows-x64.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'ubuntu-22.04'
+        with:
+          name: rustbox-linux-x64
+          path: |
+            rustbox-linux-x64.AppImage
+            rustbox-linux-x64.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json","utf8")).version)')
+            echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -la artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Rustbox ${{ steps.tag.outputs.name }}
+          draft: false
+          prerelease: false
+          overwrite_files: true
+          files: |
+            artifacts/rustbox-windows-x64.exe
+            artifacts/rustbox-linux-x64.AppImage
+            artifacts/rustbox-linux-x64.tar.gz
+          body: |
+            Portable Rustbox ${{ steps.tag.outputs.name }} builds.
+
+            ### Windows
+            Download `rustbox-windows-x64.exe` and run it. No installer. The machine needs the WebView2 runtime, which is already present on Windows 11 and current Windows 10.
+
+            ### Linux
+            - `rustbox-linux-x64.AppImage` — `chmod +x rustbox-linux-x64.AppImage` and run it.
+            - `rustbox-linux-x64.tar.gz` — contains the `rustbox` binary.
+
+            Both Linux artifacts need WebKitGTK 4.1 installed (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit.
+
+            macOS is not part of this release.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
