@@ -11,7 +11,10 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUr
 use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
-use crate::config::{Config, PRESETS, PresetInfo, Service};
+use crate::config::{
+    Config, PRESETS, PresetInfo, Service, import_legacy_sessions, legacy_config_path,
+    legacy_data_dir,
+};
 use crate::policy::{self, PopupDecision};
 
 pub struct RuntimeState {
@@ -65,7 +68,14 @@ impl RuntimeState {
         let sessions_dir = data_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).map_err(|err| err.to_string())?;
         let config_path = config_dir.join("config.json");
-        let config = Config::load_or_default(&config_path);
+        let legacy_config = legacy_config_path(&config_dir);
+        let (config, imported_legacy) = Config::load_adopting_legacy(&config_path, &legacy_config);
+        if imported_legacy {
+            let legacy_data = legacy_data_dir(&data_dir);
+            if let Err(err) = import_legacy_sessions(&legacy_data, &sessions_dir) {
+                eprintln!("rustbox: could not import previous sessions: {err}");
+            }
+        }
         Ok(Self {
             config_path,
             sessions_dir,
