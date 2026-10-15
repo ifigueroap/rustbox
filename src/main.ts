@@ -59,7 +59,9 @@ const BRAND_ICONS: Record<string, string> = {
   claude: "/brands/claude.svg",
 };
 
-const GLYPH_BRANDS = new Set(["chatgpt", "claude"]);
+// ChatGPT's mark is white, so it sits on the brand plate. Claude's mark is the
+// terracotta asterisk; a white glyph on the default grey plate looks washed out.
+const GLYPH_BRANDS = new Set(["chatgpt"]);
 const DEFAULT_SERVICE_COLOR = "#8d8478";
 
 let services: Service[] = [];
