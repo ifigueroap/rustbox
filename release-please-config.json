@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "a4940755489230b08f33c0e61c47542f87d8fbc9",
+  "last-release-sha": "a4940755489230b08f33c0e61c47542f87d8fbc9",
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false,
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "src-tauri/tauri.conf.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "generic",
+          "path": "src-tauri/Cargo.toml"
+        },
+        {
+          "type": "generic",
+          "path": "src-tauri/Cargo.lock"
+        }
+      ]
+    }
+  }
+}

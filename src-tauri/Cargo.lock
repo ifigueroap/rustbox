@@ -2858,7 +2858,7 @@ dependencies = [
 
 [[package]]
 name = "rustbox"
-version = "0.1.1"
+version = "0.1.1" # x-release-please-version
 dependencies = [
  "gtk",
  "open",
