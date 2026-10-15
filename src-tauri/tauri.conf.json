@@ -31,7 +31,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "category": "Network",
+    "category": "SocialNetworking",
     "shortDescription": "Host multiple web apps in one window",
     "longDescription": "Rustbox keeps each web service in its own persistent session, with a sidebar to switch between them.",
     "icon": [

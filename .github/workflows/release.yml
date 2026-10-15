@@ -45,9 +45,9 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            bundles: none
+            bundle_args: --no-bundle
           - os: ubuntu-22.04
-            bundles: appimage
+            bundle_args: --bundles appimage
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
         run: cargo test
 
       - name: Build
-        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+        run: npm run tauri build -- ${{ matrix.bundle_args }}
 
       - name: Collect portable assets
         id: assets

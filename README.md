@@ -73,10 +73,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build
 ```
 
-On Linux this also tries to produce the configured bundles (AppImage, and deb/rpm when the extra tools exist). The application binary itself is `src-tauri/target/release/rustbox` (or `rustbox.exe` on Windows). A portable Windows exe without an installer is that `rustbox.exe`; pass `--bundles none` to skip NSIS/MSI:
+On Linux this also tries to produce the configured bundles (AppImage, and deb/rpm when the extra tools exist). The application binary itself is `src-tauri/target/release/rustbox` (or `rustbox.exe` on Windows). A portable Windows exe without an installer is that `rustbox.exe`; pass `--no-bundle` to skip NSIS/MSI:
 
 ```sh
-npm run tauri build -- --bundles none
+npm run tauri build -- --no-bundle
 ```
 
 Linux AppImage only:
