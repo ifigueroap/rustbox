@@ -199,4 +199,103 @@
   } catch (_error) {
     /* Permission queries are optional. */
   }
+
+  const mediaTouched = new WeakMap();
+  const contexts = new Set();
+  let soundOn = true;
+
+  function muteElement(element) {
+    if (!mediaTouched.has(element)) mediaTouched.set(element, element.muted);
+    element.muted = true;
+  }
+
+  function unmuteElement(element) {
+    if (!mediaTouched.has(element)) return;
+    element.muted = mediaTouched.get(element);
+    mediaTouched.delete(element);
+  }
+
+  function eachMedia(root, visit) {
+    if (!root) return;
+    if (root.nodeType === 1 && root.matches && root.matches("audio, video")) visit(root);
+    if (root.querySelectorAll) root.querySelectorAll("audio, video").forEach(visit);
+  }
+
+  function applySound(enabled) {
+    soundOn = !!enabled;
+    eachMedia(document, soundOn ? unmuteElement : muteElement);
+    contexts.forEach((ctx) => {
+      if (!ctx || ctx.state === "closed") return;
+      if (soundOn) {
+        if (ctx.__rustboxSuspended) {
+          ctx.__rustboxSuspended = false;
+          ctx.resume();
+        }
+      } else if (ctx.state === "running") {
+        ctx.__rustboxSuspended = true;
+        ctx.suspend();
+      }
+    });
+  }
+
+  window.__rustboxSetSound = applySound;
+
+  function watchMedia(root) {
+    if (!root || typeof MutationObserver !== "function") return;
+    const observer = new MutationObserver((records) => {
+      if (soundOn) return;
+      records.forEach((record) => {
+        record.addedNodes.forEach((node) => eachMedia(node, muteElement));
+      });
+    });
+    observer.observe(root, { childList: true, subtree: true });
+  }
+
+  if (document.documentElement) watchMedia(document.documentElement);
+  else document.addEventListener("DOMContentLoaded", () => watchMedia(document.documentElement));
+
+  if (window.HTMLMediaElement && window.HTMLMediaElement.prototype) {
+    const play = window.HTMLMediaElement.prototype.play;
+    window.HTMLMediaElement.prototype.play = function rustboxPlay() {
+      if (!soundOn) muteElement(this);
+      return play.apply(this, arguments);
+    };
+  }
+
+  if (typeof window.Audio === "function") {
+    const NativeAudio = window.Audio;
+    window.Audio = function RustboxAudio() {
+      const element = new NativeAudio(...arguments);
+      if (!soundOn) muteElement(element);
+      return element;
+    };
+  }
+
+  function wrapContext(name) {
+    const Native = window[name];
+    if (typeof Native !== "function" || Native.__rustbox) return;
+    function Wrapped() {
+      const ctx = new Native(...arguments);
+      contexts.add(ctx);
+      const resume = ctx.resume.bind(ctx);
+      ctx.resume = function rustboxResume() {
+        if (!soundOn) {
+          ctx.__rustboxSuspended = true;
+          return Promise.resolve();
+        }
+        return resume.apply(ctx, arguments);
+      };
+      if (!soundOn && ctx.state !== "closed") {
+        ctx.__rustboxSuspended = true;
+        ctx.suspend();
+      }
+      return ctx;
+    }
+    Wrapped.prototype = Native.prototype;
+    Wrapped.__rustbox = true;
+    window[name] = Wrapped;
+  }
+
+  wrapContext("AudioContext");
+  wrapContext("webkitAudioContext");
 })();

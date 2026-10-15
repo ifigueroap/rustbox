@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use gtk::prelude::*;
 use tauri::{LogicalPosition, LogicalSize, Webview};
+use webkit2gtk::WebViewExt;
 
 struct Host {
     fixed: gtk::Fixed,
@@ -80,6 +81,7 @@ pub fn place(
     webview: &Webview,
     position: LogicalPosition<f64>,
     size: LogicalSize<f64>,
+    muted: bool,
 ) -> Result<(), String> {
     let label = webview.label().to_string();
     let x = px(position.x);
@@ -89,6 +91,7 @@ pub fn place(
     webview
         .with_webview(move |platform| {
             let view = platform.inner();
+            view.set_is_muted(muted);
             HOST.with(|slot| {
                 let mut host_slot = slot.borrow_mut();
                 let Some(host) = host_slot.as_mut() else {
@@ -123,6 +126,23 @@ pub fn sync(shell: LogicalSize<f64>, position: LogicalPosition<f64>, size: Logic
             widget.set_size_request(width, height);
         }
     });
+}
+
+pub fn set_muted(label: &str, muted: bool) -> bool {
+    HOST.with(|slot| {
+        let host_slot = slot.borrow();
+        let Some(host) = host_slot.as_ref() else {
+            return false;
+        };
+        let Some(widget) = host.services.get(label) else {
+            return false;
+        };
+        let Ok(view) = widget.clone().downcast::<webkit2gtk::WebView>() else {
+            return false;
+        };
+        view.set_is_muted(muted);
+        true
+    })
 }
 
 fn attach(fixed: &gtk::Fixed, view: &webkit2gtk::WebView, x: i32, y: i32, width: i32, height: i32) {

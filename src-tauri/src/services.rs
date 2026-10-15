@@ -12,8 +12,8 @@ use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
 use crate::config::{
-    Config, PRESETS, PresetInfo, Service, import_legacy_sessions, legacy_config_path,
-    legacy_data_dir,
+    Config, PRESETS, PresetInfo, Service, import_legacy_sessions, legacy_config_candidates,
+    legacy_session_roots,
 };
 use crate::policy::{self, PopupDecision};
 
@@ -38,6 +38,8 @@ pub struct ServiceDto {
     pub user_agent: Option<String>,
     pub use_chrome_user_agent: bool,
     pub preset: Option<String>,
+    pub sound_enabled: bool,
+    pub notifications_enabled: bool,
     pub unread: u32,
 }
 
@@ -50,6 +52,7 @@ pub struct Snapshot {
     pub config_path: String,
     pub sessions_dir: String,
     pub sidebar_collapsed: bool,
+    pub do_not_disturb: bool,
     pub app_version: String,
 }
 
@@ -68,12 +71,20 @@ impl RuntimeState {
         let sessions_dir = data_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).map_err(|err| err.to_string())?;
         let config_path = config_dir.join("config.json");
-        let legacy_config = legacy_config_path(&config_dir);
-        let (config, imported_legacy) = Config::load_adopting_legacy(&config_path, &legacy_config);
+        let local_data_dir = app
+            .path()
+            .app_local_data_dir()
+            .unwrap_or_else(|_| data_dir.clone());
+        let candidates = legacy_config_candidates(&config_dir, &data_dir, &local_data_dir);
+        let (config, imported_legacy) = Config::load_adopting_legacy(&config_path, &candidates);
         if imported_legacy {
-            let legacy_data = legacy_data_dir(&data_dir);
-            if let Err(err) = import_legacy_sessions(&legacy_data, &sessions_dir) {
-                eprintln!("rustbox: could not import previous sessions: {err}");
+            for root in legacy_session_roots(&config_dir, &data_dir, &local_data_dir) {
+                if let Err(err) = import_legacy_sessions(&root, &sessions_dir) {
+                    eprintln!(
+                        "rustbox: could not import previous sessions from {}: {err}",
+                        root.display()
+                    );
+                }
             }
         }
         Ok(Self {
@@ -96,16 +107,23 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
     let services = config
         .services
         .iter()
-        .map(|service| ServiceDto {
-            id: service.id.clone(),
-            name: service.name.clone(),
-            url: service.url.clone(),
-            icon: service.icon.clone(),
-            color: service.color.clone(),
-            user_agent: service.user_agent.clone(),
-            use_chrome_user_agent: service.use_chrome_user_agent,
-            preset: service.preset.clone(),
-            unread: unread.get(&service.id).copied().unwrap_or(0),
+        .map(|service| {
+            let count = unread.get(&service.id).copied().unwrap_or(0);
+            let shown =
+                policy::notifications_shown(config.do_not_disturb, service.notifications_enabled);
+            ServiceDto {
+                id: service.id.clone(),
+                name: service.name.clone(),
+                url: service.url.clone(),
+                icon: service.icon.clone(),
+                color: service.color.clone(),
+                user_agent: service.user_agent.clone(),
+                use_chrome_user_agent: service.use_chrome_user_agent,
+                preset: service.preset.clone(),
+                sound_enabled: service.sound_enabled,
+                notifications_enabled: service.notifications_enabled,
+                unread: if shown { count } else { 0 },
+            }
         })
         .collect();
     Snapshot {
@@ -115,6 +133,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         config_path: state.config_path.display().to_string(),
         sessions_dir: state.sessions_dir.display().to_string(),
         sidebar_collapsed: config.sidebar_collapsed,
+        do_not_disturb: config.do_not_disturb,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
@@ -243,7 +262,8 @@ pub fn sync_bounds(app: &AppHandle) -> Result<(), String> {
             .collect();
         for id in ids {
             if let Some(webview) = app.get_webview(&label_for(&id)) {
-                let _ = place_webview(&webview, position, size);
+                let muted = service_sound_muted(app, &id);
+                let _ = place_webview(&webview, position, size, muted);
             }
         }
         Ok(())
@@ -263,11 +283,16 @@ pub fn note_title(app: &AppHandle, service_id: &str, title: &str) {
         }
     };
     if changed {
+        let visible = if notifications_visible(&state, service_id) {
+            count
+        } else {
+            0
+        };
         let _ = app.emit(
             "unread-count",
             UnreadEvent {
                 service_id: service_id.to_string(),
-                count,
+                count: visible,
             },
         );
     }
@@ -292,6 +317,9 @@ pub fn forward_notification(
             .map(|service| service.name.clone())
             .unwrap_or_else(|| "Rustbox".to_string())
     };
+    if !notifications_visible(&state, service_id) {
+        return Ok(());
+    }
     if !allow_notification(&state, service_id) {
         return Ok(());
     }
@@ -325,6 +353,65 @@ pub fn refresh_title_if_active(app: &AppHandle, id: &str) {
     }
 }
 
+fn notifications_visible(state: &RuntimeState, service_id: &str) -> bool {
+    let config = lock(&state.config);
+    let enabled = config
+        .services
+        .iter()
+        .find(|service| service.id == service_id)
+        .map(|service| service.notifications_enabled)
+        .unwrap_or(true);
+    policy::notifications_shown(config.do_not_disturb, enabled)
+}
+
+fn service_sound_muted(app: &AppHandle, id: &str) -> bool {
+    let state = app.state::<RuntimeState>();
+    let config = lock(&state.config);
+    let enabled = config
+        .services
+        .iter()
+        .find(|service| service.id == id)
+        .map(|service| service.sound_enabled)
+        .unwrap_or(true);
+    policy::sound_muted(config.do_not_disturb, enabled)
+}
+
+pub fn apply_sound_policy(app: &AppHandle) {
+    let ids: Vec<String> = {
+        let state = app.state::<RuntimeState>();
+        lock(&state.config)
+            .services
+            .iter()
+            .map(|service| service.id.clone())
+            .collect()
+    };
+    for id in ids {
+        let muted = service_sound_muted(app, &id);
+        if let Some(webview) = app.get_webview(&label_for(&id)) {
+            apply_webview_sound(&webview, muted);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_host::set_muted(&label_for(&id), muted);
+        }
+    }
+}
+
+fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
+    let enabled = if muted { "false" } else { "true" };
+    if let Err(err) = webview.eval(format!("window.__rustboxSetSound?.({enabled});")) {
+        eprintln!("rustbox: could not update service sound: {err}");
+    }
+}
+
+fn initialization_script(muted: bool) -> String {
+    let enabled = if muted { "false" } else { "true" };
+    format!(
+        "{}\nwindow.__rustboxSetSound({enabled});",
+        include_str!("inject.js")
+    )
+}
+
 fn allow_notification(state: &RuntimeState, service_id: &str) -> bool {
     const WINDOW: Duration = Duration::from_secs(20);
     const MAX_NOTIFICATIONS: usize = 6;
@@ -351,8 +438,9 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
     let service_id = service.id.clone();
     let title_app = app.clone();
 
+    let muted = service_sound_muted(app, &service.id);
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
-        .initialization_script(include_str!("inject.js"))
+        .initialization_script(initialization_script(muted))
         .on_navigation(|target| policy::allow_main_navigation(target))
         .on_new_window(move |target, _features| {
             match policy::popup_decision(&popup_home, &target) {
@@ -386,6 +474,7 @@ fn place_webview(
     webview: &tauri::Webview,
     position: LogicalPosition<f64>,
     size: LogicalSize<f64>,
+    muted: bool,
 ) -> Result<(), String> {
     // Linux child webviews are packed into the window's vertical GtkBox, which
     // ignores coordinates and splits the window. Place them on our GtkFixed.
@@ -393,10 +482,11 @@ fn place_webview(
     // current frame back, and on a brand-new webview that frame is still 0×0.
     #[cfg(target_os = "linux")]
     {
-        return crate::linux_host::place(webview, position, size);
+        return crate::linux_host::place(webview, position, size, muted);
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = muted;
         webview
             .set_bounds(Rect {
                 position: position.into(),
@@ -438,7 +528,9 @@ fn show_webview(app: &AppHandle, id: &str) -> Result<(), String> {
     let webview = app
         .get_webview(&label_for(id))
         .ok_or_else(|| "service webview is missing".to_string())?;
-    place_webview(&webview, position, size)?;
+    let muted = service_sound_muted(app, id);
+    place_webview(&webview, position, size, muted)?;
+    apply_webview_sound(&webview, muted);
     webview.show().map_err(|err| err.to_string())?;
     let _ = webview.set_focus();
     Ok(())

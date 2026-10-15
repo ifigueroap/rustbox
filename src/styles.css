@@ -140,6 +140,11 @@ button {
   padding: 10px 0 12px;
 }
 
+#shell.sidebar-collapsed #service-list {
+  align-items: center;
+  width: 100%;
+}
+
 #shell.sidebar-collapsed .brand,
 #shell.sidebar-collapsed .svc {
   width: 56px;
@@ -185,6 +190,7 @@ button:focus-visible {
 }
 
 .avatar {
+  position: relative;
   width: 36px;
   height: 36px;
   flex: none;
@@ -193,6 +199,22 @@ button:focus-visible {
   place-items: center;
   font-weight: 700;
   overflow: hidden;
+}
+
+.avatar.sound-off::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--sidebar);
+}
+
+.card .avatar.sound-off::after {
+  box-shadow: 0 0 0 2px var(--panel);
 }
 
 .avatar.glyph {
@@ -223,6 +245,51 @@ button:focus-visible {
   font-size: 10px;
   line-height: 12px;
   font-weight: 700;
+}
+
+.dnd-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.dnd-button .dnd-icon {
+  flex: none;
+}
+
+.dnd-button.is-on {
+  background: var(--copper);
+  color: #1c140c;
+  border-color: var(--copper);
+  font-weight: 650;
+}
+
+.dnd-button.is-on .dnd-icon {
+  position: relative;
+}
+
+#shell.sidebar-collapsed .dnd-button {
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  justify-content: center;
+}
+
+#shell.sidebar-collapsed .dnd-label {
+  display: none;
+}
+
+#shell.sidebar-collapsed .dnd-button.is-on {
+  box-shadow: inset 0 0 0 2px #1c140c;
 }
 
 .rail-footer {
@@ -622,4 +689,58 @@ input[type="color"] {
 .empty-desk {
   color: var(--muted);
   margin: 0;
+}
+
+.service-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 220px;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+.service-menu[hidden] {
+  display: none;
+}
+
+.service-menu p {
+  margin: 0;
+  padding: 4px 8px 2px;
+  font-size: 13px;
+}
+
+#service-menu-title {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.service-menu button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+}
+
+.service-menu button[aria-checked="true"]::before {
+  content: "✓ ";
+  color: var(--copper);
+}
+
+.service-menu button[aria-checked="false"] {
+  color: var(--muted);
+}
+
+.service-menu button:hover {
+  background: #2a261f;
+}
+
+.menu-note {
+  color: var(--copper);
+  line-height: 1.4;
 }

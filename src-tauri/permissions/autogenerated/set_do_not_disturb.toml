@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-do-not-disturb"
+description = "Enables the set_do_not_disturb command without any pre-configured scope."
+commands.allow = ["set_do_not_disturb"]
+
+[[permission]]
+identifier = "deny-set-do-not-disturb"
+description = "Denies the set_do_not_disturb command without any pre-configured scope."
+commands.deny = ["set_do_not_disturb"]

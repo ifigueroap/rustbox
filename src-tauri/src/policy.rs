@@ -17,6 +17,17 @@ pub fn sidebar_width(collapsed: bool) -> f64 {
     }
 }
 
+/// Page audio is muted when the service itself is muted or Do not disturb is on.
+pub fn sound_muted(do_not_disturb: bool, sound_enabled: bool) -> bool {
+    do_not_disturb || !sound_enabled
+}
+
+/// Badges and desktop notifications show only when the service allows them
+/// and Do not disturb is off.
+pub fn notifications_shown(do_not_disturb: bool, notifications_enabled: bool) -> bool {
+    !do_not_disturb && notifications_enabled
+}
+
 /// Login hosts whose top-level navigations should stay inside the service
 /// webview so redirect and popup sign-in can finish.
 pub const AUTH_SUFFIXES: &[&str] = &[
@@ -239,6 +250,18 @@ mod tests {
     }
 
     #[test]
+    fn do_not_disturb_overrides_per_service_sound_and_badges() {
+        assert!(!sound_muted(false, true));
+        assert!(sound_muted(false, false));
+        assert!(sound_muted(true, true));
+        assert!(sound_muted(true, false));
+        assert!(notifications_shown(false, true));
+        assert!(!notifications_shown(false, false));
+        assert!(!notifications_shown(true, true));
+        assert!(!notifications_shown(true, false));
+    }
+
+    #[test]
     fn unread_counts_follow_common_title_badges() {
         assert_eq!(parse_unread_count("(3) WhatsApp"), 3);
         assert_eq!(parse_unread_count("WhatsApp"), 0);
@@ -320,5 +343,9 @@ mod tests {
                 "inject.js is missing public suffix {suffix}"
             );
         }
+        assert!(
+            script.contains("window.__rustboxSetSound"),
+            "inject.js must expose the sound switch"
+        );
     }
 }

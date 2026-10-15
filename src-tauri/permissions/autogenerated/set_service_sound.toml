@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-service-sound"
+description = "Enables the set_service_sound command without any pre-configured scope."
+commands.allow = ["set_service_sound"]
+
+[[permission]]
+identifier = "deny-set-service-sound"
+description = "Denies the set_service_sound command without any pre-configured scope."
+commands.deny = ["set_service_sound"]
