@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use url::Url;
 
 use crate::policy::effective_user_agent;
@@ -197,29 +197,59 @@ impl From<&Preset> for PresetInfo {
 
 impl Config {
     pub fn load_or_default(path: &Path) -> Self {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Self::default(),
-            Err(err) => {
+        match read_config(path) {
+            ConfigRead::Missing => Self::default(),
+            ConfigRead::Loaded(config) => config,
+            ConfigRead::Unreadable(err) => {
                 eprintln!("rustbox: could not read {}: {err}", path.display());
-                return Self::default();
-            }
-        };
-        match serde_json::from_str::<Self>(&text) {
-            Ok(config) if config.version == 1 => config,
-            Ok(config) => {
-                eprintln!(
-                    "rustbox: unsupported config version {} at {}",
-                    config.version,
-                    path.display()
-                );
-                move_aside(path);
                 Self::default()
             }
-            Err(err) => {
+            ConfigRead::Invalid(err) => {
                 eprintln!("rustbox: invalid config at {}: {err}", path.display());
                 move_aside(path);
                 Self::default()
+            }
+        }
+    }
+
+    /// Use `current` when that file exists, even if it lists no services.
+    /// Otherwise copy a readable config from the previous bundle id into
+    /// `current` and return it. The legacy file is not renamed or deleted.
+    pub fn load_adopting_legacy(current: &Path, legacy: &Path) -> (Self, bool) {
+        if current.is_file() {
+            return (Self::load_or_default(current), false);
+        }
+        match read_config(legacy) {
+            ConfigRead::Loaded(config) => {
+                if let Err(err) = config.save(current) {
+                    eprintln!(
+                        "rustbox: imported config from {} but could not write {}: {err}",
+                        legacy.display(),
+                        current.display()
+                    );
+                } else {
+                    eprintln!(
+                        "rustbox: imported {} service(s) from {}",
+                        config.services.len(),
+                        legacy.display()
+                    );
+                }
+                (config, true)
+            }
+            ConfigRead::Missing => (Self::default(), false),
+            ConfigRead::Unreadable(err) => {
+                eprintln!(
+                    "rustbox: leaving {} in place; could not read it ({err})",
+                    legacy.display()
+                );
+                (Self::default(), false)
+            }
+            ConfigRead::Invalid(err) => {
+                eprintln!(
+                    "rustbox: leaving {} in place; could not parse it ({err})",
+                    legacy.display()
+                );
+                (Self::default(), false)
             }
         }
     }
@@ -433,6 +463,26 @@ fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+enum ConfigRead {
+    Missing,
+    Loaded(Config),
+    Unreadable(std::io::Error),
+    Invalid(String),
+}
+
+fn read_config(path: &Path) -> ConfigRead {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return ConfigRead::Missing,
+        Err(err) => return ConfigRead::Unreadable(err),
+    };
+    match serde_json::from_str::<Config>(&text) {
+        Ok(config) if config.version == 1 => ConfigRead::Loaded(config),
+        Ok(config) => ConfigRead::Invalid(format!("unsupported config version {}", config.version)),
+        Err(err) => ConfigRead::Invalid(err.to_string()),
+    }
+}
+
 fn move_aside(path: &Path) {
     let backup = path.with_extension("json.bak");
     if std::fs::rename(path, &backup).is_ok() {
@@ -441,6 +491,64 @@ fn move_aside(path: &Path) {
             backup.display()
         );
     }
+}
+
+/// Bundle id of the first published Rustbox build. Tauri puts config and
+/// session data in a directory named after the identifier, so a later build
+/// that only looks up `app.rustbox.desktop` never sees those files.
+pub const LEGACY_BUNDLE_ID: &str = "com.ifigueroa.rustbox";
+
+pub fn legacy_config_path(current_config_dir: &Path) -> PathBuf {
+    sibling_app_dir(current_config_dir).join("config.json")
+}
+
+pub fn legacy_data_dir(current_data_dir: &Path) -> PathBuf {
+    sibling_app_dir(current_data_dir)
+}
+
+fn sibling_app_dir(current_app_dir: &Path) -> PathBuf {
+    match current_app_dir.parent() {
+        Some(parent) => parent.join(LEGACY_BUNDLE_ID),
+        None => Path::new(LEGACY_BUNDLE_ID).to_path_buf(),
+    }
+}
+
+/// Copy session folders from the previous build's `services/<id>` layout into
+/// `sessions/<id>`. Existing destination folders are left alone.
+pub fn import_legacy_sessions(legacy_data_dir: &Path, sessions_dir: &Path) -> Result<(), String> {
+    let source = legacy_data_dir.join("services");
+    if !source.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(sessions_dir).map_err(|err| err.to_string())?;
+    for entry in std::fs::read_dir(&source).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let file_type = entry.file_type().map_err(|err| err.to_string())?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let dest = sessions_dir.join(entry.file_name());
+        if dest.exists() {
+            continue;
+        }
+        copy_dir(&entry.path(), &dest)?;
+    }
+    Ok(())
+}
+
+fn copy_dir(source: &Path, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|err| err.to_string())?;
+    for entry in std::fs::read_dir(source).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let file_type = entry.file_type().map_err(|err| err.to_string())?;
+        let target = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), &target).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -568,5 +676,97 @@ mod tests {
         assert!(loaded.services.is_empty());
         assert!(dir.join("config.json.bak").is_file());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn previous_bundle_config_keeps_its_services() {
+        let json = r#"{
+            "version": 1,
+            "activeId": "svc-1",
+            "services": [{
+                "id": "svc-1",
+                "name": "WhatsApp",
+                "url": "https://web.whatsapp.com/",
+                "preset": "whatsapp"
+            }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.services.len(), 1);
+        assert_eq!(config.services[0].id, "svc-1");
+        assert_eq!(config.services[0].name, "WhatsApp");
+        assert_eq!(config.services[0].preset.as_deref(), Some("whatsapp"));
+        assert!(config.services[0].use_chrome_user_agent);
+        assert!(!config.sidebar_collapsed);
+    }
+
+    #[test]
+    fn missing_current_config_adopts_the_previous_bundle() {
+        let root = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        let current_dir = root.join("app.rustbox.desktop");
+        let legacy_dir = root.join(LEGACY_BUNDLE_ID);
+        let legacy_data = root.join("data").join(LEGACY_BUNDLE_ID);
+        std::fs::create_dir_all(&current_dir).unwrap();
+        std::fs::create_dir_all(legacy_data.join("services").join("svc-1")).unwrap();
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_config = legacy_dir.join("config.json");
+        let original = r#"{
+            "version": 1,
+            "activeId": "svc-1",
+            "services": [{
+                "id": "svc-1",
+                "name": "Slack",
+                "url": "https://app.slack.com/",
+                "preset": "slack"
+            }]
+        }"#;
+        std::fs::write(&legacy_config, original).unwrap();
+        std::fs::write(
+            legacy_data.join("services").join("svc-1").join("cookie"),
+            "kept",
+        )
+        .unwrap();
+
+        let current = current_dir.join("config.json");
+        let (loaded, imported) = Config::load_adopting_legacy(&current, &legacy_config);
+        assert!(imported);
+        assert_eq!(loaded.services.len(), 1);
+        assert_eq!(loaded.services[0].name, "Slack");
+        assert_eq!(std::fs::read_to_string(&legacy_config).unwrap(), original);
+        assert!(current.is_file());
+        let saved = Config::load_or_default(&current);
+        assert_eq!(saved.services[0].id, "svc-1");
+
+        let sessions = root
+            .join("data")
+            .join("app.rustbox.desktop")
+            .join("sessions");
+        import_legacy_sessions(&legacy_data, &sessions).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(sessions.join("svc-1").join("cookie")).unwrap(),
+            "kept"
+        );
+        std::fs::write(sessions.join("svc-1").join("cookie"), "local").unwrap();
+        import_legacy_sessions(&legacy_data, &sessions).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(sessions.join("svc-1").join("cookie")).unwrap(),
+            "local"
+        );
+
+        std::fs::write(&current, r#"{"version":1,"services":[]}"#).unwrap();
+        let (again, imported_again) = Config::load_adopting_legacy(&current, &legacy_config);
+        assert!(!imported_again);
+        assert!(again.services.is_empty());
+        assert_eq!(std::fs::read_to_string(&legacy_config).unwrap(), original);
+
+        let broken = legacy_dir.join("broken.json");
+        std::fs::write(&broken, "{not json").unwrap();
+        let absent = current_dir.join("missing.json");
+        let (fresh, imported_broken) = Config::load_adopting_legacy(&absent, &broken);
+        assert!(!imported_broken);
+        assert!(fresh.services.is_empty());
+        assert!(broken.is_file());
+        assert!(!absent.is_file());
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

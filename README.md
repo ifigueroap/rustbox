@@ -81,6 +81,8 @@ The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`
 
 `config.json` stores names, URLs, order, icons, user-agent settings, and whether the sidebar is collapsed. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile.
 
+The first published build used the bundle id `com.ifigueroa.rustbox` and stored sessions in `services/<id>`. When `config.json` is missing from the current folder, Rustbox copies that older config and those session folders across. A `config.json` that is already there is kept, including one whose service list is empty.
+
 ### User agent
 
 Every service uses a recent Chrome user agent by default (Chrome 155 as of October 2026), because sites such as WhatsApp Web reject the WebKit user agent. Turn the checkbox off to use the system webview's own agent, or type a custom string to replace the built-in Chrome string. The override is stored per service. Changing the URL or the user agent reloads that service's webview and keeps the same session directory.
