@@ -60,7 +60,9 @@ npm run tauri icon src-tauri/app-icon.png
 
 ## Using the app
 
-The sidebar lists services by name and icon. Collapse it to an icon rail; the names stay on the tooltips, and that choice is saved in `config.json`. Click **rustbox** at the top of the sidebar to open the desk: a card for each service with its icon, unread count, and Open, Edit, and Remove actions, plus the app version. Click a service to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
+The sidebar lists services by name and icon. Collapse it to an icon rail; the icons stay centered, the names stay on the tooltips, and that choice is saved in `config.json`. Click **rustbox** at the top of the sidebar to open the desk: a card for each service with its icon, unread count, and Open, Edit, and Remove actions, plus the app version. Click a service to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
+
+Right-click a service in the sidebar to turn that service's sound or its badges and desktop notifications on or off. **Do not disturb**, under the service list, pauses sound and notifications for every service until you turn it off. Those choices are saved in `config.json`. A service with sound off shows a small mark on its icon. While Do not disturb is on, the control is filled in. Sound mutes that service's page audio. The operating system's own toast sound, when a notification is still allowed, follows the system settings.
 
 **Add** opens the services dialog:
 
@@ -79,9 +81,9 @@ The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`
 | Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` |
 | Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` |
 
-`config.json` stores names, URLs, order, icons, user-agent settings, and whether the sidebar is collapsed. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile.
+`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, per-service sound and notification switches, and Do not disturb. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. The portable Windows `.exe` and the Linux AppImage use these same directories, not a folder next to the file.
 
-The first published build used the bundle id `com.ifigueroa.rustbox` and stored sessions in `services/<id>`. When `config.json` is missing from the current folder, Rustbox copies that older config and those session folders across. A `config.json` that is already there is kept, including one whose service list is empty.
+The first published build used the bundle id `com.ifigueroa.rustbox` and stored sessions in `services/<id>`. Rustbox copies that older config forward when the current `config.json` is missing or its service list is empty, and an older file that actually has services exists. A current config that already lists services is left as it is. The search also checks `config.json.bak` beside either id, the data directory, and on Windows the LocalAppData folder. The older files are not deleted.
 
 ### User agent
 
@@ -89,7 +91,9 @@ Every service uses a recent Chrome user agent by default (Chrome 155 as of Octob
 
 ### Notifications and badges
 
-A script injected into each service webview wraps `window.Notification` and forwards the title and body to a native OS notification. The notification is attributed to the service (`Slack: New message`). Each service is limited to 6 notifications per 20 seconds.
+A script injected into each service webview wraps `window.Notification` and forwards the title and body to a native OS notification. The notification is attributed to the service (`Slack: New message`). Each service is limited to 6 notifications per 20 seconds. Turning notifications off for a service, or turning on Do not disturb, drops those notifications and hides the unread badge. The count is still tracked, so the badge comes back when you allow notifications again.
+
+The same script mutes `audio` and `video` elements and suspends `AudioContext` while that service's sound is off, or while Do not disturb is on. On Linux the WebKit view is muted as well.
 
 Unread badges are parsed from the document title, which is how these apps usually report them: `(3) WhatsApp`, `Slack (12)`, `[4] Telegram`. A leading `•` with no number counts as one. The badge appears after that service's webview has been created, and it updates while the webview is hidden.
 

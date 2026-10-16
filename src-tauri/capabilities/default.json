@@ -14,6 +14,9 @@
     "allow-remove-service",
     "allow-reorder-services",
     "allow-set-active-service",
-    "allow-set-sidebar-collapsed"
+    "allow-set-sidebar-collapsed",
+    "allow-set-service-sound",
+    "allow-set-service-notifications",
+    "allow-set-do-not-disturb"
   ]
 }

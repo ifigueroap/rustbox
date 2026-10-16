@@ -10,6 +10,8 @@ interface Service {
   userAgent?: string | null;
   useChromeUserAgent: boolean;
   preset?: string | null;
+  soundEnabled: boolean;
+  notificationsEnabled: boolean;
   unread: number;
 }
 
@@ -29,6 +31,7 @@ interface Snapshot {
   configPath: string;
   sessionsDir: string;
   sidebarCollapsed: boolean;
+  doNotDisturb: boolean;
   appVersion: string;
 }
 
@@ -56,7 +59,10 @@ const BRAND_ICONS: Record<string, string> = {
   claude: "/brands/claude.svg",
 };
 
-const GLYPH_BRANDS = new Set(["chatgpt", "claude"]);
+// ChatGPT's mark is white, so it sits on the brand plate. Claude's mark is the
+// terracotta asterisk; a white glyph on the default grey plate looks washed out.
+const GLYPH_BRANDS = new Set(["chatgpt"]);
+const DEFAULT_SERVICE_COLOR = "#8d8478";
 
 let services: Service[] = [];
 let presets: Preset[] = [];
@@ -65,7 +71,9 @@ let chromeUserAgent = "";
 let configPath = "";
 let sessionsDir = "";
 let sidebarCollapsed = false;
+let doNotDisturb = false;
 let appVersion = "";
+let menuServiceId: string | null = null;
 let pendingPreset: Preset | null = null;
 let draggingId: string | null = null;
 let suspendedId: string | null = null;
@@ -113,6 +121,13 @@ function faviconCandidates(pageUrl: string): string[] {
   }
 }
 
+function iconColor(target: IconTarget): string {
+  const color = (target.color || DEFAULT_SERVICE_COLOR).trim();
+  if (color.toLowerCase() !== DEFAULT_SERVICE_COLOR) return color;
+  const preset = presets.find((item) => item.id === target.preset);
+  return preset?.color || color;
+}
+
 function paintLetter(node: HTMLElement, name: string, color: string): void {
   node.classList.remove("glyph", "tile");
   node.style.background = color;
@@ -144,15 +159,16 @@ function mountImage(node: HTMLElement, sources: string[], onFail: () => void): v
 }
 
 function paintAvatar(node: HTMLElement, target: IconTarget): void {
+  const color = iconColor(target);
   node.replaceChildren();
   node.classList.remove("glyph", "tile");
-  node.style.background = target.color;
-  node.style.color = textColor(target.color);
+  node.style.background = color;
+  node.style.color = textColor(color);
   const explicit = target.icon?.trim() ?? "";
   if (explicit && isUrl(explicit)) {
     node.classList.add("tile");
     node.style.background = "transparent";
-    mountImage(node, [explicit], () => paintLetter(node, target.name, target.color));
+    mountImage(node, [explicit], () => paintLetter(node, target.name, color));
     return;
   }
   if (explicit) {
@@ -165,17 +181,17 @@ function paintAvatar(node: HTMLElement, target: IconTarget): void {
     const glyph = GLYPH_BRANDS.has(preset);
     node.classList.add(glyph ? "glyph" : "tile");
     if (!glyph) node.style.background = "transparent";
-    mountImage(node, [brand], () => paintLetter(node, target.name, target.color));
+    mountImage(node, [brand], () => paintLetter(node, target.name, color));
     return;
   }
   const favicons = target.url ? faviconCandidates(target.url) : [];
   if (favicons.length > 0) {
     node.classList.add("tile");
     node.style.background = "transparent";
-    mountImage(node, favicons, () => paintLetter(node, target.name, target.color));
+    mountImage(node, favicons, () => paintLetter(node, target.name, color));
     return;
   }
-  paintLetter(node, target.name, target.color);
+  paintLetter(node, target.name, color);
 }
 
 function applySnapshot(snapshot: Snapshot): void {
@@ -185,11 +201,14 @@ function applySnapshot(snapshot: Snapshot): void {
   configPath = snapshot.configPath;
   sessionsDir = snapshot.sessionsDir;
   sidebarCollapsed = snapshot.sidebarCollapsed;
+  doNotDisturb = snapshot.doNotDisturb;
   appVersion = snapshot.appVersion;
   if (editingId && !services.some((service) => service.id === editingId)) editingId = null;
   const active = services.find((service) => service.id === activeId);
   document.title = active ? `${active.name} - Rustbox` : "Rustbox";
-  must<HTMLElement>("#shell").classList.toggle("sidebar-collapsed", sidebarCollapsed);
+  const shell = must<HTMLElement>("#shell");
+  shell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
+  shell.classList.toggle("dnd-on", doNotDisturb);
   render();
 }
 
@@ -264,6 +283,17 @@ function renderSidebar(): void {
   const chevron = collapse.querySelector("span");
   if (chevron) chevron.textContent = sidebarCollapsed ? "›" : "‹";
 
+  const dnd = must<HTMLButtonElement>("#dnd-button");
+  dnd.classList.toggle("is-on", doNotDisturb);
+  dnd.setAttribute("aria-pressed", doNotDisturb ? "true" : "false");
+  const dndText = doNotDisturb ? "Do not disturb is on" : "Do not disturb";
+  dnd.title = doNotDisturb
+    ? "Do not disturb is on. Sounds and notifications are paused for every service."
+    : "Pause sounds and notifications for every service.";
+  dnd.setAttribute("aria-label", dnd.title);
+  const dndLabel = dnd.querySelector(".dnd-label");
+  if (dndLabel) dndLabel.textContent = dndText;
+
   const list = must<HTMLElement>("#service-list");
   list.replaceChildren();
   for (const service of services) {
@@ -271,12 +301,16 @@ function renderSidebar(): void {
     button.type = "button";
     button.className = service.id === activeId ? "svc active" : "svc";
     button.style.setProperty("--svc", service.color);
-    button.title = service.unread > 0 ? `${service.name} (${service.unread})` : service.name;
+    button.title = serviceTitle(service);
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", service.id === activeId ? "true" : "false");
     button.draggable = true;
     button.addEventListener("click", () => {
       void activate(service.id);
+    });
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openServiceMenu(service.id, event.clientX, event.clientY);
     });
     button.addEventListener("dragstart", () => {
       draggingId = service.id;
@@ -305,6 +339,7 @@ function renderSidebar(): void {
     const avatar = document.createElement("span");
     avatar.className = "avatar";
     paintAvatar(avatar, service);
+    avatar.classList.toggle("sound-off", soundOff(service));
     const name = document.createElement("span");
     name.className = "svc-name";
     name.textContent = service.name;
@@ -319,6 +354,7 @@ function renderSidebar(): void {
     }
     list.append(button);
   }
+  updateServiceMenu();
 }
 
 function renderStage(): void {
@@ -360,6 +396,7 @@ function serviceCard(service: Service): HTMLElement {
   const avatar = document.createElement("span");
   avatar.className = "avatar";
   paintAvatar(avatar, service);
+  avatar.classList.toggle("sound-off", soundOff(service));
   const copy = document.createElement("span");
   copy.className = "card-copy";
   const name = document.createElement("strong");
@@ -569,6 +606,73 @@ function refreshUnread(serviceId: string, count: number): void {
   }
 }
 
+function soundOff(service: Service): boolean {
+  return doNotDisturb || !service.soundEnabled;
+}
+
+function serviceTitle(service: Service): string {
+  const parts = [service.unread > 0 ? `${service.name} (${service.unread})` : service.name];
+  if (doNotDisturb) parts.push("Paused by Do not disturb");
+  else {
+    if (!service.soundEnabled) parts.push("Sound off");
+    if (!service.notificationsEnabled) parts.push("Notifications off");
+  }
+  return parts.join(". ");
+}
+
+function openServiceMenu(serviceId: string, x: number, y: number): void {
+  menuServiceId = serviceId;
+  const menu = must<HTMLElement>("#service-menu");
+  menu.hidden = false;
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  updateServiceMenu();
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeServiceMenu(): void {
+  menuServiceId = null;
+  const menu = document.querySelector<HTMLElement>("#service-menu");
+  if (menu) menu.hidden = true;
+}
+
+function updateServiceMenu(): void {
+  const menu = document.querySelector<HTMLElement>("#service-menu");
+  if (!menu || menu.hidden || !menuServiceId) return;
+  const service = services.find((item) => item.id === menuServiceId);
+  if (!service) {
+    closeServiceMenu();
+    return;
+  }
+  must<HTMLElement>("#service-menu-title").textContent = service.name;
+  const sound = must<HTMLButtonElement>("#service-menu-sound");
+  const notes = must<HTMLButtonElement>("#service-menu-notes");
+  sound.setAttribute("aria-checked", service.soundEnabled ? "true" : "false");
+  notes.setAttribute("aria-checked", service.notificationsEnabled ? "true" : "false");
+  sound.textContent = service.soundEnabled ? "Sound on" : "Sound off";
+  notes.textContent = service.notificationsEnabled ? "Notifications on" : "Notifications off";
+  const hint = must<HTMLElement>("#service-menu-note");
+  hint.hidden = !doNotDisturb;
+}
+
+async function setServiceFlag(id: string, kind: "sound" | "notifications", enabled: boolean): Promise<void> {
+  const command = kind === "sound" ? "set_service_sound" : "set_service_notifications";
+  const snapshot = await run(() => invoke<Snapshot>(command, { id, enabled }));
+  if (snapshot) applySnapshot(snapshot);
+}
+
+async function setDoNotDisturb(enabled: boolean): Promise<void> {
+  const shell = must<HTMLElement>("#shell");
+  shell.classList.toggle("dnd-on", enabled);
+  const snapshot = await run(() => invoke<Snapshot>("set_do_not_disturb", { enabled }));
+  if (snapshot) applySnapshot(snapshot);
+  else shell.classList.toggle("dnd-on", doNotDisturb);
+}
+
 async function boot(): Promise<void> {
   if (!("__TAURI_INTERNALS__" in window)) {
     showError("Open this window from the Rustbox app. The Vite page alone cannot host service webviews.");
@@ -580,6 +684,29 @@ async function boot(): Promise<void> {
   must<HTMLButtonElement>("#collapse-button").addEventListener("click", () => {
     void setCollapsed(!sidebarCollapsed);
   });
+  must<HTMLButtonElement>("#dnd-button").addEventListener("click", () => {
+    void setDoNotDisturb(!doNotDisturb);
+  });
+  must<HTMLButtonElement>("#service-menu-sound").addEventListener("click", () => {
+    const service = services.find((item) => item.id === menuServiceId);
+    if (service) void setServiceFlag(service.id, "sound", !service.soundEnabled);
+  });
+  must<HTMLButtonElement>("#service-menu-notes").addEventListener("click", () => {
+    const service = services.find((item) => item.id === menuServiceId);
+    if (service) void setServiceFlag(service.id, "notifications", !service.notificationsEnabled);
+  });
+  const menu = must<HTMLElement>("#service-menu");
+  menu.addEventListener("contextmenu", (event) => event.preventDefault());
+  document.addEventListener("pointerdown", (event) => {
+    if (menu.hidden) return;
+    if (event.target instanceof Node && menu.contains(event.target)) return;
+    closeServiceMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeServiceMenu();
+  });
+  window.addEventListener("resize", () => closeServiceMenu());
+  must<HTMLElement>("#service-list").addEventListener("scroll", () => closeServiceMenu());
   must<HTMLButtonElement>("#manage-button").addEventListener("click", () => {
     void openManager();
   });

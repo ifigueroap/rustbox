@@ -91,6 +91,49 @@ fn set_sidebar_collapsed(app: tauri::AppHandle, collapsed: bool) -> Result<Snaps
 }
 
 #[tauri::command]
+fn set_service_sound(app: tauri::AppHandle, id: String, enabled: bool) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|service| service.id == id)
+            .ok_or_else(|| "service not found".to_string())?;
+        service.sound_enabled = enabled;
+        Ok(())
+    })?;
+    services::apply_sound_policy(&app);
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_service_notifications(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|service| service.id == id)
+            .ok_or_else(|| "service not found".to_string())?;
+        service.notifications_enabled = enabled;
+        Ok(())
+    })?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_do_not_disturb(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.do_not_disturb = enabled;
+        Ok(())
+    })?;
+    services::apply_sound_policy(&app);
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let url = services::validate_external_url(&url)?;
     policy::open_external_detached(&url);
@@ -141,6 +184,9 @@ pub fn run() {
             reorder_services,
             set_active_service,
             set_sidebar_collapsed,
+            set_service_sound,
+            set_service_notifications,
+            set_do_not_disturb,
             open_external,
             forward_notification,
         ])

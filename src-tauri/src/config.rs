@@ -109,6 +109,12 @@ pub struct Service {
     pub use_chrome_user_agent: bool,
     #[serde(default)]
     pub preset: Option<String>,
+    /// Page audio for this service. Do not disturb mutes it anyway.
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
+    /// Unread badges and desktop notifications. Do not disturb hides them anyway.
+    #[serde(default = "default_true")]
+    pub notifications_enabled: bool,
 }
 
 impl Service {
@@ -127,6 +133,9 @@ pub struct Config {
     /// When true the sidebar is the icon rail. Names stay available as tooltips.
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// Mutes page audio and hides badges and desktop notifications for every service.
+    #[serde(default)]
+    pub do_not_disturb: bool,
 }
 
 impl Default for Config {
@@ -135,6 +144,7 @@ impl Default for Config {
             version: 1,
             services: Vec::new(),
             sidebar_collapsed: false,
+            do_not_disturb: false,
         }
     }
 }
@@ -212,43 +222,105 @@ impl Config {
         }
     }
 
-    /// Use `current` when that file exists, even if it lists no services.
-    /// Otherwise copy a readable config from the previous bundle id into
-    /// `current` and return it. The legacy file is not renamed or deleted.
-    pub fn load_adopting_legacy(current: &Path, legacy: &Path) -> (Self, bool) {
-        if current.is_file() {
-            return (Self::load_or_default(current), false);
+    /// Keep a current config that already has services. When it is missing,
+    /// unreadable, invalid, or has an empty service list, copy the candidate
+    /// that has the most services. The source file is left in place.
+    ///
+    /// Returns the loaded config and whether a candidate was adopted.
+    pub fn load_adopting_legacy(current: &Path, candidates: &[PathBuf]) -> (Self, bool) {
+        let current_read = read_config(current);
+        if let ConfigRead::Loaded(config) = &current_read {
+            if !config.services.is_empty() {
+                return (config.clone(), false);
+            }
         }
-        match read_config(legacy) {
-            ConfigRead::Loaded(config) => {
-                if let Err(err) = config.save(current) {
+
+        let mut viable: Vec<(usize, Config, &Path)> = Vec::new();
+        for candidate in candidates {
+            if paths_equal(candidate, current) {
+                continue;
+            }
+            match read_config(candidate) {
+                ConfigRead::Loaded(config) if !config.services.is_empty() => {
+                    viable.push((config.services.len(), config, candidate));
+                }
+                ConfigRead::Loaded(_) => {
                     eprintln!(
-                        "rustbox: imported config from {} but could not write {}: {err}",
-                        legacy.display(),
-                        current.display()
-                    );
-                } else {
-                    eprintln!(
-                        "rustbox: imported {} service(s) from {}",
-                        config.services.len(),
-                        legacy.display()
+                        "rustbox: skipping {} because it has no services",
+                        candidate.display()
                     );
                 }
-                (config, true)
+                ConfigRead::Missing => {}
+                ConfigRead::Unreadable(err) => {
+                    eprintln!(
+                        "rustbox: skipping {}; could not read it ({err})",
+                        candidate.display()
+                    );
+                }
+                ConfigRead::Invalid(err) => {
+                    eprintln!(
+                        "rustbox: skipping {}; could not parse it ({err})",
+                        candidate.display()
+                    );
+                }
             }
+        }
+
+        if let Some((winner_index, _)) = viable
+            .iter()
+            .enumerate()
+            .max_by_key(|(index, (count, _, _))| (*count, std::cmp::Reverse(*index)))
+        {
+            let (count, config, source) = &viable[winner_index];
+            let _ = count;
+            for (other_count, _, other) in &viable {
+                if paths_equal(other, source) {
+                    continue;
+                }
+                eprintln!(
+                    "rustbox: not using {} ({other_count} services)",
+                    other.display()
+                );
+            }
+
+            let mut chosen = config.clone();
+            if let ConfigRead::Loaded(existing) = &current_read {
+                chosen.sidebar_collapsed = existing.sidebar_collapsed;
+                chosen.do_not_disturb = existing.do_not_disturb;
+            }
+
+            if matches!(current_read, ConfigRead::Invalid(_)) {
+                let backup = current.with_extension("json.bak");
+                if !paths_equal(source, &backup) {
+                    move_aside(current);
+                }
+            }
+            if let Err(err) = chosen.save(current) {
+                eprintln!(
+                    "rustbox: imported config from {} but could not write {}: {err}",
+                    source.display(),
+                    current.display()
+                );
+            } else {
+                eprintln!(
+                    "rustbox: imported {} service(s) from {}",
+                    chosen.services.len(),
+                    source.display()
+                );
+            }
+            return (chosen, true);
+        }
+
+        match current_read {
+            ConfigRead::Loaded(config) => (config, false),
             ConfigRead::Missing => (Self::default(), false),
             ConfigRead::Unreadable(err) => {
-                eprintln!(
-                    "rustbox: leaving {} in place; could not read it ({err})",
-                    legacy.display()
-                );
+                eprintln!("rustbox: could not read {}: {err}", current.display());
                 (Self::default(), false)
             }
             ConfigRead::Invalid(err) => {
-                eprintln!(
-                    "rustbox: leaving {} in place; could not parse it ({err})",
-                    legacy.display()
-                );
+                eprintln!("rustbox: invalid config at {}: {err}", current.display());
+                move_aside(current);
                 (Self::default(), false)
             }
         }
@@ -260,8 +332,26 @@ impl Config {
         }
         let json = serde_json::to_string_pretty(self).map_err(|err| err.to_string())?;
         let temporary = path.with_extension("json.tmp");
-        std::fs::write(&temporary, json).map_err(|err| err.to_string())?;
-        std::fs::rename(&temporary, path).map_err(|err| err.to_string())?;
+        std::fs::write(&temporary, &json).map_err(|err| err.to_string())?;
+        if let Err(err) = std::fs::rename(&temporary, path) {
+            // Windows cannot replace an existing file with rename. An empty
+            // config written by an earlier build is the usual destination.
+            if path.is_file() {
+                if let Err(remove_err) = std::fs::remove_file(path) {
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(format!("{err}; also could not replace it ({remove_err})"));
+                }
+                if let Err(retry) = std::fs::rename(&temporary, path) {
+                    return Err(format!(
+                        "{retry}; the updated config is still at {}",
+                        temporary.display()
+                    ));
+                }
+            } else {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(err.to_string());
+            }
+        }
         Ok(())
     }
 
@@ -295,6 +385,8 @@ impl Config {
             user_agent: None,
             use_chrome_user_agent: true,
             preset: Some(preset.id.to_string()),
+            sound_enabled: true,
+            notifications_enabled: true,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -310,6 +402,8 @@ impl Config {
             user_agent: normalize_user_agent(input.user_agent.as_deref())?,
             use_chrome_user_agent: input.use_chrome_user_agent,
             preset: None,
+            sound_enabled: true,
+            notifications_enabled: true,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -477,9 +571,39 @@ fn read_config(path: &Path) -> ConfigRead {
         Err(err) => return ConfigRead::Unreadable(err),
     };
     match serde_json::from_str::<Config>(&text) {
-        Ok(config) if config.version == 1 => ConfigRead::Loaded(config),
+        Ok(mut config) if config.version == 1 => {
+            repair_preset_colors(&mut config);
+            ConfigRead::Loaded(config)
+        }
         Ok(config) => ConfigRead::Invalid(format!("unsupported config version {}", config.version)),
         Err(err) => ConfigRead::Invalid(err.to_string()),
+    }
+}
+
+/// Preset services saved before `color` existed deserialize as the generic
+/// grey. Put the brand color back so marks such as Claude are not a white
+/// glyph on that grey plate. An explicit non-default color is left alone.
+fn repair_preset_colors(config: &mut Config) {
+    for service in &mut config.services {
+        if service.color != default_color() {
+            continue;
+        }
+        let Some(preset_id) = service.preset.as_deref() else {
+            continue;
+        };
+        if let Some(preset) = PRESETS.iter().find(|preset| preset.id == preset_id) {
+            service.color = preset.color.to_string();
+        }
+    }
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
@@ -498,19 +622,53 @@ fn move_aside(path: &Path) {
 /// that only looks up `app.rustbox.desktop` never sees those files.
 pub const LEGACY_BUNDLE_ID: &str = "com.ifigueroa.rustbox";
 
-pub fn legacy_config_path(current_config_dir: &Path) -> PathBuf {
-    sibling_app_dir(current_config_dir).join("config.json")
-}
-
-pub fn legacy_data_dir(current_data_dir: &Path) -> PathBuf {
-    sibling_app_dir(current_data_dir)
-}
-
 fn sibling_app_dir(current_app_dir: &Path) -> PathBuf {
     match current_app_dir.parent() {
         Some(parent) => parent.join(LEGACY_BUNDLE_ID),
         None => Path::new(LEGACY_BUNDLE_ID).to_path_buf(),
     }
+}
+
+/// Older configs that might still hold the service list. Order is the
+/// tie-break when two files have the same number of services: config dir,
+/// then data dir, then the OS local data dir, then a backup beside the
+/// current file. The portable exe and AppImage use these same directories.
+pub fn legacy_config_candidates(
+    config_dir: &Path,
+    data_dir: &Path,
+    local_data_dir: &Path,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for dir in [config_dir, data_dir, local_data_dir] {
+        let legacy = sibling_app_dir(dir);
+        push_unique(&mut paths, legacy.join("config.json"));
+        push_unique(&mut paths, legacy.join("config.json.bak"));
+    }
+    push_unique(&mut paths, config_dir.join("config.json.bak"));
+    paths
+}
+
+/// Directories whose `services/<id>` folders belong to the previous build.
+/// On Linux those folders live under the data dir. On Windows the config and
+/// data dirs are the same Roaming folder. LocalAppData is included because a
+/// portable build can still be pointed there by the OS.
+pub fn legacy_session_roots(
+    config_dir: &Path,
+    data_dir: &Path,
+    local_data_dir: &Path,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for dir in [data_dir, local_data_dir, config_dir] {
+        push_unique(&mut paths, sibling_app_dir(dir));
+    }
+    paths
+}
+
+fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if paths.iter().any(|existing| existing == &path) {
+        return;
+    }
+    paths.push(path);
 }
 
 /// Copy session folders from the previous build's `services/<id>` layout into
@@ -727,7 +885,7 @@ mod tests {
         .unwrap();
 
         let current = current_dir.join("config.json");
-        let (loaded, imported) = Config::load_adopting_legacy(&current, &legacy_config);
+        let (loaded, imported) = Config::load_adopting_legacy(&current, &[legacy_config.clone()]);
         assert!(imported);
         assert_eq!(loaded.services.len(), 1);
         assert_eq!(loaded.services[0].name, "Slack");
@@ -752,21 +910,192 @@ mod tests {
             "local"
         );
 
-        std::fs::write(&current, r#"{"version":1,"services":[]}"#).unwrap();
-        let (again, imported_again) = Config::load_adopting_legacy(&current, &legacy_config);
-        assert!(!imported_again);
-        assert!(again.services.is_empty());
+        std::fs::write(
+            &current,
+            r#"{"version":1,"sidebarCollapsed":true,"services":[]}"#,
+        )
+        .unwrap();
+        let (again, imported_again) =
+            Config::load_adopting_legacy(&current, &[legacy_config.clone()]);
+        assert!(imported_again);
+        assert_eq!(again.services.len(), 1);
+        assert_eq!(again.services[0].name, "Slack");
+        assert!(again.sidebar_collapsed);
+        assert!(!again.do_not_disturb);
         assert_eq!(std::fs::read_to_string(&legacy_config).unwrap(), original);
 
         let broken = legacy_dir.join("broken.json");
         std::fs::write(&broken, "{not json").unwrap();
         let absent = current_dir.join("missing.json");
-        let (fresh, imported_broken) = Config::load_adopting_legacy(&absent, &broken);
+        let (fresh, imported_broken) = Config::load_adopting_legacy(&absent, &[broken.clone()]);
         assert!(!imported_broken);
         assert!(fresh.services.is_empty());
         assert!(broken.is_file());
         assert!(!absent.is_file());
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn nonempty_current_config_is_not_replaced() {
+        let root = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        let current_dir = root.join("app.rustbox.desktop");
+        let legacy_dir = root.join(LEGACY_BUNDLE_ID);
+        std::fs::create_dir_all(&current_dir).unwrap();
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let current = current_dir.join("config.json");
+        let legacy = legacy_dir.join("config.json");
+        std::fs::write(
+            &current,
+            r#"{"version":1,"services":[{"id":"new","name":"Grok","url":"https://grok.com/","preset":"grok"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &legacy,
+            r#"{"version":1,"services":[
+                {"id":"old-1","name":"Slack","url":"https://app.slack.com/","preset":"slack"},
+                {"id":"old-2","name":"Claude","url":"https://claude.ai/","preset":"claude"}
+            ]}"#,
+        )
+        .unwrap();
+        let (loaded, imported) = Config::load_adopting_legacy(&current, &[legacy.clone()]);
+        assert!(!imported);
+        assert_eq!(loaded.services.len(), 1);
+        assert_eq!(loaded.services[0].name, "Grok");
+        assert!(legacy.is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn empty_current_config_adopts_the_richest_older_file() {
+        let root = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        let current_dir = root.join("config").join("app.rustbox.desktop");
+        let data_dir = root.join("data").join("app.rustbox.desktop");
+        let local_dir = root.join("local").join("app.rustbox.desktop");
+        std::fs::create_dir_all(&current_dir).unwrap();
+        let legacy_data = root.join("data").join(LEGACY_BUNDLE_ID);
+        std::fs::create_dir_all(legacy_data.join("services").join("svc-bak")).unwrap();
+        std::fs::write(
+            legacy_data.join("services").join("svc-bak").join("cookie"),
+            "session",
+        )
+        .unwrap();
+        std::fs::write(
+            &legacy_data.join("config.json"),
+            r#"{"version":1,"services":[{"id":"one","name":"Only","url":"https://example.com/"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &legacy_data.join("config.json.bak"),
+            r#"{"version":1,"services":[
+                {"id":"svc-bak","name":"WhatsApp","url":"https://web.whatsapp.com/","preset":"whatsapp"},
+                {"id":"svc-2","name":"Claude","url":"https://claude.ai/","preset":"claude"}
+            ]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            current_dir.join("config.json"),
+            r#"{"version":1,"services":[]}"#,
+        )
+        .unwrap();
+
+        let candidates = legacy_config_candidates(&current_dir, &data_dir, &local_dir);
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("com.ifigueroa.rustbox/config.json"))
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("com.ifigueroa.rustbox/config.json.bak"))
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|path| path.ends_with("app.rustbox.desktop/config.json.bak"))
+        );
+
+        let current = current_dir.join("config.json");
+        let (loaded, imported) = Config::load_adopting_legacy(&current, &candidates);
+        assert!(imported);
+        assert_eq!(loaded.services.len(), 2);
+        assert_eq!(loaded.services[0].id, "svc-bak");
+        assert_eq!(loaded.services[1].color, "#D97757");
+        assert!(loaded.services[0].sound_enabled);
+        assert!(loaded.services[0].notifications_enabled);
+
+        let sessions = data_dir.join("sessions");
+        for root in legacy_session_roots(&current_dir, &data_dir, &local_dir) {
+            import_legacy_sessions(&root, &sessions).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(sessions.join("svc-bak").join("cookie")).unwrap(),
+            "session"
+        );
+        let saved = std::fs::read_to_string(legacy_data.join("config.json.bak")).unwrap();
+        assert!(saved.contains("svc-bak"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn same_id_backup_is_adopted_when_the_current_file_is_empty() {
+        let root = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        let current_dir = root.join("app.rustbox.desktop");
+        std::fs::create_dir_all(&current_dir).unwrap();
+        let current = current_dir.join("config.json");
+        let backup = current_dir.join("config.json.bak");
+        std::fs::write(&current, r#"{"version":1,"services":[]}"#).unwrap();
+        std::fs::write(
+            &backup,
+            r#"{"version":1,"services":[{"id":"svc","name":"Telegram","url":"https://web.telegram.org/a/","preset":"telegram"}]}"#,
+        )
+        .unwrap();
+        let candidates = legacy_config_candidates(&current_dir, &current_dir, &current_dir);
+        let (loaded, imported) = Config::load_adopting_legacy(&current, &candidates);
+        assert!(imported);
+        assert_eq!(loaded.services[0].name, "Telegram");
+        assert!(backup.is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_replaces_an_existing_config_file() {
+        let dir = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"version":1,"services":[]}"#).unwrap();
+        let config = sample_config();
+        config.save(&path).unwrap();
+        let loaded = Config::load_or_default(&path);
+        assert_eq!(loaded.services.len(), 2);
+        assert!(!dir.join("config.json.tmp").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn omitted_preset_color_and_alert_flags_use_defaults() {
+        let dir = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r##"{"version":1,"services":[
+                {"id":"c","name":"Claude","url":"https://claude.ai/","preset":"claude"},
+                {"id":"n","name":"Notes","url":"https://example.com/","color":"#112233"},
+                {"id":"g","name":"Grey","url":"https://example.com/","preset":"grok","color":"#abcdef"}
+            ]}"##,
+        )
+        .unwrap();
+        let loaded = Config::load_or_default(&path);
+        assert_eq!(loaded.services[0].color, "#D97757");
+        assert!(loaded.services[0].sound_enabled);
+        assert!(loaded.services[0].notifications_enabled);
+        assert!(!loaded.do_not_disturb);
+        assert!(!loaded.sidebar_collapsed);
+        assert_eq!(loaded.services[1].color, "#112233");
+        assert!(loaded.services[1].preset.is_none());
+        assert_eq!(loaded.services[2].color, "#abcdef");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
