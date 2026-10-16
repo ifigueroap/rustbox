@@ -226,6 +226,34 @@ pub fn apply_shortcut(
     Ok(true)
 }
 
+/// Reload one service's page without touching its session directory.
+///
+/// An open webview is refreshed in place, so cookies and the partition stay.
+/// Linux bypasses the HTTP cache. If that service has not been opened yet,
+/// this opens it with the same session directory a normal click would use.
+pub fn reload_service(app: &AppHandle, id: &str) -> Result<(), String> {
+    let state = app.state::<RuntimeState>();
+    let service = {
+        let config = lock(&state.config);
+        config
+            .services
+            .iter()
+            .find(|service| service.id == id)
+            .cloned()
+            .ok_or_else(|| "service not found".to_string())?
+    };
+    let label = label_for(&service.id);
+    if app.get_webview(&label).is_none() {
+        return set_active(app, Some(service.id));
+    }
+    let _ops = lock(&state.ops);
+    let Some(webview) = app.get_webview(&label) else {
+        drop(_ops);
+        return set_active(app, Some(service.id));
+    };
+    hard_reload(&webview)
+}
+
 pub fn close_service_webview(app: &AppHandle, id: &str) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
     let _ops = lock(&state.ops);
@@ -592,6 +620,20 @@ fn hide_others(app: &AppHandle, except: Option<&str>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn hard_reload(webview: &tauri::Webview) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let queued = webview.with_webview(|platform| {
+            use webkit2gtk::WebViewExt;
+            platform.inner().reload_bypass_cache();
+        });
+        if queued.is_ok() {
+            return Ok(());
+        }
+    }
+    webview.reload().map_err(|err| err.to_string())
 }
 
 fn close_webview(app: &AppHandle, id: &str) -> Result<(), String> {

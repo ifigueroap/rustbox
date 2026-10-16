@@ -150,6 +150,12 @@ fn apply_service_shortcut(
 }
 
 #[tauri::command]
+fn reload_service(app: tauri::AppHandle, id: String) -> Result<Snapshot, String> {
+    services::reload_service(&app, &id)?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let url = services::validate_external_url(&url)?;
     policy::open_external_detached(&url);
@@ -207,6 +213,7 @@ pub fn run() {
             set_service_notifications,
             set_do_not_disturb,
             apply_service_shortcut,
+            reload_service,
             open_external,
             forward_notification,
         ])

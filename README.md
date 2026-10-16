@@ -62,7 +62,7 @@ npm run tauri icon src-tauri/app-icon.png
 
 The sidebar lists services by name and icon. Collapse it to an icon rail; the icons stay centered, the names stay on the tooltips, and that choice is saved in `config.json`. Click **rustbox** at the top of the sidebar to open the desk: a card for each service with its icon, unread count, and Open, Edit, and Remove actions, plus the app version. Click a service to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
 
-Right-click a service in the sidebar to turn that service's sound or its badges and desktop notifications on or off. **Do not disturb**, under the service list, pauses sound and notifications for every service until you turn it off. Those choices are saved in `config.json`. A service with sound off shows a small mark on its icon. While Do not disturb is on, the control is filled in. Sound mutes that service's page audio. The operating system's own toast sound, when a notification is still allowed, follows the system settings.
+Right-click a service in the sidebar to turn that service's sound or its badges and desktop notifications on or off, reload its page, copy its URL, or open that URL in the system browser. Reload keeps the saved session. **Do not disturb**, under the service list, pauses sound and notifications for every service until you turn it off. Those choices are saved in `config.json`. A service with sound off shows a small mark on its icon. While Do not disturb is on, the control is filled in. Sound mutes that service's page audio. The operating system's own toast sound, when a notification is still allowed, follows the system settings.
 
 **Add** opens the services dialog:
 

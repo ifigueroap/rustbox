@@ -18,6 +18,8 @@
     "allow-set-service-sound",
     "allow-set-service-notifications",
     "allow-set-do-not-disturb",
-    "allow-apply-service-shortcut"
+    "allow-apply-service-shortcut",
+    "allow-reload-service",
+    "allow-open-external"
   ]
 }
