@@ -132,6 +132,30 @@
   document.addEventListener("click", onAnchorClick, true);
   document.addEventListener("auxclick", onAnchorClick, true);
 
+  function isServiceShortcut(event) {
+    if (event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
+    if (event.key === "Tab") return true;
+    if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
+    return event.shiftKey && String(event.key).toLowerCase() === "d";
+  }
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (!isServiceShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      invoke("apply_service_shortcut", {
+        key: event.key,
+        ctrl: event.ctrlKey,
+        meta: event.metaKey,
+        shift: event.shiftKey,
+        alt: event.altKey,
+      });
+    },
+    true,
+  );
+
   function RustboxNotification(title, options) {
     if (!(this instanceof RustboxNotification)) {
       return new RustboxNotification(title, options);

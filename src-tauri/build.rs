@@ -13,6 +13,7 @@ fn main() {
             "set_service_sound",
             "set_service_notifications",
             "set_do_not_disturb",
+            "apply_service_shortcut",
             "open_external",
             "forward_notification",
         ]),
