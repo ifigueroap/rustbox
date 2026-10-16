@@ -79,6 +79,13 @@ let draggingId: string | null = null;
 let suspendedId: string | null = null;
 let editingId: string | null = null;
 
+function isServiceShortcut(event: KeyboardEvent): boolean {
+  if (event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
+  if (event.key === "Tab") return true;
+  if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
+  return event.shiftKey && event.key.toLowerCase() === "d";
+}
+
 function must<T extends Element>(selector: string): T {
   const node = document.querySelector(selector);
   if (!node) throw new Error(`Missing ${selector}`);
@@ -753,6 +760,26 @@ async function boot(): Promise<void> {
       must<HTMLInputElement>("#custom-ua").value = "";
     });
   });
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (!isServiceShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void run(async () => {
+        applySnapshot(
+          await invoke<Snapshot>("apply_service_shortcut", {
+            key: event.key,
+            ctrl: event.ctrlKey,
+            meta: event.metaKey,
+            shift: event.shiftKey,
+            alt: event.altKey,
+          }),
+        );
+      });
+    },
+    true,
+  );
   must<HTMLElement>("#service-list").addEventListener("keydown", (event) => {
     if (!(event instanceof KeyboardEvent)) return;
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -766,6 +793,9 @@ async function boot(): Promise<void> {
 
   await listen<UnreadEvent>("unread-count", (event) => {
     refreshUnread(event.payload.serviceId, event.payload.count);
+  });
+  await listen<Snapshot>("app-snapshot", (event) => {
+    applySnapshot(event.payload);
   });
 
   presets = await invoke<Preset[]>("list_presets");

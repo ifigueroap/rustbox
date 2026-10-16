@@ -347,5 +347,9 @@ mod tests {
             script.contains("window.__rustboxSetSound"),
             "inject.js must expose the sound switch"
         );
+        assert!(
+            script.contains("apply_service_shortcut"),
+            "inject.js must forward service shortcuts"
+        );
     }
 }

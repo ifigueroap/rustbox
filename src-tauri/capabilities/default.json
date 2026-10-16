@@ -17,6 +17,7 @@
     "allow-set-sidebar-collapsed",
     "allow-set-service-sound",
     "allow-set-service-notifications",
-    "allow-set-do-not-disturb"
+    "allow-set-do-not-disturb",
+    "allow-apply-service-shortcut"
   ]
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-service-shortcut"
+description = "Enables the apply_service_shortcut command without any pre-configured scope."
+commands.allow = ["apply_service_shortcut"]
+
+[[permission]]
+identifier = "deny-apply-service-shortcut"
+description = "Denies the apply_service_shortcut command without any pre-configured scope."
+commands.deny = ["apply_service_shortcut"]

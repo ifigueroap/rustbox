@@ -72,6 +72,23 @@ Right-click a service in the sidebar to turn that service's sound or its badges 
 
 Adding the same preset twice creates a second isolated account (`WhatsApp` and `WhatsApp 2`).
 
+### Keyboard
+
+These chords work from the desk and from inside a service. On macOS, use Command instead of Ctrl. They follow the current sidebar order and are not saved separately.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+1 … Ctrl+9 | Open that service, first through ninth |
+| Ctrl+Tab | Next service. From the desk, this opens the first one |
+| Ctrl+Shift+Tab | Previous service. From the desk, this opens the last one |
+| Ctrl+Shift+D | Open the desk |
+
+A number past the end of the list does nothing. Ctrl+0 is left for the service page's own zoom.
+
+### Tray
+
+While Rustbox is running it keeps a tray icon, using the app icon. Left-click or double-click shows and focuses the window. The menu has **Show window**, **Hide window**, and **Quit**. On Linux the panel does not deliver that click, so use **Show window** there.
+
 ### Where data lives
 
 The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`:

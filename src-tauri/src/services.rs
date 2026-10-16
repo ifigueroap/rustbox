@@ -16,6 +16,7 @@ use crate::config::{
     legacy_session_roots,
 };
 use crate::policy::{self, PopupDecision};
+use crate::shortcuts::{self, ShortcutDestination};
 
 pub struct RuntimeState {
     pub config_path: PathBuf,
@@ -184,6 +185,45 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Apply a shell shortcut using the current sidebar order. Returns whether
+/// the open service changed. Emits `app-snapshot` so the desk updates when
+/// the key came from a service webview.
+pub fn apply_shortcut(
+    app: &AppHandle,
+    key: &str,
+    ctrl_or_meta: bool,
+    shift: bool,
+    alt: bool,
+) -> Result<bool, String> {
+    let Some(shortcut) = shortcuts::parse_service_shortcut(key, ctrl_or_meta, shift, alt) else {
+        return Ok(false);
+    };
+    let (ids, active_index) = {
+        let state = app.state::<RuntimeState>();
+        let config = lock(&state.config);
+        let ids: Vec<String> = config
+            .services
+            .iter()
+            .map(|service| service.id.clone())
+            .collect();
+        let active = lock(&state.active_id).clone();
+        let active_index = active
+            .as_ref()
+            .and_then(|id| ids.iter().position(|item| item == id));
+        (ids, active_index)
+    };
+    let Some(destination) = shortcuts::shortcut_destination(ids.len(), active_index, shortcut)
+    else {
+        return Ok(false);
+    };
+    match destination {
+        ShortcutDestination::Desk => set_active(app, None)?,
+        ShortcutDestination::Service(index) => set_active(app, Some(ids[index].clone()))?,
+    }
+    let _ = app.emit("app-snapshot", snapshot(app));
+    Ok(true)
 }
 
 pub fn close_service_webview(app: &AppHandle, id: &str) -> Result<(), String> {

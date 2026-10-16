@@ -7,5 +7,9 @@
   "remote": {
     "urls": ["https://*/*", "http://*/*", "https://*", "http://*"]
   },
-  "permissions": ["allow-forward-notification", "allow-open-external"]
+  "permissions": [
+    "allow-forward-notification",
+    "allow-open-external",
+    "allow-apply-service-shortcut"
+  ]
 }
