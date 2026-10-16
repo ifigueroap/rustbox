@@ -14,6 +14,7 @@ fn main() {
             "set_service_notifications",
             "set_do_not_disturb",
             "apply_service_shortcut",
+            "reload_service",
             "open_external",
             "forward_notification",
         ]),

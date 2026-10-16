@@ -86,6 +86,26 @@ function isServiceShortcut(event: KeyboardEvent): boolean {
   return event.shiftKey && event.key.toLowerCase() === "d";
 }
 
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // The webview can reject the async clipboard. The selection path below still works.
+    }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.append(area);
+  area.select();
+  document.execCommand("copy");
+  area.remove();
+}
+
 function must<T extends Element>(selector: string): T {
   const node = document.querySelector(selector);
   if (!node) throw new Error(`Missing ${selector}`);
@@ -701,6 +721,26 @@ async function boot(): Promise<void> {
   must<HTMLButtonElement>("#service-menu-notes").addEventListener("click", () => {
     const service = services.find((item) => item.id === menuServiceId);
     if (service) void setServiceFlag(service.id, "notifications", !service.notificationsEnabled);
+  });
+  must<HTMLButtonElement>("#service-menu-reload").addEventListener("click", () => {
+    const id = menuServiceId;
+    if (!id) return;
+    closeServiceMenu();
+    void run(async () => {
+      applySnapshot(await invoke<Snapshot>("reload_service", { id }));
+    });
+  });
+  must<HTMLButtonElement>("#service-menu-copy").addEventListener("click", () => {
+    const service = services.find((item) => item.id === menuServiceId);
+    if (!service) return;
+    closeServiceMenu();
+    void copyText(service.url);
+  });
+  must<HTMLButtonElement>("#service-menu-browser").addEventListener("click", () => {
+    const service = services.find((item) => item.id === menuServiceId);
+    if (!service) return;
+    closeServiceMenu();
+    void run(() => invoke("open_external", { url: service.url }));
   });
   const menu = must<HTMLElement>("#service-menu");
   menu.addEventListener("contextmenu", (event) => event.preventDefault());
