@@ -107,6 +107,11 @@
       return;
     }
 
+    const sameService = sameSite(window.location.hostname, url.hostname);
+    if (sameService && anchor.target === "_blank") {
+      anchor.target = "_self";
+    }
+
     const newWindow =
       event.metaKey ||
       event.ctrlKey ||
@@ -115,14 +120,18 @@
       event.button === 1 ||
       anchor.target === "_blank";
 
-    if (scheme === "mailto" || scheme === "tel" || (newWindow && !isAuth(url.hostname))) {
+    if (
+      scheme === "mailto" ||
+      scheme === "tel" ||
+      (newWindow && !sameService && !isAuth(url.hostname))
+    ) {
       event.preventDefault();
       event.stopPropagation();
       openExternal(url.toString());
       return;
     }
 
-    if (!newWindow && !sameSite(window.location.hostname, url.hostname) && !isAuth(url.hostname)) {
+    if (!newWindow && !sameService && !isAuth(url.hostname)) {
       event.preventDefault();
       event.stopPropagation();
       openExternal(url.toString());

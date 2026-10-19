@@ -1,6 +1,6 @@
 [package]
 name = "rustbox"
-version = "0.3.0" # x-release-please-version
+version = "0.3.1" # x-release-please-version
 description = "A desktop shell that hosts multiple web services in one window"
 authors = ["Ismael Figueroa"]
 edition = "2024"
