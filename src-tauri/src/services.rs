@@ -25,6 +25,7 @@ pub struct RuntimeState {
     pub active_id: Mutex<Option<String>>,
     pub unread: Mutex<HashMap<String, u32>>,
     pub notify_times: Mutex<HashMap<String, VecDeque<Instant>>>,
+    pub workspace_icons: Mutex<HashMap<String, String>>,
     pub ops: Mutex<()>,
 }
 
@@ -35,6 +36,7 @@ pub struct ServiceDto {
     pub name: String,
     pub url: String,
     pub icon: Option<String>,
+    pub workspace_icon: Option<String>,
     pub color: String,
     pub user_agent: Option<String>,
     pub use_chrome_user_agent: bool,
@@ -96,6 +98,7 @@ impl RuntimeState {
             active_id: Mutex::new(None),
             unread: Mutex::new(HashMap::new()),
             notify_times: Mutex::new(HashMap::new()),
+            workspace_icons: Mutex::new(HashMap::new()),
             ops: Mutex::new(()),
         })
     }
@@ -106,6 +109,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
     let config = lock(&state.config);
     let active_id = lock(&state.active_id).clone();
     let unread = lock(&state.unread);
+    let workspace_icons = lock(&state.workspace_icons);
     let services = config
         .services
         .iter()
@@ -118,6 +122,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 name: service.name.clone(),
                 url: service.url.clone(),
                 icon: service.icon.clone(),
+                workspace_icon: workspace_icons.get(&service.id).cloned(),
                 color: service.color.clone(),
                 user_agent: service.user_agent.clone(),
                 use_chrome_user_agent: service.use_chrome_user_agent,
@@ -291,6 +296,7 @@ pub fn clear_runtime_service(app: &AppHandle, id: &str) {
     let state = app.state::<RuntimeState>();
     lock(&state.unread).remove(id);
     lock(&state.notify_times).remove(id);
+    lock(&state.workspace_icons).remove(id);
     let mut active = lock(&state.active_id);
     if active.as_deref() == Some(id) {
         *active = None;
@@ -407,6 +413,77 @@ pub fn forward_notification(
     builder.show().map_err(|err| err.to_string())
 }
 
+pub fn report_workspace_icon(
+    app: &AppHandle,
+    label: &str,
+    raw_icon_url: &str,
+) -> Result<(), String> {
+    let Some(service_id) = label.strip_prefix("svc-").filter(|id| !id.is_empty()) else {
+        return Err("workspace icons are only accepted from service webviews".into());
+    };
+    let state = app.state::<RuntimeState>();
+    let (service_url, preset) = {
+        let config = lock(&state.config);
+        let service = config
+            .services
+            .iter()
+            .find(|service| service.id == service_id)
+            .ok_or_else(|| "service not found".to_string())?;
+        let preset = service.preset.clone();
+        if !matches!(preset.as_deref(), Some("slack" | "zulip")) {
+            return Err("workspace icons are only accepted for Slack and Zulip".into());
+        }
+        (Url::parse(&service.url).map_err(|err| err.to_string())?, preset)
+    };
+
+    if raw_icon_url.is_empty() {
+        if lock(&state.workspace_icons).remove(service_id).is_some() {
+            let _ = app.emit("app-snapshot", snapshot(app));
+        }
+        return Ok(());
+    }
+
+    let icon_url = Url::parse(raw_icon_url).map_err(|err| format!("icon URL: {err}"))?;
+    if !matches!(icon_url.scheme(), "http" | "https")
+        || !icon_url.username().is_empty()
+        || icon_url.password().is_some()
+        || icon_url.host_str().is_none()
+        || raw_icon_url.len() > 2000
+    {
+        return Err("workspace icon URL must be a valid http(s) URL".into());
+    }
+
+    let allowed = match preset.as_deref() {
+        Some("slack") => {
+            let host = icon_url.host_str().unwrap_or("").to_ascii_lowercase();
+            icon_url.scheme() == "https"
+                && ["slack-edge.com", "slack-imgs.com", "slack.com"]
+                    .iter()
+                    .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+        }
+        Some("zulip") => icon_url.origin() == service_url.origin(),
+        _ => false,
+    };
+    if !allowed {
+        return Err("workspace icon URL is not hosted by the service".into());
+    }
+
+    let icon_url = icon_url.to_string();
+    let changed = {
+        let mut icons = lock(&state.workspace_icons);
+        if icons.get(service_id) == Some(&icon_url) {
+            false
+        } else {
+            icons.insert(service_id.to_string(), icon_url);
+            true
+        }
+    };
+    if changed {
+        let _ = app.emit("app-snapshot", snapshot(app));
+    }
+    Ok(())
+}
+
 pub fn refresh_title_if_active(app: &AppHandle, id: &str) {
     let state = app.state::<RuntimeState>();
     let active = lock(&state.active_id).clone();
@@ -474,10 +551,12 @@ fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
     }
 }
 
-fn initialization_script(muted: bool) -> String {
+fn initialization_script(muted: bool, preset: Option<&str>) -> String {
     let enabled = if muted { "false" } else { "true" };
+    let preset = serde_json::to_string(preset.unwrap_or_default())
+        .unwrap_or_else(|_| "\"\"".to_string());
     format!(
-        "{}\nwindow.__rustboxSetSound({enabled});",
+        "window.__rustboxServicePreset = {preset};\n{}\nwindow.__rustboxSetSound({enabled});",
         include_str!("inject.js")
     )
 }
@@ -510,7 +589,8 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
 
     let muted = service_sound_muted(app, &service.id);
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
-        .initialization_script(initialization_script(muted))
+        .disable_drag_drop_handler()
+        .initialization_script(initialization_script(muted, service.preset.as_deref()))
         .on_navigation(|target| policy::allow_main_navigation(target))
         .on_new_window(move |target, _features| {
             match policy::popup_decision(&popup_home, &target) {

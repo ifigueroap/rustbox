@@ -70,7 +70,7 @@ Right-click a service in the sidebar to turn that service's sound or its badges 
 
 **Add** opens the services dialog:
 
-- Presets: WhatsApp Web, Slack, Discord, Zulip, Telegram Web, Grok, ChatGPT, and Claude. Each preset uses a brand icon bundled with the app, so the sidebar still shows it offline. Zulip asks for your server URL, for example `https://your-org.zulipchat.com`.
+- Presets: WhatsApp Web, Slack, Discord, Zulip, Telegram Web, Grok, ChatGPT, and Claude. Each preset uses a brand icon bundled with the app, so the sidebar still shows it offline. Slack and Zulip use their custom workspace or organization icon when available. Zulip asks for your server URL, for example `https://your-org.zulipchat.com`.
 - A custom service is a name, an `http` or `https` URL, an optional icon (image URL or a short emoji), a color, and a user-agent setting. With no icon of its own, Rustbox tries that site's favicon and falls back to a letter.
 - Drag icons in the sidebar to reorder. Remove deletes that service's saved session.
 

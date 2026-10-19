@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.2](https://github.com/ifigueroap/rustbox/compare/v0.3.1...v0.3.2) (2026-10-19)
+
+### Features
+
+* use custom Slack and Zulip workspace icons when available
+* accept file drops in hosted services
+
+### Bug Fixes
+
+* show the active Do Not Disturb state in its toolbar icon
+
 ## [0.3.1](https://github.com/ifigueroap/rustbox/compare/v0.3.0...v0.3.1) (2026-10-19)
 
 ### Bug Fixes

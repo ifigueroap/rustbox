@@ -88,6 +88,92 @@
     invoke("open_external", { url: String(url) });
   }
 
+  function workspaceKey() {
+    if (window.__rustboxServicePreset === "slack") {
+      return window.location.pathname.match(/\/client\/([^/]+)/)?.[1] || "";
+    }
+    return window.location.origin;
+  }
+
+  function slackWorkspaceIcon() {
+    const candidates = [
+      document.querySelector(".team_icon"),
+      document.querySelector('[data-qa="workspace-icon"]'),
+      document.querySelector('[data-qa="workspace-switcher"] img'),
+    ];
+    for (const node of candidates) {
+      if (!node) continue;
+      const image = node instanceof HTMLImageElement ? node.currentSrc || node.src : "";
+      const background = getComputedStyle(node).backgroundImage;
+      const match = background.match(/^url\(["']?(.*?)["']?\)$/);
+      const source = image || match?.[1];
+      if (source && source !== "none") return new URL(source, window.location.href).href;
+    }
+    return null;
+  }
+
+  function zulipWorkspaceIcon() {
+    const params = document.querySelector("#page-params")?.getAttribute("data-params");
+    if (!params) return null;
+    try {
+      const data = JSON.parse(params);
+      if (!data.realm_icon_url || data.realm_icon_source === "G") return null;
+      return new URL(data.realm_icon_url, window.location.href).href;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  if (window.__rustboxServicePreset === "slack" || window.__rustboxServicePreset === "zulip") {
+    let lastWorkspace = workspaceKey();
+    let lastIcon = "";
+    let scanTimer = 0;
+    let workspaceChangedAt = 0;
+    const report = (iconUrl) => invoke("report_workspace_icon", { iconUrl });
+    const scan = () => {
+      const workspace = workspaceKey();
+      if (workspace !== lastWorkspace) {
+        lastWorkspace = workspace;
+        lastIcon = "";
+        workspaceChangedAt = Date.now();
+        report("");
+        return;
+      }
+      if (Date.now() - workspaceChangedAt < 750) return;
+      const iconUrl = window.__rustboxServicePreset === "slack"
+        ? slackWorkspaceIcon()
+        : zulipWorkspaceIcon();
+      if (iconUrl && iconUrl !== lastIcon) {
+        lastIcon = iconUrl;
+        report(iconUrl);
+      }
+    };
+    const scheduleScan = () => {
+      if (scanTimer) window.clearTimeout(scanTimer);
+      scanTimer = window.setTimeout(() => {
+        scanTimer = 0;
+        scan();
+      }, 250);
+    };
+    const startIconObserver = () => {
+      if (!document.documentElement) return;
+      new MutationObserver(scheduleScan).observe(document.documentElement, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+      scan();
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", startIconObserver, { once: true });
+    } else {
+      startIconObserver();
+    }
+    window.addEventListener("popstate", scheduleScan);
+    window.addEventListener("hashchange", scheduleScan);
+    window.setInterval(scan, 2000);
+  }
+
   function onAnchorClick(event) {
     if (event.defaultPrevented) return;
     const source = event.target;

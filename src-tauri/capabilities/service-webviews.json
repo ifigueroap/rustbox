@@ -9,6 +9,7 @@
   },
   "permissions": [
     "allow-forward-notification",
+    "allow-report-workspace-icon",
     "allow-open-external",
     "allow-apply-service-shortcut"
   ]

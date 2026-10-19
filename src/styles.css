@@ -322,6 +322,18 @@ button:focus-visible {
   flex: none;
 }
 
+.dnd-off-mark {
+  display: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.dnd-button[aria-pressed="true"] .dnd-off-mark {
+  display: block;
+}
+
 #shell.sidebar-collapsed .dnd-button {
   width: 42px;
   height: 42px;

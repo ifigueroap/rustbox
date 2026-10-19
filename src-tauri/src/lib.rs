@@ -181,6 +181,15 @@ fn forward_notification(
     services::forward_notification(&app, webview.label(), &title, &body)
 }
 
+#[tauri::command]
+fn report_workspace_icon(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    icon_url: String,
+) -> Result<(), String> {
+    services::report_workspace_icon(&app, webview.label(), &icon_url)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -226,6 +235,7 @@ pub fn run() {
             reload_service,
             open_external,
             forward_notification,
+            report_workspace_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running rustbox");

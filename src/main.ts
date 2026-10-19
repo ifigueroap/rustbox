@@ -8,6 +8,7 @@ interface Service {
   name: string;
   url: string;
   icon?: string | null;
+  workspaceIcon?: string | null;
   color: string;
   userAgent?: string | null;
   useChromeUserAgent: boolean;
@@ -49,6 +50,7 @@ interface IconTarget {
   name: string;
   color: string;
   icon?: string | null;
+  workspaceIcon?: string | null;
   preset?: string | null;
   url?: string | null;
 }
@@ -211,6 +213,17 @@ function paintAvatar(node: HTMLElement, target: IconTarget): void {
   }
   const preset = target.preset ?? "";
   const brand = BRAND_ICONS[preset];
+  const workspaceIcon = target.workspaceIcon?.trim() ?? "";
+  if (workspaceIcon && (preset === "slack" || preset === "zulip")) {
+    node.classList.add("tile");
+    node.style.background = "transparent";
+    mountImage(
+      node,
+      [workspaceIcon, ...(brand ? [brand] : [])],
+      () => paintLetter(node, target.name, color),
+    );
+    return;
+  }
   if (brand) {
     const glyph = GLYPH_BRANDS.has(preset);
     node.classList.add(glyph ? "glyph" : "tile");
@@ -326,7 +339,9 @@ function renderSidebar(): void {
 
   const dnd = must<HTMLButtonElement>("#dnd-button");
   dnd.setAttribute("aria-pressed", doNotDisturb ? "true" : "false");
-  dnd.title = "Pause sounds and notifications for every service.";
+  dnd.title = doNotDisturb
+    ? "Do not disturb is on. Click to turn it off."
+    : "Pause sounds and notifications for every service.";
   dnd.setAttribute("aria-label", dnd.title);
 
   const list = must<HTMLElement>("#service-list");
