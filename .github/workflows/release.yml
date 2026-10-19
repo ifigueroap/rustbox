@@ -74,6 +74,10 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: npm run tauri build -- --target ${{ matrix.target }} --no-bundle
 
+      - name: Build Windows NSIS installer
+        if: matrix.platform == 'windows-latest'
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles nsis
+
       - name: Build Linux AppImage and binary
         if: matrix.platform == 'ubuntu-22.04'
         run: npm run tauri build -- --target ${{ matrix.target }} --bundles appimage
@@ -81,7 +85,15 @@ jobs:
       - name: Package Windows asset
         if: matrix.platform == 'windows-latest'
         run: |
+          set -euo pipefail
           cp "src-tauri/target/${{ matrix.target }}/release/rustbox.exe" rustbox-windows-x64.exe
+          INSTALLER=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/nsis" -type f -name '*-setup.exe' -print -quit)
+          if [ -z "$INSTALLER" ]; then
+            echo "NSIS installer was not produced"
+            find "src-tauri/target/${{ matrix.target }}/release/bundle" -type f | head -n 100
+            exit 1
+          fi
+          cp "$INSTALLER" rustbox-windows-x64-setup.exe
 
       - name: Package Linux assets
         if: matrix.platform == 'ubuntu-22.04'
@@ -104,7 +116,9 @@ jobs:
         if: matrix.platform == 'windows-latest'
         with:
           name: rustbox-windows-x64
-          path: rustbox-windows-x64.exe
+          path: |
+            rustbox-windows-x64.exe
+            rustbox-windows-x64-setup.exe
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -168,6 +182,7 @@ jobs:
           overwrite_files: true
           files: |
             artifacts/rustbox-windows-x64.exe
+            artifacts/rustbox-windows-x64-setup.exe
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.tar.gz
         env:
@@ -183,13 +198,17 @@ jobs:
           overwrite_files: true
           files: |
             artifacts/rustbox-windows-x64.exe
+            artifacts/rustbox-windows-x64-setup.exe
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.tar.gz
           body: |
-            Portable Rustbox ${{ steps.tag.outputs.name }} builds.
+            Rustbox ${{ steps.tag.outputs.name }} builds.
 
             ### Windows
-            Download `rustbox-windows-x64.exe` and run it. No installer. The machine needs the WebView2 runtime, which is already present on Windows 11 and current Windows 10.
+            - `rustbox-windows-x64-setup.exe` — install Rustbox for the current user.
+            - `rustbox-windows-x64.exe` — portable build.
+
+            Both need the WebView2 runtime, which is already present on Windows 11 and current Windows 10.
 
             ### Linux
             - `rustbox-linux-x64.AppImage` — `chmod +x rustbox-linux-x64.AppImage` and run it.

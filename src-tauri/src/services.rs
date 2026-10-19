@@ -12,7 +12,7 @@ use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
 use crate::config::{
-    Config, PRESETS, PresetInfo, Service, import_legacy_sessions, legacy_config_candidates,
+    Config, PRESETS, PresetInfo, Service, Theme, import_legacy_sessions, legacy_config_candidates,
     legacy_session_roots,
 };
 use crate::policy::{self, PopupDecision};
@@ -54,6 +54,7 @@ pub struct Snapshot {
     pub sessions_dir: String,
     pub sidebar_collapsed: bool,
     pub do_not_disturb: bool,
+    pub theme: Theme,
     pub app_version: String,
 }
 
@@ -135,6 +136,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         sessions_dir: state.sessions_dir.display().to_string(),
         sidebar_collapsed: config.sidebar_collapsed,
         do_not_disturb: config.do_not_disturb,
+        theme: config.theme,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/ifigueroap/rustbox/compare/v0.2.0...v0.3.0) (2026-10-19)
+
+### Features
+
+* add light, dark, and system appearance settings
+* add a Windows NSIS installer alongside the portable executable
+* improve sidebar context menus and Do Not Disturb indicators
+
 ## [0.2.0](https://github.com/ifigueroap/rustbox/compare/v0.1.2...v0.2.0) (2026-10-16)
 
 

@@ -10,9 +10,66 @@
   --panel: #24211c;
   --input: #12100e;
   --danger: #e15d4c;
+  --hover: #2a261f;
+  --active: #2e2923;
+  --brand-ink: #1c140c;
+  --rail-border: #5c5348;
+  --soft-panel: #1b1916;
+  --copper-hover: #ebc08f;
+  --danger-text: #ffb1a6;
+  --backdrop: rgba(10, 8, 6, 0.68);
+  --shadow: rgba(0, 0, 0, 0.35);
   --sidebar-width: 228px;
   --sidebar-collapsed-width: 72px;
   font-family: "Segoe UI", "Noto Sans", Ubuntu, sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f4ef;
+  --sidebar: #ebe6df;
+  --line: #d3cabc;
+  --text: #29251f;
+  --muted: #766e63;
+  --copper: #9f5927;
+  --copper-deep: #76421e;
+  --panel: #fffdf9;
+  --input: #f5f1e9;
+  --danger: #b84235;
+  --hover: #e3ddd3;
+  --active: #ded5c8;
+  --brand-ink: #fff8ee;
+  --rail-border: #b8aa97;
+  --soft-panel: #f0ece5;
+  --copper-hover: #b66a31;
+  --danger-text: #a52f27;
+  --backdrop: rgba(28, 22, 16, 0.34);
+  --shadow: rgba(42, 32, 20, 0.16);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    color-scheme: light;
+    --bg: #f7f4ef;
+    --sidebar: #ebe6df;
+    --line: #d3cabc;
+    --text: #29251f;
+    --muted: #766e63;
+    --copper: #9f5927;
+    --copper-deep: #76421e;
+    --panel: #fffdf9;
+    --input: #f5f1e9;
+    --danger: #b84235;
+    --hover: #e3ddd3;
+    --active: #ded5c8;
+    --brand-ink: #fff8ee;
+    --rail-border: #b8aa97;
+    --soft-panel: #f0ece5;
+    --copper-hover: #b66a31;
+    --danger-text: #a52f27;
+    --backdrop: rgba(28, 22, 16, 0.34);
+    --shadow: rgba(42, 32, 20, 0.16);
+  }
 }
 
 * {
@@ -70,7 +127,7 @@ button {
 
 .brand.current,
 .brand:hover {
-  background: #2a261f;
+  background: var(--hover);
 }
 
 .brand.current {
@@ -85,7 +142,7 @@ button {
   place-items: center;
   border-radius: 10px;
   background: var(--copper);
-  color: #1c140c;
+  color: var(--brand-ink);
   font-family: Palatino, "Palatino Linotype", Georgia, serif;
   font-weight: 700;
   letter-spacing: -0.04em;
@@ -173,11 +230,11 @@ button {
 
 .svc:hover,
 .svc.drop-target {
-  background: #2a261f;
+  background: var(--hover);
 }
 
 .svc.active {
-  background: #2e2923;
+  background: var(--active);
   box-shadow: inset 3px 0 0 var(--svc, var(--copper));
 }
 
@@ -265,17 +322,6 @@ button:focus-visible {
   flex: none;
 }
 
-.dnd-button.is-on {
-  background: var(--copper);
-  color: #1c140c;
-  border-color: var(--copper);
-  font-weight: 650;
-}
-
-.dnd-button.is-on .dnd-icon {
-  position: relative;
-}
-
 #shell.sidebar-collapsed .dnd-button {
   width: 42px;
   height: 42px;
@@ -286,10 +332,6 @@ button:focus-visible {
 
 #shell.sidebar-collapsed .dnd-label {
   display: none;
-}
-
-#shell.sidebar-collapsed .dnd-button.is-on {
-  box-shadow: inset 0 0 0 2px #1c140c;
 }
 
 .rail-footer {
@@ -303,7 +345,7 @@ button:focus-visible {
 .rail-button {
   width: 42px;
   height: 42px;
-  border: 1px dashed #5c5348;
+  border: 1px dashed var(--rail-border);
   border-radius: 12px;
   background: transparent;
   color: var(--copper);
@@ -317,7 +359,7 @@ button:focus-visible {
 }
 
 .rail-button:hover {
-  background: #2a261f;
+  background: var(--hover);
 }
 
 #stage {
@@ -345,6 +387,22 @@ button:focus-visible {
   align-items: center;
   gap: 12px;
   flex: none;
+}
+
+.appearance-control {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.appearance-control select {
+  min-width: 88px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--text);
+  padding: 6px 8px;
 }
 
 .version {
@@ -411,7 +469,7 @@ button:focus-visible {
 .editor-actions button,
 .ghost {
   border: 1px solid var(--line);
-  background: #1b1916;
+  background: var(--soft-panel);
   border-radius: 999px;
   padding: 6px 12px;
 }
@@ -420,7 +478,7 @@ button:focus-visible {
 #dash-add {
   border: 0;
   background: var(--copper);
-  color: #1c140c;
+  color: var(--brand-ink);
   font-weight: 650;
 }
 
@@ -488,7 +546,7 @@ h3 {
   border: 0;
   border-radius: 999px;
   background: var(--copper);
-  color: #1c140c;
+  color: var(--brand-ink);
   padding: 10px 16px;
   font-weight: 650;
 }
@@ -498,7 +556,7 @@ h3 {
 #server-url-add:hover,
 .row-button:hover,
 .card-actions .open:hover {
-  background: #ebc08f;
+  background: var(--copper-hover);
 }
 
 #stage-status {
@@ -519,7 +577,7 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgba(10, 8, 6, 0.68);
+  background: var(--backdrop);
 }
 
 .manager-card {
@@ -529,7 +587,7 @@ dialog::backdrop {
   padding: 22px;
   max-height: calc(100vh - 48px);
   overflow: auto;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 24px 80px var(--shadow);
 }
 
 .manager-head {
@@ -550,17 +608,17 @@ dialog::backdrop {
 }
 
 .danger {
-  color: #ffb1a6;
+  color: var(--danger-text);
 }
 
 .text-button:hover,
 .danger:hover {
-  background: #322d27;
+  background: var(--hover);
 }
 
 .error {
   margin: 0 0 12px;
-  color: #ffb1a6;
+  color: var(--danger-text);
 }
 
 .preset-grid {
@@ -575,7 +633,7 @@ dialog::backdrop {
   gap: 10px;
   text-align: left;
   border: 1px solid var(--line);
-  background: #1b1916;
+  background: var(--soft-panel);
   border-radius: 12px;
   padding: 8px;
 }
@@ -657,7 +715,7 @@ input[type="color"] {
 .order-buttons button,
 .row-actions button {
   border: 1px solid var(--line);
-  background: #1b1916;
+  background: var(--soft-panel);
   border-radius: 8px;
   min-width: 32px;
   height: 32px;
@@ -689,58 +747,4 @@ input[type="color"] {
 .empty-desk {
   color: var(--muted);
   margin: 0;
-}
-
-.service-menu {
-  position: fixed;
-  z-index: 20;
-  min-width: 220px;
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-}
-
-.service-menu[hidden] {
-  display: none;
-}
-
-.service-menu p {
-  margin: 0;
-  padding: 4px 8px 2px;
-  font-size: 13px;
-}
-
-#service-menu-title {
-  color: var(--text);
-  font-weight: 650;
-}
-
-.service-menu button {
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  text-align: left;
-  padding: 8px 10px;
-}
-
-.service-menu button[aria-checked="true"]::before {
-  content: "✓ ";
-  color: var(--copper);
-}
-
-.service-menu button[aria-checked="false"] {
-  color: var(--muted);
-}
-
-.service-menu button:hover {
-  background: #2a261f;
-}
-
-.menu-note {
-  color: var(--copper);
-  line-height: 1.4;
 }

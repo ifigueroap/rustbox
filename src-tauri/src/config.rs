@@ -16,6 +16,15 @@ fn default_color() -> String {
     "#8d8478".to_string()
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Preset {
     pub id: &'static str,
@@ -136,6 +145,8 @@ pub struct Config {
     /// Mutes page audio and hides badges and desktop notifications for every service.
     #[serde(default)]
     pub do_not_disturb: bool,
+    #[serde(default)]
+    pub theme: Theme,
 }
 
 impl Default for Config {
@@ -145,6 +156,7 @@ impl Default for Config {
             services: Vec::new(),
             sidebar_collapsed: false,
             do_not_disturb: false,
+            theme: Theme::Auto,
         }
     }
 }

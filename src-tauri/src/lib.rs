@@ -5,7 +5,7 @@ mod policy;
 mod services;
 mod shortcuts;
 
-use config::{NewService, ServiceUpdate};
+use config::{NewService, ServiceUpdate, Theme};
 use services::{RuntimeState, Snapshot};
 use tauri::menu::{Menu, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -137,6 +137,15 @@ fn set_do_not_disturb(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, 
 }
 
 #[tauri::command]
+fn set_theme(app: tauri::AppHandle, theme: Theme) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.theme = theme;
+        Ok(())
+    })?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 fn apply_service_shortcut(
     app: tauri::AppHandle,
     key: String,
@@ -212,6 +221,7 @@ pub fn run() {
             set_service_sound,
             set_service_notifications,
             set_do_not_disturb,
+            set_theme,
             apply_service_shortcut,
             reload_service,
             open_external,

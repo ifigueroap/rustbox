@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
+import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 
 interface Service {
   id: string;
@@ -32,8 +34,11 @@ interface Snapshot {
   sessionsDir: string;
   sidebarCollapsed: boolean;
   doNotDisturb: boolean;
+  theme: ThemePreference;
   appVersion: string;
 }
+
+type ThemePreference = "auto" | "light" | "dark";
 
 interface UnreadEvent {
   serviceId: string;
@@ -72,8 +77,10 @@ let configPath = "";
 let sessionsDir = "";
 let sidebarCollapsed = false;
 let doNotDisturb = false;
+let themePreference: ThemePreference = "auto";
 let appVersion = "";
-let menuServiceId: string | null = null;
+let serviceMenu: Menu | null = null;
+let serviceMenuItems: (CheckMenuItem | MenuItem | PredefinedMenuItem)[] = [];
 let pendingPreset: Preset | null = null;
 let draggingId: string | null = null;
 let suspendedId: string | null = null;
@@ -229,14 +236,21 @@ function applySnapshot(snapshot: Snapshot): void {
   sessionsDir = snapshot.sessionsDir;
   sidebarCollapsed = snapshot.sidebarCollapsed;
   doNotDisturb = snapshot.doNotDisturb;
+  themePreference = snapshot.theme;
   appVersion = snapshot.appVersion;
   if (editingId && !services.some((service) => service.id === editingId)) editingId = null;
   const active = services.find((service) => service.id === activeId);
   document.title = active ? `${active.name} - Rustbox` : "Rustbox";
   const shell = must<HTMLElement>("#shell");
   shell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
-  shell.classList.toggle("dnd-on", doNotDisturb);
+  applyTheme();
   render();
+}
+
+function applyTheme(): void {
+  document.documentElement.dataset.theme = themePreference;
+  const select = document.querySelector<HTMLSelectElement>("#theme-select");
+  if (select) select.value = themePreference;
 }
 
 async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
@@ -311,15 +325,9 @@ function renderSidebar(): void {
   if (chevron) chevron.textContent = sidebarCollapsed ? "›" : "‹";
 
   const dnd = must<HTMLButtonElement>("#dnd-button");
-  dnd.classList.toggle("is-on", doNotDisturb);
   dnd.setAttribute("aria-pressed", doNotDisturb ? "true" : "false");
-  const dndText = doNotDisturb ? "Do not disturb is on" : "Do not disturb";
-  dnd.title = doNotDisturb
-    ? "Do not disturb is on. Sounds and notifications are paused for every service."
-    : "Pause sounds and notifications for every service.";
+  dnd.title = "Pause sounds and notifications for every service.";
   dnd.setAttribute("aria-label", dnd.title);
-  const dndLabel = dnd.querySelector(".dnd-label");
-  if (dndLabel) dndLabel.textContent = dndText;
 
   const list = must<HTMLElement>("#service-list");
   list.replaceChildren();
@@ -337,7 +345,7 @@ function renderSidebar(): void {
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      openServiceMenu(service.id, event.clientX, event.clientY);
+      void openServiceMenu(service.id, event.clientX, event.clientY);
     });
     button.addEventListener("dragstart", () => {
       draggingId = service.id;
@@ -381,7 +389,6 @@ function renderSidebar(): void {
     }
     list.append(button);
   }
-  updateServiceMenu();
 }
 
 function renderStage(): void {
@@ -634,56 +641,69 @@ function refreshUnread(serviceId: string, count: number): void {
 }
 
 function soundOff(service: Service): boolean {
-  return doNotDisturb || !service.soundEnabled;
+  return !doNotDisturb && !service.soundEnabled;
 }
 
 function serviceTitle(service: Service): string {
   const parts = [service.unread > 0 ? `${service.name} (${service.unread})` : service.name];
-  if (doNotDisturb) parts.push("Paused by Do not disturb");
-  else {
-    if (!service.soundEnabled) parts.push("Sound off");
-    if (!service.notificationsEnabled) parts.push("Notifications off");
-  }
+  if (!doNotDisturb && !service.soundEnabled) parts.push("Sound off");
+  if (!doNotDisturb && !service.notificationsEnabled) parts.push("Notifications off");
   return parts.join(". ");
 }
 
-function openServiceMenu(serviceId: string, x: number, y: number): void {
-  menuServiceId = serviceId;
-  const menu = must<HTMLElement>("#service-menu");
-  menu.hidden = false;
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-  updateServiceMenu();
-  const rect = menu.getBoundingClientRect();
-  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
-  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
+async function closeServiceMenu(): Promise<void> {
+  const menu = serviceMenu;
+  const items = serviceMenuItems;
+  serviceMenu = null;
+  serviceMenuItems = [];
+  if (menu) await menu.close();
+  await Promise.all(items.map((item) => item.close()));
 }
 
-function closeServiceMenu(): void {
-  menuServiceId = null;
-  const menu = document.querySelector<HTMLElement>("#service-menu");
-  if (menu) menu.hidden = true;
-}
+async function openServiceMenu(serviceId: string, x: number, y: number): Promise<void> {
+  try {
+    await closeServiceMenu();
+    const service = services.find((item) => item.id === serviceId);
+    if (!service) return;
 
-function updateServiceMenu(): void {
-  const menu = document.querySelector<HTMLElement>("#service-menu");
-  if (!menu || menu.hidden || !menuServiceId) return;
-  const service = services.find((item) => item.id === menuServiceId);
-  if (!service) {
-    closeServiceMenu();
-    return;
+    const items: (CheckMenuItem | MenuItem | PredefinedMenuItem)[] = [];
+    const add = <T extends CheckMenuItem | MenuItem | PredefinedMenuItem>(item: T): T => {
+      items.push(item);
+      serviceMenuItems.push(item);
+      return item;
+    };
+
+    add(await MenuItem.new({ text: service.name, enabled: false }));
+    add(await PredefinedMenuItem.new({ item: "Separator" }));
+    add(await CheckMenuItem.new({
+      text: "Sound",
+      checked: service.soundEnabled,
+      action: () => void setServiceFlag(service.id, "sound", !service.soundEnabled),
+    }));
+    add(await CheckMenuItem.new({
+      text: "Notifications",
+      checked: service.notificationsEnabled,
+      action: () => void setServiceFlag(service.id, "notifications", !service.notificationsEnabled),
+    }));
+    add(await PredefinedMenuItem.new({ item: "Separator" }));
+    add(await MenuItem.new({
+      text: "Reload",
+      action: () => void run(async () => {
+        applySnapshot(await invoke<Snapshot>("reload_service", { id: service.id }));
+      }),
+    }));
+    add(await MenuItem.new({ text: "Copy URL", action: () => void copyText(service.url) }));
+    add(await MenuItem.new({
+      text: "Open in browser",
+      action: () => void run(() => invoke("open_external", { url: service.url })),
+    }));
+
+    serviceMenu = await Menu.new({ items });
+    await serviceMenu.popup(new LogicalPosition(x, y));
+  } catch (error) {
+    await closeServiceMenu();
+    showError(errorText(error));
   }
-  must<HTMLElement>("#service-menu-title").textContent = service.name;
-  const sound = must<HTMLButtonElement>("#service-menu-sound");
-  const notes = must<HTMLButtonElement>("#service-menu-notes");
-  sound.setAttribute("aria-checked", service.soundEnabled ? "true" : "false");
-  notes.setAttribute("aria-checked", service.notificationsEnabled ? "true" : "false");
-  sound.textContent = service.soundEnabled ? "Sound on" : "Sound off";
-  notes.textContent = service.notificationsEnabled ? "Notifications on" : "Notifications off";
-  const hint = must<HTMLElement>("#service-menu-note");
-  hint.hidden = !doNotDisturb;
 }
 
 async function setServiceFlag(id: string, kind: "sound" | "notifications", enabled: boolean): Promise<void> {
@@ -693,11 +713,20 @@ async function setServiceFlag(id: string, kind: "sound" | "notifications", enabl
 }
 
 async function setDoNotDisturb(enabled: boolean): Promise<void> {
-  const shell = must<HTMLElement>("#shell");
-  shell.classList.toggle("dnd-on", enabled);
   const snapshot = await run(() => invoke<Snapshot>("set_do_not_disturb", { enabled }));
   if (snapshot) applySnapshot(snapshot);
-  else shell.classList.toggle("dnd-on", doNotDisturb);
+}
+
+async function setTheme(next: ThemePreference): Promise<void> {
+  const previous = themePreference;
+  themePreference = next;
+  applyTheme();
+  const snapshot = await run(() => invoke<Snapshot>("set_theme", { theme: next }));
+  if (snapshot) applySnapshot(snapshot);
+  else {
+    themePreference = previous;
+    applyTheme();
+  }
 }
 
 async function boot(): Promise<void> {
@@ -714,46 +743,12 @@ async function boot(): Promise<void> {
   must<HTMLButtonElement>("#dnd-button").addEventListener("click", () => {
     void setDoNotDisturb(!doNotDisturb);
   });
-  must<HTMLButtonElement>("#service-menu-sound").addEventListener("click", () => {
-    const service = services.find((item) => item.id === menuServiceId);
-    if (service) void setServiceFlag(service.id, "sound", !service.soundEnabled);
+  must<HTMLSelectElement>("#theme-select").addEventListener("change", (event) => {
+    const select = event.currentTarget as HTMLSelectElement;
+    if (select.value === "auto" || select.value === "light" || select.value === "dark") {
+      void setTheme(select.value);
+    }
   });
-  must<HTMLButtonElement>("#service-menu-notes").addEventListener("click", () => {
-    const service = services.find((item) => item.id === menuServiceId);
-    if (service) void setServiceFlag(service.id, "notifications", !service.notificationsEnabled);
-  });
-  must<HTMLButtonElement>("#service-menu-reload").addEventListener("click", () => {
-    const id = menuServiceId;
-    if (!id) return;
-    closeServiceMenu();
-    void run(async () => {
-      applySnapshot(await invoke<Snapshot>("reload_service", { id }));
-    });
-  });
-  must<HTMLButtonElement>("#service-menu-copy").addEventListener("click", () => {
-    const service = services.find((item) => item.id === menuServiceId);
-    if (!service) return;
-    closeServiceMenu();
-    void copyText(service.url);
-  });
-  must<HTMLButtonElement>("#service-menu-browser").addEventListener("click", () => {
-    const service = services.find((item) => item.id === menuServiceId);
-    if (!service) return;
-    closeServiceMenu();
-    void run(() => invoke("open_external", { url: service.url }));
-  });
-  const menu = must<HTMLElement>("#service-menu");
-  menu.addEventListener("contextmenu", (event) => event.preventDefault());
-  document.addEventListener("pointerdown", (event) => {
-    if (menu.hidden) return;
-    if (event.target instanceof Node && menu.contains(event.target)) return;
-    closeServiceMenu();
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeServiceMenu();
-  });
-  window.addEventListener("resize", () => closeServiceMenu());
-  must<HTMLElement>("#service-list").addEventListener("scroll", () => closeServiceMenu());
   must<HTMLButtonElement>("#manage-button").addEventListener("click", () => {
     void openManager();
   });

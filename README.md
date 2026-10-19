@@ -6,9 +6,10 @@ The shell is [Tauri](https://v2.tauri.app/) 2 on the system webview: WebView2 on
 
 ## Run it from a release
 
-Published builds are portable. There is no installer.
+Published Windows builds include an installer and a portable executable.
 
-- **Windows:** download `rustbox-windows-x64.exe` and run it. Windows 11 and current Windows 10 already include the WebView2 runtime this executable needs.
+- **Windows installer:** download `rustbox-windows-x64-setup.exe` to install Rustbox for the current user. Windows 11 and current Windows 10 already include the WebView2 runtime it needs.
+- **Windows portable:** download `rustbox-windows-x64.exe` and run it. It also needs WebView2.
 - **Linux AppImage:** `chmod +x rustbox-linux-x64.AppImage` and run it.
 - **Linux binary:** extract `rustbox-linux-x64.tar.gz` and run `./rustbox`.
 
@@ -39,8 +40,11 @@ A production build:
 # Linux: AppImage plus the raw binary in src-tauri/target/release
 npm run tauri build -- --bundles appimage
 
-# Windows: portable exe, no installer
+# Windows: portable executable
 npm run tauri build -- --no-bundle
+
+# Windows: NSIS setup installer
+npm run tauri build -- --bundles nsis
 ```
 
 The Windows executable is `src-tauri/target/release/rustbox.exe` (or under `target/<triple>/release` when you pass `--target`).
@@ -60,9 +64,9 @@ npm run tauri icon src-tauri/app-icon.png
 
 ## Using the app
 
-The sidebar lists services by name and icon. Collapse it to an icon rail; the icons stay centered, the names stay on the tooltips, and that choice is saved in `config.json`. Click **rustbox** at the top of the sidebar to open the desk: a card for each service with its icon, unread count, and Open, Edit, and Remove actions, plus the app version. Click a service to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
+The sidebar lists services by name and icon. Collapse it to an icon rail; the icons stay centered, the names stay on the tooltips, and that choice is saved in `config.json`. Click **rustbox** at the top of the sidebar to open the desk: a card for each service with its icon, unread count, and Open, Edit, and Remove actions, plus the app version. Choose **Auto**, **Light**, or **Dark** under Appearance; Auto follows the operating system's color preference. The choice is saved in `config.json`. Click a service to show it. The webview stays alive when you switch away, so logins and drafts are still there when you come back.
 
-Right-click a service in the sidebar to turn that service's sound or its badges and desktop notifications on or off, reload its page, copy its URL, or open that URL in the system browser. Reload keeps the saved session. **Do not disturb**, under the service list, pauses sound and notifications for every service until you turn it off. Those choices are saved in `config.json`. A service with sound off shows a small mark on its icon. While Do not disturb is on, the control is filled in. Sound mutes that service's page audio. The operating system's own toast sound, when a notification is still allowed, follows the system settings.
+Right-click a service in the sidebar to turn that service's sound or its badges and desktop notifications on or off, reload its page, copy its URL, or open that URL in the system browser. Reload keeps the saved session. **Do not disturb**, under the service list, pauses sound and notifications for every service until you turn it off. It hides unread badges without adding an active highlight or other status mark; service sound-off marks are hidden while Do not disturb is on. Per-service choices and Do not disturb are saved in `config.json`. Sound mutes that service's page audio. The operating system's own toast sound, when a notification is still allowed, follows the system settings.
 
 **Add** opens the services dialog:
 
@@ -98,7 +102,7 @@ The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`
 | Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` |
 | Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` |
 
-`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, per-service sound and notification switches, and Do not disturb. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. The portable Windows `.exe` and the Linux AppImage use these same directories, not a folder next to the file.
+`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, per-service sound and notification switches, and Do not disturb. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. The portable Windows `.exe` and the Linux AppImage use these same directories, not a folder next to the file.
 
 The first published build used the bundle id `com.ifigueroa.rustbox` and stored sessions in `services/<id>`. Rustbox copies that older config forward when the current `config.json` is missing or its service list is empty, and an older file that actually has services exists. A current config that already lists services is left as it is. The search also checks `config.json.bak` beside either id, the data directory, and on Windows the LocalAppData folder. The older files are not deleted.
 
@@ -135,7 +139,7 @@ On every push to `master`, `.github/workflows/release-please.yml` runs Release P
 
 `release.yml` also runs when a `v*` tag is pushed and on manual `workflow_dispatch`. It builds:
 
-- `rustbox-windows-x64.exe` on `windows-latest`
+- `rustbox-windows-x64-setup.exe` (NSIS installer) and `rustbox-windows-x64.exe` (portable) on `windows-latest`
 - `rustbox-linux-x64.AppImage` and `rustbox-linux-x64.tar.gz` on `ubuntu-22.04`
 
 and uploads them to the GitHub Release. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets.
@@ -154,10 +158,10 @@ A tag created with `GITHUB_TOKEN` does not start `release.yml` on its own. Relea
 - **macOS is not built or tested.** The code selects a WebKit data-store id on macOS because `data_directory` is unavailable there, but there is no macOS workflow.
 - **Multiple webviews depend on Tauri's `unstable` API.** That API is the supported way to keep more than one webview in a single window, and it can still change. On Linux, Tauri currently packs those children into a vertical box and ignores the requested position, so Rustbox moves the shell and each service onto a single `GtkFixed` after creation.
 - **Linux is WebKit, not Chrome.** The Chrome user agent fixes the simple rejection check. WhatsApp Web and other sites can still refuse the session after inspecting browser features, service workers, or codecs. WebKitGTK 4.1 also has to be installed on the host.
-- **Windows portable builds need WebView2.** The `.exe` does not embed the runtime. Toasts from an unpackaged executable sometimes fail to register with Windows even when the in-app badge still updates.
+- **Windows builds need WebView2.** The installer and portable executable do not embed the runtime. Toasts from the portable executable sometimes fail to register with Windows even when the in-app badge still updates.
 - **Notification forwarding covers the page `Notification` constructor.** Service-worker push notifications are not forwarded. Linux needs a running notification daemon.
 - **Badges depend on the page title.** A service that shows an unread count only inside the page, with a static title, will not get a badge. Counts start at zero each launch until that webview loads.
 - **Popup OAuth is best-effort.** Redirect sign-in stays inside the webview. A login flow that depends on `window.opener` in a popup can still fail because the popup does not share the service session.
 - **External-link handling is click and `window.open` based.** A script that assigns `location` to another site stays in the webview, so a login redirect is not kicked out to the browser.
 - **Downloads, camera, microphone, and screen sharing** use whatever the system webview allows. They were not exercised in testing.
-- **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, and loading Telegram Web were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, or signing in to WhatsApp, Slack, or the other presets. The Windows executable is built by CI and was not run.
+- **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, and loading Telegram Web were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, or signing in to WhatsApp, Slack, or the other presets. The Windows builds are produced by CI and were not run.
