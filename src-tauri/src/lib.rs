@@ -4,11 +4,10 @@ mod linux_host;
 mod policy;
 mod services;
 mod shortcuts;
+mod tray;
 
 use config::{NewService, ServiceUpdate, Theme};
 use services::{RuntimeState, Snapshot};
-use tauri::menu::{Menu, MenuItemBuilder};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
 
 #[tauri::command]
@@ -40,6 +39,7 @@ fn add_custom(app: tauri::AppHandle, service: NewService) -> Result<Snapshot, St
         config.add_custom(service)?;
         Ok(())
     })?;
+    services::discard_unused_local_icons(&app);
     Ok(services::snapshot(&app))
 }
 
@@ -56,6 +56,7 @@ async fn update_service(app: tauri::AppHandle, service: ServiceUpdate) -> Result
     } else {
         services::refresh_title_if_active(&app, &id);
     }
+    services::discard_unused_local_icons(&app);
     Ok(services::snapshot(&app))
 }
 
@@ -68,6 +69,8 @@ async fn remove_service(app: tauri::AppHandle, id: String) -> Result<Snapshot, S
     })?;
     services::clear_runtime_service(&app, &id);
     services::delete_session_dir(&app, &id);
+    services::discard_unused_local_icons(&app);
+    tray::sync(&app);
     Ok(services::snapshot(&app))
 }
 
@@ -105,6 +108,7 @@ fn set_service_sound(app: tauri::AppHandle, id: String, enabled: bool) -> Result
         Ok(())
     })?;
     services::apply_sound_policy(&app);
+    tray::sync(&app);
     Ok(services::snapshot(&app))
 }
 
@@ -123,17 +127,25 @@ fn set_service_notifications(
         service.notifications_enabled = enabled;
         Ok(())
     })?;
+    tray::sync(&app);
     Ok(services::snapshot(&app))
 }
 
 #[tauri::command]
 fn set_do_not_disturb(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
-    services::mutate(&app, |config| {
-        config.do_not_disturb = enabled;
-        Ok(())
-    })?;
-    services::apply_sound_policy(&app);
+    tray::store_do_not_disturb(&app, enabled)?;
     Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_close_to_tray(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
+    tray::store_close_to_tray(&app, enabled)?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    tray::request_quit(&app);
 }
 
 #[tauri::command]
@@ -190,9 +202,29 @@ fn report_workspace_icon(
     services::report_workspace_icon(&app, webview.label(), &icon_url)
 }
 
+#[tauri::command]
+fn import_local_icon(
+    app: tauri::AppHandle,
+    bytes: Vec<u8>,
+    extension: String,
+) -> Result<String, String> {
+    services::import_local_icon(&app, &bytes, &extension)
+}
+
+#[tauri::command]
+fn read_local_icon(app: tauri::AppHandle, token: String) -> Result<String, String> {
+    services::read_local_icon(&app, &token)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let app = app.clone();
+            let _ = app.clone().run_on_main_thread(move || {
+                let _ = tray::reveal(&app);
+            });
+        }))
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let state = RuntimeState::load(app.handle()).map_err(box_err)?;
@@ -203,16 +235,20 @@ pub fn run() {
                 linux_host::install(&window);
             }
             if let Some(window) = app.get_webview_window("main") {
-                window.on_window_event(move |event| {
-                    if matches!(
-                        event,
-                        WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
-                    ) {
+                window.on_window_event(move |event| match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        if tray::should_hide_on_close(&handle) {
+                            api.prevent_close();
+                            let _ = tray::hide(&handle);
+                        }
+                    }
+                    WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                         let _ = services::sync_bounds(&handle);
                     }
+                    _ => {}
                 });
             }
-            if let Err(err) = install_tray(app.handle()) {
+            if let Err(err) = tray::install(app.handle()) {
                 eprintln!("rustbox: tray icon was not created: {err}");
             }
             Ok(())
@@ -230,12 +266,16 @@ pub fn run() {
             set_service_sound,
             set_service_notifications,
             set_do_not_disturb,
+            set_close_to_tray,
+            quit_app,
             set_theme,
             apply_service_shortcut,
             reload_service,
             open_external,
             forward_notification,
             report_workspace_icon,
+            import_local_icon,
+            read_local_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running rustbox");
@@ -243,71 +283,4 @@ pub fn run() {
 
 fn box_err(err: String) -> Box<dyn std::error::Error> {
     Box::new(std::io::Error::other(err))
-}
-
-fn install_tray(app: &tauri::AppHandle) -> Result<(), String> {
-    let show = MenuItemBuilder::with_id("tray-show", "Show window")
-        .build(app)
-        .map_err(|err| err.to_string())?;
-    let hide = MenuItemBuilder::with_id("tray-hide", "Hide window")
-        .build(app)
-        .map_err(|err| err.to_string())?;
-    let quit = MenuItemBuilder::with_id("tray-quit", "Quit")
-        .build(app)
-        .map_err(|err| err.to_string())?;
-    let menu = Menu::with_items(app, &[&show, &hide, &quit]).map_err(|err| err.to_string())?;
-    let mut builder = TrayIconBuilder::with_id("rustbox")
-        .tooltip("Rustbox")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "tray-show" => {
-                let _ = reveal_main(app);
-            }
-            "tray-hide" => {
-                let _ = hide_main(app);
-            }
-            "tray-quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            let show = matches!(
-                event,
-                TrayIconEvent::DoubleClick {
-                    button: MouseButton::Left,
-                    ..
-                } | TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            );
-            if show {
-                let _ = reveal_main(tray.app_handle());
-            }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-    let tray = builder.build(app).map_err(|err| err.to_string())?;
-    app.manage(tray);
-    Ok(())
-}
-
-fn reveal_main(app: &tauri::AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-    window.unminimize().map_err(|err| err.to_string())?;
-    window.show().map_err(|err| err.to_string())?;
-    window.set_focus().map_err(|err| err.to_string())?;
-    services::sync_bounds(app)?;
-    Ok(())
-}
-
-fn hide_main(app: &tauri::AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-    window.hide().map_err(|err| err.to_string())
 }

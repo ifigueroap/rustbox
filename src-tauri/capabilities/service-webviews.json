@@ -8,6 +8,7 @@
     "urls": ["https://*/*", "http://*/*", "https://*", "http://*"]
   },
   "permissions": [
+    "allow-quit-app",
     "allow-forward-notification",
     "allow-report-workspace-icon",
     "allow-open-external",

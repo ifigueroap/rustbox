@@ -35,6 +35,8 @@ interface Snapshot {
   sessionsDir: string;
   sidebarCollapsed: boolean;
   doNotDisturb: boolean;
+  closeToTray: boolean;
+  trayAvailable: boolean;
   theme: ThemePreference;
   appVersion: string;
 }
@@ -79,6 +81,8 @@ let configPath = "";
 let sessionsDir = "";
 let sidebarCollapsed = false;
 let doNotDisturb = false;
+let closeToTray = true;
+let trayAvailable = false;
 let themePreference: ThemePreference = "auto";
 let appVersion = "";
 let serviceMenu: Menu | null = null;
@@ -87,6 +91,37 @@ let pendingPreset: Preset | null = null;
 let draggingId: string | null = null;
 let suspendedId: string | null = null;
 let editingId: string | null = null;
+const localIconUrls = new Map<string, string>();
+const MAX_ICON_BYTES = 1_500_000;
+
+interface ServiceFormValues {
+  name: string;
+  url: string;
+  icon: string;
+  color: string;
+  userAgent: string;
+  useChromeUserAgent: boolean;
+}
+
+interface ServiceFormSeed {
+  name: string;
+  url: string;
+  icon: string;
+  color: string;
+  userAgent: string;
+  useChromeUserAgent: boolean;
+  preset?: string | null;
+  brandColor: string;
+}
+
+interface ServiceForm {
+  read(): Promise<ServiceFormValues>;
+  set(values: ServiceFormSeed): void;
+  reset(): void;
+}
+
+let customForm: ServiceForm | null = null;
+let editorForm: ServiceForm | null = null;
 
 function isServiceShortcut(event: KeyboardEvent): boolean {
   if (event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
@@ -201,6 +236,17 @@ function paintAvatar(node: HTMLElement, target: IconTarget): void {
   node.style.background = color;
   node.style.color = textColor(color);
   const explicit = target.icon?.trim() ?? "";
+  if (explicit.startsWith("local:")) {
+    const data = localIconUrls.get(explicit);
+    if (data) {
+      node.classList.add("tile");
+      node.style.background = "transparent";
+      mountImage(node, [data], () => paintLetter(node, target.name, color));
+      return;
+    }
+    paintLetter(node, target.name, color);
+    return;
+  }
   if (explicit && isUrl(explicit)) {
     node.classList.add("tile");
     node.style.background = "transparent";
@@ -249,15 +295,49 @@ function applySnapshot(snapshot: Snapshot): void {
   sessionsDir = snapshot.sessionsDir;
   sidebarCollapsed = snapshot.sidebarCollapsed;
   doNotDisturb = snapshot.doNotDisturb;
+  closeToTray = snapshot.closeToTray;
+  trayAvailable = snapshot.trayAvailable;
   themePreference = snapshot.theme;
   appVersion = snapshot.appVersion;
-  if (editingId && !services.some((service) => service.id === editingId)) editingId = null;
+  const closeTray = document.querySelector<HTMLInputElement>("#close-tray");
+  if (closeTray) {
+    closeTray.checked = closeToTray;
+    closeTray.disabled = !trayAvailable;
+    closeTray.title = trayAvailable
+      ? "Closing the window hides Rustbox and keeps its services running."
+      : "The tray icon is not available, so closing the window quits Rustbox.";
+  }
+  if (editingId && !services.some((service) => service.id === editingId)) closeEditor();
   const active = services.find((service) => service.id === activeId);
   document.title = active ? `${active.name} - Rustbox` : "Rustbox";
   const shell = must<HTMLElement>("#shell");
   shell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
   applyTheme();
   render();
+  void hydrateLocalIcons().then((changed) => {
+    if (changed) render();
+  });
+}
+
+async function hydrateLocalIcons(): Promise<boolean> {
+  const tokens = new Set<string>();
+  for (const service of services) {
+    const icon = service.icon?.trim() ?? "";
+    if (icon.startsWith("local:")) tokens.add(icon);
+  }
+  let changed = false;
+  await Promise.all(
+    [...tokens].map(async (token) => {
+      if (localIconUrls.has(token)) return;
+      try {
+        localIconUrls.set(token, await invoke<string>("read_local_icon", { token }));
+      } catch {
+        localIconUrls.set(token, "");
+      }
+      changed = true;
+    }),
+  );
+  return changed;
 }
 
 function applyTheme(): void {
@@ -276,26 +356,32 @@ async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
 }
 
 function showError(message: string): void {
-  const managerError = must<HTMLElement>("#manager-error");
+  for (const selector of ["#manager-error", "#editor-error", "#custom-error"]) {
+    const node = document.querySelector<HTMLElement>(selector);
+    if (!node) continue;
+    node.hidden = false;
+    node.textContent = message;
+  }
   const stage = must<HTMLElement>("#stage-status");
-  managerError.hidden = false;
-  managerError.textContent = message;
   stage.hidden = false;
   stage.dataset.error = "true";
   stage.textContent = message;
 }
 
 function clearError(): void {
-  const managerError = must<HTMLElement>("#manager-error");
-  managerError.hidden = true;
-  managerError.textContent = "";
+  for (const selector of ["#manager-error", "#editor-error", "#custom-error"]) {
+    const node = document.querySelector<HTMLElement>(selector);
+    if (!node) continue;
+    node.hidden = true;
+    node.textContent = "";
+  }
   const stage = must<HTMLElement>("#stage-status");
   delete stage.dataset.error;
 }
 
 async function activate(id: string): Promise<void> {
   clearError();
-  editingId = null;
+  closeEditor();
   const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id }));
   if (snapshot) applySnapshot(snapshot);
 }
@@ -452,8 +538,7 @@ function serviceCard(service: Service): HTMLElement {
   name.textContent = service.name;
   const meta = document.createElement("span");
   meta.dataset.unreadFor = service.id;
-  meta.className = "unread-pill";
-  meta.hidden = service.unread <= 0;
+  meta.className = service.unread > 0 ? "unread-pill has-unread" : "unread-pill";
   meta.textContent = unreadLabel(service.unread);
   const url = document.createElement("span");
   url.className = "card-url";
@@ -471,21 +556,19 @@ function serviceCard(service: Service): HTMLElement {
       void activate(service.id);
     }),
     actionButton("Edit", "", () => {
-      editingId = editingId === service.id ? null : service.id;
-      renderDashboard();
+      void openEditor(service);
     }),
     actionButton("Remove", "danger", () => {
       if (!window.confirm(`Remove ${service.name}? Its saved session will be deleted.`)) return;
       void run(async () => {
         clearError();
-        if (editingId === service.id) editingId = null;
+        if (editingId === service.id) closeEditor();
         applySnapshot(await invoke<Snapshot>("remove_service", { id: service.id }));
       });
     }),
   );
 
   card.append(main, actions);
-  if (editingId === service.id) card.append(serviceEditor(service));
   return card;
 }
 
@@ -504,52 +587,283 @@ function actionButton(text: string, className: string, onClick: () => void): HTM
   return button;
 }
 
-function serviceEditor(service: Service): HTMLElement {
-  const form = document.createElement("div");
-  form.className = "card-editor";
-  const name = field("Name", service.name);
-  const url = field("URL", service.url);
-  const icon = field("Icon", service.icon ?? "");
-  const color = document.createElement("input");
-  color.type = "color";
-  color.value = toColorInput(service.color);
-  color.setAttribute("aria-label", "Color");
+function brandColorFor(presetId?: string | null): string {
+  return presets.find((preset) => preset.id === presetId)?.color || DEFAULT_SERVICE_COLOR;
+}
+
+function emptyServiceSeed(): ServiceFormSeed {
+  return {
+    name: "",
+    url: "",
+    icon: "",
+    color: DEFAULT_SERVICE_COLOR,
+    userAgent: "",
+    useChromeUserAgent: true,
+    preset: null,
+    brandColor: DEFAULT_SERVICE_COLOR,
+  };
+}
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+function mountServiceForm(container: HTMLElement): ServiceForm {
+  container.replaceChildren();
+  const name = field("Name", "");
+  name.input.maxLength = 80;
+  const url = field("URL", "");
+  url.input.placeholder = "https://example.com";
+  const iconLabel = document.createElement("label");
+  iconLabel.className = "wide";
+  iconLabel.append("Icon");
+  const iconRow = document.createElement("div");
+  iconRow.className = "icon-row";
+  const preview = document.createElement("span");
+  preview.className = "avatar icon-preview";
+  const file = document.createElement("input");
+  file.type = "file";
+  file.accept = ".png,.svg,.ico,.jpg,.jpeg,.webp,image/png,image/svg+xml,image/jpeg,image/webp,image/x-icon";
+  file.hidden = true;
+  const choose = document.createElement("button");
+  choose.type = "button";
+  choose.className = "file-button";
+  choose.textContent = "Choose image";
+  const iconText = document.createElement("input");
+  iconText.type = "text";
+  iconText.placeholder = "URL or emoji";
+  iconText.spellcheck = false;
+  const resetIcon = document.createElement("button");
+  resetIcon.type = "button";
+  resetIcon.className = "text-action";
+  resetIcon.textContent = "Use preset or favicon";
+  iconRow.append(preview, choose, file, iconText, resetIcon);
+  const iconHint = document.createElement("p");
+  iconHint.className = "field-hint";
+  iconHint.textContent = "PNG, SVG, ICO, JPG, or WebP. Rustbox copies the image into its own data folder.";
+  iconLabel.append(iconRow, iconHint);
+
+  const accent = document.createElement("label");
+  accent.className = "wide";
+  accent.append("Accent color");
+  const accentRow = document.createElement("div");
+  accentRow.className = "accent-row";
+  const swatch = document.createElement("input");
+  swatch.type = "color";
+  swatch.value = DEFAULT_SERVICE_COLOR;
+  swatch.setAttribute("aria-label", "Accent color");
+  const hex = document.createElement("input");
+  hex.type = "text";
+  hex.className = "hex-input";
+  hex.spellcheck = false;
+  hex.value = DEFAULT_SERVICE_COLOR;
+  hex.setAttribute("aria-label", "Accent color hex");
+  const brandButton = document.createElement("button");
+  brandButton.type = "button";
+  brandButton.className = "text-action";
+  brandButton.textContent = "Use brand default";
+  accentRow.append(swatch, hex, brandButton);
+  const accentHint = document.createElement("p");
+  accentHint.className = "field-hint";
+  accentHint.textContent =
+    "Used for the sidebar highlight and the letter fallback. A full-color icon keeps its own colors.";
+  accent.append(accentRow, accentHint);
+
   const chrome = document.createElement("label");
-  chrome.className = "check";
+  chrome.className = "check wide";
   const chromeInput = document.createElement("input");
   chromeInput.type = "checkbox";
-  chromeInput.checked = service.useChromeUserAgent;
+  chromeInput.checked = true;
   chrome.append(chromeInput, document.createTextNode("Use a Chrome user agent"));
-  const agent = field("Custom user agent", service.userAgent ?? "");
-  const actions = document.createElement("div");
-  actions.className = "editor-actions";
-  const save = actionButton("Save", "row-button", () => {
-    void run(async () => {
-      clearError();
-      applySnapshot(
-        await invoke<Snapshot>("update_service", {
-          service: {
-            id: service.id,
-            name: name.input.value,
-            url: url.input.value,
-            icon: icon.input.value,
-            color: color.value,
-            userAgent: agent.input.value,
-            useChromeUserAgent: chromeInput.checked,
-          },
-        }),
-      );
-      editingId = null;
-      renderDashboard();
+  const agent = field("Custom user agent", "");
+  agent.label.classList.add("wide");
+  agent.input.placeholder = "Leave blank for the built-in Chrome string";
+
+  container.append(name.label, url.label, iconLabel, accent, chrome, agent.label);
+
+  const submit = container.id === "editor-fields"
+    ? document.querySelector<HTMLButtonElement>("#editor-save")
+    : document.querySelector<HTMLButtonElement>("#custom-add");
+  const syncSubmit = (): void => {
+    if (!submit) return;
+    const ready = name.input.value.trim() !== "" && url.input.value.trim() !== "";
+    submit.disabled = !ready;
+  };
+  name.input.addEventListener("input", syncSubmit);
+  url.input.addEventListener("input", syncSubmit);
+
+  let iconValue = "";
+  let pendingFile: { bytes: Uint8Array; extension: string; preview: string } | null = null;
+  let presetId: string | null = null;
+  let pageUrl = "";
+  let brandColor = DEFAULT_SERVICE_COLOR;
+
+  const paintPreview = (): void => {
+    const draftName = name.input.value || "?";
+    const color = swatch.value || DEFAULT_SERVICE_COLOR;
+    if (pendingFile) {
+      preview.classList.add("tile");
+      preview.style.background = "transparent";
+      preview.replaceChildren();
+      const image = document.createElement("img");
+      image.alt = "";
+      image.src = pendingFile.preview;
+      preview.append(image);
+      return;
+    }
+    paintAvatar(preview, {
+      name: draftName,
+      color,
+      icon: iconValue || null,
+      preset: presetId,
+      url: pageUrl || url.input.value,
+    });
+  };
+
+  const setColor = (value: string): void => {
+    const next = toColorInput(value);
+    swatch.value = next;
+    hex.value = next;
+    paintPreview();
+  };
+
+  name.input.addEventListener("input", paintPreview);
+  url.input.addEventListener("input", () => {
+    pageUrl = url.input.value;
+    paintPreview();
+  });
+  iconText.addEventListener("input", () => {
+    pendingFile = null;
+    iconValue = iconText.value.trim();
+    paintPreview();
+  });
+  choose.addEventListener("click", () => file.click());
+  file.addEventListener("change", () => {
+    const picked = file.files?.[0];
+    file.value = "";
+    if (!picked) return;
+    if (picked.size > MAX_ICON_BYTES) {
+      showError("Icon file must be under 1.5 MB.");
+      return;
+    }
+    const extension = fileExtension(picked.name);
+    void picked.arrayBuffer().then((buffer) => {
+      pendingFile = {
+        bytes: new Uint8Array(buffer),
+        extension,
+        preview: URL.createObjectURL(picked),
+      };
+      iconText.value = "";
+      paintPreview();
     });
   });
-  const cancel = actionButton("Cancel", "", () => {
-    editingId = null;
-    renderDashboard();
+  resetIcon.addEventListener("click", () => {
+    pendingFile = null;
+    iconValue = "";
+    iconText.value = "";
+    paintPreview();
   });
-  actions.append(save, cancel);
-  form.append(name.label, url.label, icon.label, color, chrome, agent.label, actions);
-  return form;
+  swatch.addEventListener("input", () => {
+    hex.value = swatch.value;
+    paintPreview();
+  });
+  hex.addEventListener("change", () => setColor(hex.value));
+  brandButton.addEventListener("click", () => setColor(brandColor));
+
+  return {
+    set(values) {
+      name.input.value = values.name;
+      url.input.value = values.url;
+      pageUrl = values.url;
+      presetId = values.preset ?? null;
+      brandColor = values.brandColor || DEFAULT_SERVICE_COLOR;
+      iconValue = values.icon?.trim() ?? "";
+      pendingFile = null;
+      iconText.value = iconValue.startsWith("local:") || iconValue.startsWith("http") ? "" : iconValue;
+      if (iconValue.startsWith("http")) iconText.value = iconValue;
+      chromeInput.checked = values.useChromeUserAgent;
+      agent.input.value = values.userAgent;
+      setColor(values.color || brandColor);
+      syncSubmit();
+    },
+    reset() {
+      this.set(emptyServiceSeed());
+    },
+    async read() {
+      let icon = iconValue;
+      if (pendingFile) {
+        const bytes = Array.from(pendingFile.bytes);
+        const extension = pendingFile.extension;
+        const previewUrl = pendingFile.preview;
+        icon = await invoke<string>("import_local_icon", { bytes, extension });
+        localIconUrls.set(icon, previewUrl);
+        iconValue = icon;
+        pendingFile = null;
+      }
+      return {
+        name: name.input.value,
+        url: url.input.value,
+        icon,
+        color: swatch.value,
+        userAgent: agent.input.value,
+        useChromeUserAgent: chromeInput.checked,
+      };
+    },
+  };
+}
+
+function closeEditor(): void {
+  editingId = null;
+  const dialog = document.querySelector<HTMLDialogElement>("#editor");
+  if (dialog?.open) dialog.close();
+}
+
+async function openEditor(service: Service): Promise<void> {
+  const manager = must<HTMLDialogElement>("#manager");
+  if (manager.open) {
+    manager.close();
+    suspendedId = null;
+  }
+  editingId = service.id;
+  if (!editorForm) editorForm = mountServiceForm(must("#editor-fields"));
+  if (service.icon?.startsWith("local:") && !localIconUrls.has(service.icon)) {
+    await hydrateLocalIcons();
+  }
+  editorForm.set({
+    name: service.name,
+    url: service.url,
+    icon: service.icon ?? "",
+    color: service.color,
+    userAgent: service.userAgent ?? "",
+    useChromeUserAgent: service.useChromeUserAgent,
+    preset: service.preset,
+    brandColor: brandColorFor(service.preset),
+  });
+  const error = must<HTMLElement>("#editor-error");
+  error.hidden = true;
+  error.textContent = "";
+  must<HTMLDialogElement>("#editor").showModal();
+}
+
+async function saveEditor(serviceId: string): Promise<void> {
+  if (!editorForm) return;
+  const values = await editorForm.read();
+  clearError();
+  applySnapshot(
+    await invoke<Snapshot>("update_service", {
+      service: {
+        id: serviceId,
+        name: values.name,
+        url: values.url,
+        icon: values.icon,
+        color: values.color,
+        userAgent: values.userAgent,
+        useChromeUserAgent: values.useChromeUserAgent,
+      },
+    }),
+  );
+  closeEditor();
 }
 
 function renderManager(): void {
@@ -618,6 +932,7 @@ function toColorInput(color: string): string {
 
 async function openManager(): Promise<void> {
   clearError();
+  closeEditor();
   if (activeId) {
     suspendedId = activeId;
     const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: null }));
@@ -641,18 +956,11 @@ function refreshUnread(serviceId: string, count: number): void {
   if (!service || service.unread === count) return;
   service.unread = count;
   renderSidebar();
-  if (activeId === null && editingId === null) renderDashboard();
-  else {
-    document.querySelectorAll<HTMLElement>(`[data-unread-for="${CSS.escape(serviceId)}"]`).forEach((node) => {
-      if (node.classList.contains("badge")) {
-        node.textContent = count > 99 ? "99+" : String(count);
-        node.hidden = count <= 0;
-      } else {
-        node.hidden = count <= 0;
-        node.textContent = unreadLabel(count);
-      }
-    });
-  }
+  document.querySelectorAll<HTMLElement>(`[data-unread-for="${CSS.escape(serviceId)}"]`).forEach((node) => {
+    if (node.classList.contains("badge")) return;
+    node.classList.toggle("has-unread", count > 0);
+    node.textContent = unreadLabel(count);
+  });
 }
 
 function soundOff(service: Service): boolean {
@@ -789,30 +1097,56 @@ async function boot(): Promise<void> {
       pendingPreset = null;
     });
   });
+  customForm = mountServiceForm(must("#custom-fields"));
+  customForm.reset();
+  editorForm = mountServiceForm(must("#editor-fields"));
   must<HTMLButtonElement>("#custom-add").addEventListener("click", () => {
     void run(async () => {
+      if (!customForm) return;
       clearError();
+      const values = await customForm.read();
       applySnapshot(
         await invoke<Snapshot>("add_custom", {
-          service: {
-            name: must<HTMLInputElement>("#custom-name").value,
-            url: must<HTMLInputElement>("#custom-url").value,
-            icon: must<HTMLInputElement>("#custom-icon").value,
-            color: must<HTMLInputElement>("#custom-color").value,
-            userAgent: must<HTMLInputElement>("#custom-ua").value,
-            useChromeUserAgent: must<HTMLInputElement>("#custom-chrome").checked,
-          },
+          service: values,
         }),
       );
-      must<HTMLInputElement>("#custom-name").value = "";
-      must<HTMLInputElement>("#custom-url").value = "";
-      must<HTMLInputElement>("#custom-icon").value = "";
-      must<HTMLInputElement>("#custom-ua").value = "";
+      customForm.reset();
     });
+  });
+  must<HTMLInputElement>("#close-tray").addEventListener("change", (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    void run(async () => {
+      applySnapshot(await invoke<Snapshot>("set_close_to_tray", { enabled: input.checked }));
+    });
+  });
+  const editor = must<HTMLFormElement>("#editor-form");
+  editor.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const id = editingId;
+    if (!id) return;
+    void run(() => saveEditor(id));
+  });
+  must<HTMLButtonElement>("#editor-cancel").addEventListener("click", () => closeEditor());
+  must<HTMLButtonElement>("#editor-close").addEventListener("click", () => closeEditor());
+  must<HTMLDialogElement>("#editor").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeEditor();
   });
   window.addEventListener(
     "keydown",
     (event) => {
+      if (
+        !event.repeat &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "q"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void invoke("quit_app");
+        return;
+      }
       if (!isServiceShortcut(event)) return;
       event.preventDefault();
       event.stopPropagation();

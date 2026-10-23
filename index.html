@@ -71,6 +71,10 @@
                 </select>
               </label>
               <p id="app-version" class="version"></p>
+              <label class="close-tray" title="Closing the window hides Rustbox and keeps its services running. Quit from the tray menu, or press Ctrl+Q, to exit.">
+                <input id="close-tray" type="checkbox" checked />
+                <span>Close to tray</span>
+              </label>
               <button id="dash-add" type="button">Add service</button>
             </div>
           </header>
@@ -92,7 +96,7 @@
         </header>
         <p id="manager-error" class="error" hidden></p>
 
-        <section>
+        <section class="dialog-section">
           <h3>Presets</h3>
           <div id="preset-list" class="preset-grid"></div>
           <div id="server-url-row" class="server-row" hidden>
@@ -102,35 +106,13 @@
           </div>
         </section>
 
-        <section>
+        <section class="dialog-section">
           <h3>Custom service</h3>
-          <div class="custom-grid">
-            <label>
-              Name
-              <input id="custom-name" type="text" maxlength="80" />
-            </label>
-            <label>
-              URL
-              <input id="custom-url" type="text" placeholder="https://example.com" spellcheck="false" />
-            </label>
-            <label>
-              Icon URL or emoji
-              <input id="custom-icon" type="text" placeholder="optional" />
-            </label>
-            <label>
-              Color
-              <input id="custom-color" type="color" value="#8d8478" />
-            </label>
-            <label class="check">
-              <input id="custom-chrome" type="checkbox" checked />
-              Use a Chrome user agent
-            </label>
-            <label class="wide">
-              Custom user agent
-              <input id="custom-ua" type="text" spellcheck="false" placeholder="Leave blank for the built-in Chrome string" />
-            </label>
+          <div id="custom-fields" class="custom-grid"></div>
+          <p id="custom-error" class="error" hidden></p>
+          <div class="dialog-footer">
+            <button id="custom-add" class="primary" type="button" disabled>Add custom service</button>
           </div>
-          <button id="custom-add" type="button">Add custom service</button>
         </section>
 
         <footer class="paths">
@@ -139,6 +121,26 @@
           <p id="ua-hint"></p>
         </footer>
       </div>
+    </dialog>
+
+    <dialog id="editor">
+      <form id="editor-form" class="manager-card" method="dialog">
+        <header class="manager-head">
+          <div>
+            <p class="eyebrow">service</p>
+            <h2>Edit service</h2>
+          </div>
+          <button id="editor-close" class="text-button" type="button">Close</button>
+        </header>
+        <div class="dialog-body">
+          <p id="editor-error" class="error" hidden></p>
+          <div id="editor-fields" class="custom-grid"></div>
+        </div>
+        <div class="dialog-footer">
+          <button id="editor-cancel" type="button">Cancel</button>
+          <button id="editor-save" class="primary" type="submit" disabled>Save</button>
+        </div>
+      </form>
     </dialog>
 
   </body>

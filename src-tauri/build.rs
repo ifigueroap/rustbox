@@ -13,10 +13,16 @@ fn main() {
             "set_service_sound",
             "set_service_notifications",
             "set_do_not_disturb",
+            "set_close_to_tray",
+            "quit_app",
+            "set_theme",
             "apply_service_shortcut",
             "reload_service",
             "open_external",
             "forward_notification",
+            "report_workspace_icon",
+            "import_local_icon",
+            "read_local_icon",
         ]),
     ))
     .expect("failed to run tauri build script");
