@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/ifigueroap/rustbox/compare/v0.3.2...v0.4.0) (2026-10-23)
+
+
+### Features
+
+* edit services in a dialog and stay in the tray ([c3669c0](https://github.com/ifigueroap/rustbox/commit/c3669c033305a94e05e87cb8edf966b62112a760))
+* edit services in a dialog and stay in the tray ([5ecfac7](https://github.com/ifigueroap/rustbox/commit/5ecfac77f5fc0cd04fd023ee16f31a829a5c9655))
+
+
+### Bug Fixes
+
+* keep dialog fields inside the card and offer both install modes ([a74ec8c](https://github.com/ifigueroap/rustbox/commit/a74ec8c6b45f22dafee04c3cfd3531f1de026699))
+
 ## [0.3.2](https://github.com/ifigueroap/rustbox/compare/v0.3.1...v0.3.2) (2026-10-19)
 
 ### Features
