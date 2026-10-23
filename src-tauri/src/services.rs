@@ -56,6 +56,8 @@ pub struct Snapshot {
     pub sessions_dir: String,
     pub sidebar_collapsed: bool,
     pub do_not_disturb: bool,
+    pub close_to_tray: bool,
+    pub tray_available: bool,
     pub theme: Theme,
     pub app_version: String,
 }
@@ -141,9 +143,29 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         sessions_dir: state.sessions_dir.display().to_string(),
         sidebar_collapsed: config.sidebar_collapsed,
         do_not_disturb: config.do_not_disturb,
+        close_to_tray: config.close_to_tray,
+        tray_available: app.tray_by_id("rustbox").is_some(),
         theme: config.theme,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
+}
+
+pub fn visible_unread_total(app: &AppHandle) -> u32 {
+    let state = app.state::<RuntimeState>();
+    let config = lock(&state.config);
+    let unread = lock(&state.unread);
+    config
+        .services
+        .iter()
+        .map(|service| {
+            let count = unread.get(&service.id).copied().unwrap_or(0);
+            if policy::notifications_shown(config.do_not_disturb, service.notifications_enabled) {
+                count
+            } else {
+                0
+            }
+        })
+        .sum()
 }
 
 pub fn presets() -> Vec<PresetInfo> {
@@ -304,6 +326,104 @@ pub fn clear_runtime_service(app: &AppHandle, id: &str) {
     }
 }
 
+pub fn icons_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|err| err.to_string())?
+        .join("icons"))
+}
+
+pub fn import_local_icon(app: &AppHandle, bytes: &[u8], extension: &str) -> Result<String, String> {
+    let kind = crate::config::accept_icon_bytes(bytes, extension)?;
+    let id = uuid::Uuid::new_v4();
+    let filename = format!("{id}.{kind}");
+    let dir = icons_dir(app)?;
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    std::fs::write(dir.join(&filename), bytes).map_err(|err| err.to_string())?;
+    Ok(format!("local:{filename}"))
+}
+
+pub fn read_local_icon(app: &AppHandle, token: &str) -> Result<String, String> {
+    let filename = crate::config::local_icon_filename(token)
+        .ok_or_else(|| "icon file is not a saved Rustbox icon".to_string())?;
+    let path = icons_dir(app)?.join(&filename);
+    let bytes = std::fs::read(&path).map_err(|_| "saved icon is missing".to_string())?;
+    let ext = filename.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
+    crate::config::accept_icon_bytes(&bytes, ext)?;
+    let mime = match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        _ => return Err("saved icon type is not supported".into()),
+    };
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+}
+
+pub fn discard_unused_local_icons(app: &AppHandle) {
+    let Ok(dir) = icons_dir(app) else {
+        return;
+    };
+    let used: std::collections::HashSet<String> = {
+        let state = app.state::<RuntimeState>();
+        lock(&state.config)
+            .services
+            .iter()
+            .filter_map(|service| {
+                service
+                    .icon
+                    .as_deref()
+                    .and_then(crate::config::local_icon_filename)
+            })
+            .collect()
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if crate::config::local_icon_filename(&format!("local:{name}")).is_none() {
+            continue;
+        }
+        if !used.contains(&name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    let mut index = 0;
+    while index + 3 <= bytes.len() {
+        let chunk = ((bytes[index] as u32) << 16)
+            | ((bytes[index + 1] as u32) << 8)
+            | bytes[index + 2] as u32;
+        out.push(TABLE[((chunk >> 18) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 6) & 63) as usize] as char);
+        out.push(TABLE[(chunk & 63) as usize] as char);
+        index += 3;
+    }
+    let rest = bytes.len() - index;
+    if rest == 1 {
+        let chunk = (bytes[index] as u32) << 16;
+        out.push(TABLE[((chunk >> 18) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 63) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rest == 2 {
+        let chunk = ((bytes[index] as u32) << 16) | ((bytes[index + 1] as u32) << 8);
+        out.push(TABLE[((chunk >> 18) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 63) as usize] as char);
+        out.push(TABLE[((chunk >> 6) & 63) as usize] as char);
+        out.push('=');
+    }
+    out
+}
+
 pub fn delete_session_dir(app: &AppHandle, id: &str) {
     let state = app.state::<RuntimeState>();
     let dir = state.sessions_dir.join(id);
@@ -371,6 +491,7 @@ pub fn note_title(app: &AppHandle, service_id: &str, title: &str) {
                 count: visible,
             },
         );
+        crate::tray::sync(app);
     }
 }
 
@@ -433,7 +554,10 @@ pub fn report_workspace_icon(
         if !matches!(preset.as_deref(), Some("slack" | "zulip")) {
             return Err("workspace icons are only accepted for Slack and Zulip".into());
         }
-        (Url::parse(&service.url).map_err(|err| err.to_string())?, preset)
+        (
+            Url::parse(&service.url).map_err(|err| err.to_string())?,
+            preset,
+        )
     };
 
     if raw_icon_url.is_empty() {
@@ -553,8 +677,8 @@ fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
 
 fn initialization_script(muted: bool, preset: Option<&str>) -> String {
     let enabled = if muted { "false" } else { "true" };
-    let preset = serde_json::to_string(preset.unwrap_or_default())
-        .unwrap_or_else(|_| "\"\"".to_string());
+    let preset =
+        serde_json::to_string(preset.unwrap_or_default()).unwrap_or_else(|_| "\"\"".to_string());
     format!(
         "window.__rustboxServicePreset = {preset};\n{}\nwindow.__rustboxSetSound({enabled});",
         include_str!("inject.js")

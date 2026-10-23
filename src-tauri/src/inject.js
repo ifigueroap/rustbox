@@ -227,6 +227,11 @@
   document.addEventListener("click", onAnchorClick, true);
   document.addEventListener("auxclick", onAnchorClick, true);
 
+  function isQuitShortcut(event) {
+    if (event.repeat || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) return false;
+    return String(event.key).toLowerCase() === "q";
+  }
+
   function isServiceShortcut(event) {
     if (event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
     if (event.key === "Tab") return true;
@@ -237,6 +242,12 @@
   document.addEventListener(
     "keydown",
     (event) => {
+      if (isQuitShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        invoke("quit_app");
+        return;
+      }
       if (!isServiceShortcut(event)) return;
       event.preventDefault();
       event.stopPropagation();

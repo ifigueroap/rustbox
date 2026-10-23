@@ -19,6 +19,8 @@
   --danger-text: #ffb1a6;
   --backdrop: rgba(10, 8, 6, 0.68);
   --shadow: rgba(0, 0, 0, 0.35);
+  --tag-bg: #2a261f;
+  --tag-fg: #c4b8aa;
   --sidebar-width: 228px;
   --sidebar-collapsed-width: 72px;
   font-family: "Segoe UI", "Noto Sans", Ubuntu, sans-serif;
@@ -45,6 +47,8 @@
   --danger-text: #a52f27;
   --backdrop: rgba(28, 22, 16, 0.34);
   --shadow: rgba(42, 32, 20, 0.16);
+  --tag-bg: #e3ddd3;
+  --tag-fg: #4a433b;
 }
 
 @media (prefers-color-scheme: light) {
@@ -69,6 +73,8 @@
     --danger-text: #a52f27;
     --backdrop: rgba(28, 22, 16, 0.34);
     --shadow: rgba(42, 32, 20, 0.16);
+    --tag-bg: #e3ddd3;
+    --tag-fg: #4a433b;
   }
 }
 
@@ -296,8 +302,8 @@ button:focus-visible {
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--danger);
-  color: white;
+  background: var(--copper);
+  color: var(--brand-ink);
   border: 2px solid var(--sidebar);
   font-size: 10px;
   line-height: 12px;
@@ -424,10 +430,24 @@ button:focus-visible {
   letter-spacing: 0.04em;
 }
 
+.close-tray {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.close-tray input {
+  accent-color: var(--copper);
+}
+
 .dash-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .card {
@@ -484,6 +504,8 @@ button:focus-visible {
   background: var(--soft-panel);
   border-radius: 999px;
   padding: 6px 12px;
+  flex: none;
+  height: 32px;
 }
 
 .card-actions .open,
@@ -499,17 +521,27 @@ button:focus-visible {
   gap: 8px;
 }
 
-.unread-pill {
+.card-copy .unread-pill {
   display: inline-flex;
   align-items: center;
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
   min-width: 18px;
   height: 18px;
-  padding: 0 6px;
+  padding: 0 7px;
   border-radius: 999px;
-  background: var(--danger);
-  color: white;
+  border: 1px solid var(--line);
+  background: var(--tag-bg);
+  color: var(--tag-fg);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 650;
+}
+
+.card-copy .unread-pill.has-unread {
+  border-color: transparent;
+  background: var(--copper);
+  color: var(--brand-ink);
 }
 
 
@@ -586,6 +618,14 @@ dialog {
   color: var(--text);
   width: min(760px, calc(100vw - 96px));
   max-height: calc(100vh - 48px);
+}
+
+#editor {
+  width: min(520px, calc(100vw - 48px));
+}
+
+dialog form.manager-card {
+  margin: 0;
 }
 
 dialog::backdrop {
@@ -697,13 +737,58 @@ input[type="url"] {
   padding: 8px 10px;
 }
 
-input[type="color"] {
+.field-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.icon-row,
+.accent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-preview {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.icon-preview img {
   width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hex-input {
+  width: 7.5rem;
+  flex: none;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+input[type="color"] {
+  width: 42px;
   height: 36px;
+  flex: none;
   border: 1px solid var(--line);
   background: var(--input);
   border-radius: 8px;
-  padding: 4px;
+  padding: 3px;
+}
+
+.file-button,
+.text-action {
+  border: 1px solid var(--line);
+  background: var(--soft-panel);
+  border-radius: 999px;
+  padding: 6px 12px;
+  height: 32px;
+  flex: none;
 }
 
 #custom-add {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-local-icon"
+description = "Enables the read_local_icon command without any pre-configured scope."
+commands.allow = ["read_local_icon"]
+
+[[permission]]
+identifier = "deny-read-local-icon"
+description = "Denies the read_local_icon command without any pre-configured scope."
+commands.deny = ["read_local_icon"]

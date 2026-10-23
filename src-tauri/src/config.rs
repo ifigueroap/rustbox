@@ -145,6 +145,9 @@ pub struct Config {
     /// Mutes page audio and hides badges and desktop notifications for every service.
     #[serde(default)]
     pub do_not_disturb: bool,
+    /// Closing the window hides it. Quit from the tray, or Ctrl+Q, to exit.
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
     #[serde(default)]
     pub theme: Theme,
 }
@@ -156,6 +159,7 @@ impl Default for Config {
             services: Vec::new(),
             sidebar_collapsed: false,
             do_not_disturb: false,
+            close_to_tray: true,
             theme: Theme::Auto,
         }
     }
@@ -299,6 +303,7 @@ impl Config {
             if let ConfigRead::Loaded(existing) = &current_read {
                 chosen.sidebar_collapsed = existing.sidebar_collapsed;
                 chosen.do_not_disturb = existing.do_not_disturb;
+                chosen.close_to_tray = existing.close_to_tray;
             }
 
             if matches!(current_read, ConfigRead::Invalid(_)) {
@@ -506,10 +511,84 @@ fn normalize_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
+pub const MAX_ICON_BYTES: usize = 1_500_000;
+
+/// `local:<uuid>.<ext>` stored in config. The bytes live under the app data `icons` directory.
+pub fn local_icon_filename(token: &str) -> Option<String> {
+    let rest = token.strip_prefix("local:")?;
+    if rest.contains('/') || rest.contains('\\') || rest.contains("..") {
+        return None;
+    }
+    let (id, ext) = rest.rsplit_once('.')?;
+    if uuid::Uuid::parse_str(id).is_err() {
+        return None;
+    }
+    if !matches!(ext, "png" | "jpg" | "jpeg" | "webp" | "ico" | "svg") {
+        return None;
+    }
+    Some(format!("{id}.{ext}"))
+}
+
+pub fn accept_icon_bytes(bytes: &[u8], extension: &str) -> Result<&'static str, String> {
+    if bytes.is_empty() || bytes.len() > MAX_ICON_BYTES {
+        return Err("icon file must be under 1.5 MB".into());
+    }
+    let ext = extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    let kind = match ext.as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" => "jpg",
+        "webp" => "webp",
+        "ico" => "ico",
+        "svg" => "svg",
+        _ => return Err("icon must be PNG, SVG, ICO, JPG, or WebP".into()),
+    };
+    let matches_kind = match kind {
+        "png" => bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+        "jpg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        "ico" => bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]),
+        "svg" => svg_markup(bytes),
+        _ => false,
+    };
+    if !matches_kind {
+        return Err("that file does not match the chosen image type".into());
+    }
+    Ok(kind)
+}
+
+fn svg_markup(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let trimmed = text.trim_start().trim_start_matches('\u{feff}');
+    let head: String = trimmed.chars().take(240).collect();
+    let head = head.to_ascii_lowercase();
+    let lower = trimmed.to_ascii_lowercase();
+    (head.starts_with("<svg") || head.starts_with("<?xml") || head.starts_with("<!doctype"))
+        && lower.contains("<svg")
+        && !lower.contains("<script")
+}
+
 fn normalize_icon(icon: Option<&str>) -> Result<Option<String>, String> {
     let Some(icon) = icon.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
+    if icon.starts_with("local:") {
+        if local_icon_filename(icon).is_some() {
+            return Ok(Some(icon.to_string()));
+        }
+        return Err("icon file is not a saved Rustbox icon".into());
+    }
+    if icon.starts_with("file:")
+        || icon.starts_with("\\\\")
+        || icon.contains('\\')
+        || (icon.len() >= 2 && icon.as_bytes()[1] == b':')
+    {
+        return Err("choose an image, or paste an http(s) URL or emoji".into());
+    }
     if icon.starts_with("https://") || icon.starts_with("http://") {
         let url = Url::parse(icon).map_err(|err| format!("icon URL: {err}"))?;
         if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -520,8 +599,8 @@ fn normalize_icon(icon: Option<&str>) -> Result<Option<String>, String> {
         }
         return Ok(Some(icon.to_string()));
     }
-    if icon.chars().count() > 8 {
-        return Err("icon must be an http(s) URL or at most 8 characters".into());
+    if icon.chars().count() > 8 || icon.contains('/') {
+        return Err("icon must be an http(s) URL, an emoji, or a chosen image".into());
     }
     Ok(Some(icon.to_string()))
 }
@@ -1104,10 +1183,62 @@ mod tests {
         assert!(loaded.services[0].sound_enabled);
         assert!(loaded.services[0].notifications_enabled);
         assert!(!loaded.do_not_disturb);
+        assert!(loaded.close_to_tray);
         assert!(!loaded.sidebar_collapsed);
         assert_eq!(loaded.services[1].color, "#112233");
         assert!(loaded.services[1].preset.is_none());
         assert_eq!(loaded.services[2].color, "#abcdef");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn icons_accept_urls_emoji_and_saved_files_only() {
+        assert_eq!(
+            normalize_icon(Some(" https://cdn.example.com/a.png "))
+                .unwrap()
+                .as_deref(),
+            Some("https://cdn.example.com/a.png")
+        );
+        assert_eq!(normalize_icon(Some("📝")).unwrap().as_deref(), Some("📝"));
+        let token = "local:550e8400-e29b-41d4-a716-446655440000.png";
+        assert_eq!(normalize_icon(Some(token)).unwrap().as_deref(), Some(token));
+        assert!(normalize_icon(Some("file:///tmp/icon.png")).is_err());
+        assert!(normalize_icon(Some(r"C:\Users\me\icon.png")).is_err());
+        assert!(normalize_icon(Some("local:not-a-uuid.png")).is_err());
+        assert!(normalize_icon(Some("local:../secrets.png")).is_err());
+        assert!(normalize_icon(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn icon_bytes_must_match_the_extension() {
+        assert_eq!(
+            accept_icon_bytes(
+                &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0],
+                "PNG"
+            )
+            .unwrap(),
+            "png"
+        );
+        assert_eq!(
+            accept_icon_bytes(&[0xFF, 0xD8, 0xFF, 0xD9], "jpeg").unwrap(),
+            "jpg"
+        );
+        assert_eq!(accept_icon_bytes(b"RIFF0123WEBP", "webp").unwrap(), "webp");
+        assert_eq!(
+            accept_icon_bytes(&[0x00, 0x00, 0x01, 0x00, 1], "ico").unwrap(),
+            "ico"
+        );
+        assert_eq!(
+            accept_icon_bytes(
+                br#"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>"#,
+                ".svg"
+            )
+            .unwrap(),
+            "svg"
+        );
+        assert!(accept_icon_bytes(&[0xFF, 0xD8, 0xFF], "png").is_err());
+        assert!(accept_icon_bytes(br#"<svg><script>alert(1)</script></svg>"#, "svg").is_err());
+        assert!(accept_icon_bytes(b"hello", "gif").is_err());
+        assert!(accept_icon_bytes(&[], "png").is_err());
     }
 }
