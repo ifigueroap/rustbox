@@ -682,6 +682,17 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
 
   container.append(name.label, url.label, iconLabel, accent, chrome, agent.label);
 
+  const submit = container.id === "editor-fields"
+    ? document.querySelector<HTMLButtonElement>("#editor-save")
+    : document.querySelector<HTMLButtonElement>("#custom-add");
+  const syncSubmit = (): void => {
+    if (!submit) return;
+    const ready = name.input.value.trim() !== "" && url.input.value.trim() !== "";
+    submit.disabled = !ready;
+  };
+  name.input.addEventListener("input", syncSubmit);
+  url.input.addEventListener("input", syncSubmit);
+
   let iconValue = "";
   let pendingFile: { bytes: Uint8Array; extension: string; preview: string } | null = null;
   let presetId: string | null = null;
@@ -774,6 +785,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
       chromeInput.checked = values.useChromeUserAgent;
       agent.input.value = values.userAgent;
       setColor(values.color || brandColor);
+      syncSubmit();
     },
     reset() {
       this.set(emptyServiceSeed());
