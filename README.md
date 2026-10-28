@@ -55,6 +55,24 @@ Unit tests for config, workspace migration and membership, Do not disturb resolu
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+Frontend tests run in jsdom with [Vitest](https://vitest.dev). They mount the real `index.html` and drive `src/shell.ts` with fake snapshots, so the rail, switcher, and dialog regressions are covered without a desktop:
+
+```bash
+npm test
+```
+
+`tests/workspace-rail.test.ts` reproduces the 0.5.0 rail bug directly: one workspace, then two, then back to one, checking that `#workspace-list` and `#workspace-add` survive and that the sidebar still paints. `tests/workspace-editor.test.ts` asserts that Save dismisses the dialog even when the re-render throws, that a double click creates one workspace, and that a rejected save keeps the dialog open with an inline error.
+
+For a visual check without the native shell, `mock/backend.mjs` is a browser stand-in for the Tauri commands, and `mock/verify.mjs` drives it in Chrome through the whole workspace flow and writes screenshots. A small Vite plugin serves `/mock/index.html` as the real `index.html` with only the entry script swapped, so the markup can never drift. With `npm run dev` running:
+
+```bash
+npm install --prefix /tmp/pptr puppeteer-core
+PUPPETEER_CORE=/tmp/pptr/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js \
+  node mock/verify.mjs
+```
+
+`puppeteer-core` is deliberately not a project dependency; it is only needed for that visual check.
+
 Regenerate the app icon from the source drawing:
 
 ```bash
@@ -134,7 +152,17 @@ Use **Edit** on a service to change its membership. The **Workspaces** section l
 
 The sidebar and the desk show only the active workspace. The desk also has an **All services** toggle so you can see every card at once, with a tag naming each service's workspaces. Right-click a workspace icon for **Rename**, **Edit icon and color**, **Do not disturb**, **Move up** and **Move down**, and **Delete workspace**. Drag the icons to reorder them. Deleting a workspace never deletes a service or its session; a service left with no workspace moves to the first remaining workspace, and the last workspace cannot be deleted.
 
-The rail hides itself while you have only one workspace and can be turned off entirely with **Workspace rail** on the desk. Rustbox remembers the active workspace and the open service across restarts.
+### Collapsing the rail
+
+The rail is a 48px strip. It hides itself while you have only one workspace, and you can collapse it any time from the **rail button** in the sidebar's bottom control row, next to the sidebar chevron. The same switch is **Workspace rail** on the desk; both write the same `workspaceRailHidden` key in `config.json`, so they stay in step. The button's tooltip reads **Hide workspace rail** or **Show workspace rail** to match its state, and the tray menu's **Workspaces** submenu is unaffected either way.
+
+While the rail is collapsed, the top of the sidebar shows the active workspace as a compact chip: its initial or icon, its name, and a caret. Click it for a popup listing every workspace with its unread badge and Do not disturb mark, plus **New workspace**. Click a row to switch; right-click one for the same menu the rail icons offer. **Ctrl/Cmd+Alt+1..9** keeps switching by position whether the rail is showing or not.
+
+### Starting a workspace from existing services
+
+A new workspace starts empty, so the sidebar and the desk both say **No services in this workspace yet** rather than showing a blank column. From there, **Add service** opens the normal service dialog, and **Include existing services…** opens a short multi-select of services that are not in this workspace yet. Ticked services are added to it and stay in every workspace they were already in; nothing is removed and no session moves. Services pinned to **All workspaces** already appear everywhere, so they are not listed.
+
+The same optional picker is a step in the **New workspace** dialog: tick any services that should be included from the start.
 
 ### Workspace Do not disturb
 
@@ -190,7 +218,7 @@ A tag created with `GITHUB_TOKEN` does not start `release.yml` on its own. Relea
 - **Notification forwarding covers the page `Notification` constructor.** Service-worker push notifications are not forwarded. Linux needs a running notification daemon.
 - **Badges depend on the page title.** A service that shows an unread count only inside the page, with a static title, will not get a badge. Counts start at zero each launch until that webview loads. A service in several workspaces shows the same count everywhere, because it is the same webview.
 - **Workspace switching does not suspend anything.** Every service of every workspace keeps running, so a webview that is hidden by a workspace change still receives notifications and counts. Scheduled auto-mute and suspending inactive workspaces are not implemented.
-- **The rail needs a second workspace.** With one workspace the rail is hidden and the desk's **New workspace** button is the way to create the second one. The workspace list is capped at 24.
+- **The rail needs a second workspace.** With one workspace the rail and the sidebar's switcher chip are both hidden, and the desk's **New workspace** button is the way to create the second one. The workspace list is capped at 24.
 - **Popup OAuth is best-effort.** Redirect sign-in stays inside the webview. A login flow that depends on `window.opener` in a popup can still fail because the popup does not share the service session.
 - **External-link handling is click and `window.open` based.** A script that assigns `location` to another site stays in the webview, so a login redirect is not kicked out to the browser.
 - **Downloads, camera, microphone, and screen sharing** use whatever the system webview allows. They were not exercised in testing.

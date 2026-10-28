@@ -177,6 +177,22 @@ fn update_workspace(app: tauri::AppHandle, workspace: WorkspaceUpdate) -> Result
     Ok(services::snapshot(&app))
 }
 
+/// Add services that already exist to one more workspace. Nothing is removed
+/// from the workspaces they are already in, and no session moves.
+#[tauri::command]
+fn include_services(
+    app: tauri::AppHandle,
+    workspace_id: String,
+    service_ids: Vec<String>,
+) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.include_services(&workspace_id, &service_ids)?;
+        Ok(())
+    })?;
+    tray::sync(&app);
+    Ok(services::snapshot(&app))
+}
+
 #[tauri::command]
 fn set_workspace_dnd(app: tauri::AppHandle, id: String, enabled: bool) -> Result<Snapshot, String> {
     services::mutate(&app, |config| config.set_workspace_dnd(&id, enabled))?;
@@ -343,6 +359,7 @@ pub fn run() {
             set_theme,
             add_workspace,
             update_workspace,
+            include_services,
             set_workspace_dnd,
             remove_workspace,
             set_active_workspace,
