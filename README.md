@@ -156,7 +156,9 @@ The sidebar and the desk show only the active workspace. The desk also has an **
 
 The rail is a 48px strip. It hides itself while you have only one workspace, and you can collapse it any time from the **rail button** in the sidebar's bottom control row, next to the sidebar chevron. The same switch is **Workspace rail** on the desk; both write the same `workspaceRailHidden` key in `config.json`, so they stay in step. The button's tooltip reads **Hide workspace rail** or **Show workspace rail** to match its state, and the tray menu's **Workspaces** submenu is unaffected either way.
 
-While the rail is collapsed, the top of the sidebar shows the active workspace as a compact chip: its initial or icon, its name, and a caret. Click it for a popup listing every workspace with its unread badge and Do not disturb mark, plus **New workspace**. Click a row to switch; right-click one for the same menu the rail icons offer. **Ctrl/Cmd+Alt+1..9** keeps switching by position whether the rail is showing or not.
+While the rail is collapsed, the top of the sidebar shows the active workspace as a compact chip: its initial or icon, its name, and a caret. Click it for a popup listing every workspace with its unread badge and Do not disturb mark, plus **New workspace**. The list is drawn by the shell, so Rustbox hides the open service webview while it is up — a child webview would paint over it — and puts that service back when the list closes (click outside, Escape, or a choice). Click a row to switch; right-click one for the same menu the rail icons offer. **Ctrl/Cmd+Alt+1..9** keeps switching by position whether the rail is showing or not.
+
+Rename, icon and color, new workspace, include services, and delete confirmation use the same hide-and-restore step, including when they are opened from the rail or the chip while a service is showing. The service comes back when the dialog closes. The rail's **+** is **New workspace**; the sidebar's **+** is **Add a service**.
 
 ### Starting a workspace from existing services
 
