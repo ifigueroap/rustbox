@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/ifigueroap/rustbox/compare/v0.5.1...v0.6.0) (2026-10-28)
+
+
+### Features
+
+* add a universal macOS build to the release pipeline ([#19](https://github.com/ifigueroap/rustbox/issues/19)) ([8c05805](https://github.com/ifigueroap/rustbox/commit/8c058051a12c5687e48fd7ad41f2e4802a94d5f3))
+
+
+### Bug Fixes
+
+* show workspace dialogs and the chip popup above service webviews ([#21](https://github.com/ifigueroap/rustbox/issues/21)) ([5bf3707](https://github.com/ifigueroap/rustbox/commit/5bf3707c92f481d162ac347f023af62cdb80b698))
+
 ## [0.5.1](https://github.com/ifigueroap/rustbox/compare/v0.5.0...v0.5.1) (2026-10-28)
 
 
