@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/ifigueroap/rustbox/compare/v0.5.0...v0.5.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* keep the workspace rail mounted and dialogs dismissable ([#17](https://github.com/ifigueroap/rustbox/issues/17)) ([c9f004a](https://github.com/ifigueroap/rustbox/commit/c9f004ac45b9266a9ffaccf2aafec17aa77994c1))
+
 ## [0.5.0](https://github.com/ifigueroap/rustbox/compare/v0.4.0...v0.5.0) (2026-10-28)
 
 
