@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.platform }}
-    if: github.event_name != 'pull_request' || matrix.platform == 'macos-latest'
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -31,9 +31,6 @@ jobs:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             rust_targets: x86_64-unknown-linux-gnu
-          - platform: macos-latest
-            target: universal-apple-darwin
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
     defaults:
       run:
         shell: bash
@@ -91,62 +88,6 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: npm run tauri build -- --target ${{ matrix.target }} --bundles appimage
 
-      - name: Build macOS app and disk image
-        if: matrix.platform == 'macos-latest'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          sign=1
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            if [ -z "${!name}" ]; then
-              echo "Apple secret $name is not set; building with an ad-hoc signature"
-              sign=0
-              break
-            fi
-          done
-          P12=""
-          KEYCHAIN=""
-          cleanup() {
-            if [ -n "$KEYCHAIN" ]; then
-              security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
-            fi
-            if [ -n "$P12" ]; then
-              rm -f "$P12"
-            fi
-          }
-          trap cleanup EXIT
-          if [ "$sign" -eq 0 ]; then
-            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-            export APPLE_SIGNING_IDENTITY="-"
-          else
-            echo "Apple signing secrets are present; importing the certificate into a temporary keychain"
-            P12="$RUNNER_TEMP/rustbox-certificate.p12"
-            KEYCHAIN="$RUNNER_TEMP/rustbox-signing.keychain-db"
-            KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-            export RUSTBOX_P12="$P12"
-            python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["RUSTBOX_P12"]).write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE"].strip()))'
-            unset RUSTBOX_P12
-            security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-            security default-keychain -s "$KEYCHAIN"
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-            security set-keychain-settings -t 3600 -u "$KEYCHAIN"
-            existing=$(security list-keychains -d user | sed 's/^[[:space:]]*//;s/"//g')
-            # shellcheck disable=SC2086
-            security list-keychains -d user -s "$KEYCHAIN" $existing
-            security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign -T /usr/bin/productbuild
-            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
-            rm -f "$P12"
-            P12=""
-            echo "Certificate imported"
-          fi
-          npm run tauri build -- --target ${{ matrix.target }} --bundles dmg,app
-
       - name: Package Windows asset
         if: matrix.platform == 'windows-latest'
         run: |
@@ -177,26 +118,6 @@ jobs:
           cp "$APPIMAGE" rustbox-linux-x64.AppImage
           chmod +x rustbox-linux-x64.AppImage
 
-      - name: Package macOS assets
-        if: matrix.platform == 'macos-latest'
-        run: |
-          set -euo pipefail
-          BUNDLE="src-tauri/target/${{ matrix.target }}/release/bundle"
-          DMG=$(find "$BUNDLE/dmg" -type f -name '*.dmg' | head -n 1)
-          if [ -z "$DMG" ]; then
-            echo "DMG was not produced"
-            find "$BUNDLE" -type f | head -n 100
-            exit 1
-          fi
-          cp "$DMG" rustbox-macos-universal.dmg
-          APP=$(find "$BUNDLE/macos" -maxdepth 1 -type d -name '*.app' | head -n 1)
-          if [ -z "$APP" ]; then
-            echo ".app bundle was not produced"
-            find "$BUNDLE" | head -n 100
-            exit 1
-          fi
-          COPYFILE_DISABLE=1 tar -C "$BUNDLE/macos" -czf rustbox-macos-universal.app.tar.gz "$(basename "$APP")"
-
       - uses: actions/upload-artifact@v4
         if: matrix.platform == 'windows-latest'
         with:
@@ -215,8 +136,53 @@ jobs:
             rustbox-linux-x64.tar.gz
           if-no-files-found: error
 
+  build-macos:
+    name: Build macos-latest
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Check tag matches the app version
+        run: |
+          node -e 'const fs=require("fs"); const version=JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json","utf8")).version; if (process.env.GITHUB_REF_TYPE==="tag" && process.env.GITHUB_REF_NAME!=="v"+version) { console.error("Tag "+process.env.GITHUB_REF_NAME+" does not match app version "+version); process.exit(1); }'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build macOS app and disk image
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/release-macos-build.sh
+
+      - name: Package macOS assets
+        run: bash scripts/release-macos-package.sh
+
       - uses: actions/upload-artifact@v4
-        if: matrix.platform == 'macos-latest'
         with:
           name: rustbox-macos-universal
           path: |
@@ -226,7 +192,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, build-macos]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
     steps:
