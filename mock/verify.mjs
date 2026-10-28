@@ -76,6 +76,16 @@ async function state() {
       sidebarEmpty: !document.querySelector("#service-empty")?.hidden,
       deskEmpty: !document.querySelector("#dash-empty")?.hidden,
       dialogOpen: document.querySelector("#workspace-editor")?.open,
+      includeOpen: document.querySelector("#include-services")?.open,
+      activeId: window.__rustboxMock?.state.activeId ?? null,
+      popupWidth: popup ? Math.round(popup.getBoundingClientRect().width) : 0,
+      popupLeft: popup ? Math.round(popup.getBoundingClientRect().left) : 0,
+      popupScrollsWide: popup ? popup.scrollWidth > popup.clientWidth + 2 : false,
+      popupBg: popup ? getComputedStyle(popup).backgroundColor : "",
+      popupNameColor: popup ? getComputedStyle(popup.querySelector(".ws-popup-name") ?? popup).color : "",
+      popupAddColor: popup ? getComputedStyle(popup.querySelector(".ws-popup-add") ?? popup).color : "",
+      manageTitle: document.querySelector("#manage-button")?.title,
+      workspaceAddTitle: document.querySelector("#workspace-add")?.title,
       railChildren: rail?.childElementCount,
       railWidth: rail ? Math.round(rail.getBoundingClientRect().width) : 0,
       railToggleTitle: document.querySelector("#rail-toggle-button")?.title,
@@ -254,6 +264,108 @@ check("delete: services still painted", s.sidebarServices === 5, s.sidebarServic
 check("delete: no raw 'Missing #workspace-list'", s.rawMissing === false);
 check("delete: rail still keeps its static children", s.railChildren === 2, s.railChildren);
 await shot("rail-collapse-11-back-to-one-light", "light");
+
+// --- 10. Popup, dialogs, and footer at narrow and normal widths ------------
+async function setViewport(width, height) {
+  await page.setViewport({ width, height, deviceScaleFactor: 1 });
+  await settle();
+}
+
+await setViewport(1100, 760);
+await openCreator();
+await fillName("Spotmind");
+await page.click("#workspace-save");
+await settle();
+
+// The rail is already hidden from the earlier collapse checks. Creating a
+// workspace switches to that empty workspace, so return to Main (which still
+// holds the services) and open one. The chip and the rename dialog then have
+// a service webview to suspend and restore.
+const mainId = await page.evaluate(() => window.__rustboxMock.state.workspaces[0].id);
+await page.evaluate(async (id) => {
+  const snap = await window.__TAURI_INTERNALS__.invoke("set_active_workspace", { id });
+  window.__rustboxMock.shell.applyShellSnapshot(snap);
+}, mainId);
+const serviceId = await page.evaluate(() => window.__rustboxMock.state.services[0].id);
+await page.evaluate(async (id) => {
+  const snap = await window.__TAURI_INTERNALS__.invoke("set_active_service", { id });
+  window.__rustboxMock.shell.applyShellSnapshot(snap);
+}, serviceId);
+await settle();
+s = await state();
+check("overlay: rail stays hidden so the chip is showing", s.railHidden === true && s.switcherHidden === false, {
+  railHidden: s.railHidden,
+  switcherHidden: s.switcherHidden,
+});
+check("overlay: a service is open before the chip menu", s.activeId === serviceId, s.activeId);
+
+await page.click("#workspace-switcher-button");
+await settle();
+s = await state();
+check("overlay: chip popup opens", s.popupHidden === false);
+check("overlay: opening the chip hides the service webview", s.activeId === null, s.activeId);
+check("overlay: popup background is opaque", s.popupBg !== "rgba(0, 0, 0, 0)" && s.popupBg !== "transparent", s.popupBg);
+check("overlay: workspace names and New workspace use different colors", s.popupNameColor !== s.popupAddColor, {
+  name: s.popupNameColor,
+  add: s.popupAddColor,
+});
+check("overlay: popup does not scroll sideways", s.popupScrollsWide === false, s.popupWidth);
+await shot("shell-overlay-01-switcher-popup-dark", "dark");
+await shot("shell-overlay-02-switcher-popup-light", "light");
+
+await setViewport(170, 720);
+await settle();
+s = await state();
+check("narrow: popup stays inside a 170px window", s.popupLeft + s.popupWidth <= 170, {
+  left: s.popupLeft,
+  width: s.popupWidth,
+});
+check("narrow: popup is still open and opaque", s.popupHidden === false && s.popupBg !== "rgba(0, 0, 0, 0)");
+check("narrow: popup does not scroll sideways", s.popupScrollsWide === false);
+await shot("shell-overlay-03-switcher-narrow-dark", "dark");
+await shot("shell-overlay-04-switcher-narrow-light", "light");
+
+await page.keyboard.press("Escape");
+await settle();
+s = await state();
+check("overlay: Escape closes the chip and restores the service", s.popupHidden === true && s.activeId === serviceId, {
+  popupHidden: s.popupHidden,
+  activeId: s.activeId,
+});
+
+await setViewport(1100, 760);
+await page.evaluate((workspaceId) => {
+  const workspace = window.__rustboxMock.state.workspaces.find((item) => item.id === workspaceId);
+  window.__rustboxMock.shell.openWorkspaceEditor(workspace, "rename");
+}, await page.evaluate(() => window.__rustboxMock.state.workspaces[0].id));
+await settle();
+s = await state();
+check("overlay: rename dialog opens over a suspended service", s.dialogOpen === true && s.activeId === null, s);
+await shot("shell-overlay-05-rename-dialog-dark", "dark");
+await shot("shell-overlay-06-rename-dialog-light", "light");
+await page.click("#workspace-cancel");
+await settle();
+s = await state();
+check("overlay: closing rename restores the service", s.dialogOpen === false && s.activeId === serviceId, {
+  dialogOpen: s.dialogOpen,
+  activeId: s.activeId,
+});
+
+await page.click("#rail-toggle-button");
+await settle();
+await page.click("#collapse-button");
+await settle();
+s = await state();
+check("footer: rail + is New workspace and sidebar + is Add a service", s.workspaceAddTitle === "New workspace" && s.manageTitle === "Add a service", {
+  workspace: s.workspaceAddTitle,
+  service: s.manageTitle,
+});
+await shot("shell-overlay-07-footer-collapsed-dark", "dark");
+await shot("shell-overlay-08-footer-collapsed-light", "light");
+await page.click("#collapse-button");
+await settle();
+await shot("shell-overlay-09-footer-expanded-dark", "dark");
+await shot("shell-overlay-10-footer-expanded-light", "light");
 
 console.log("\n--- console messages ---");
 for (const line of logs) console.log(line);

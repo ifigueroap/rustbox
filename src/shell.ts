@@ -122,6 +122,12 @@ let suspendedId: string | null = null;
 let editingId: string | null = null;
 let deskShowAll = false;
 let workspaceSwitcherOpen = false;
+/** Shell dialogs and the workspace chip popup. A child webview always paints
+ * above the main webview, so each of these hides the active service first and
+ * the last one to close puts it back. */
+const shellCovers = new Set<string>();
+let shellChain: Promise<void> = Promise.resolve();
+let shellEpoch = 0;
 let workspaceSavePending = false;
 let includeServicesPending = false;
 let includeTargetWorkspaceId: string | null = null;
@@ -372,7 +378,81 @@ export function mountShell(): void {
   const shell = document.querySelector<HTMLElement>("#shell");
   if (!shell || shell.dataset.wired === "true") return;
   shell.dataset.wired = "true";
+  // Tests swap the document. Drop covers from the previous document so a
+  // restore cannot paint into the new one.
+  shellEpoch += 1;
+  shellCovers.clear();
+  suspendedId = null;
+  workspaceSwitcherOpen = false;
+  shellChain = Promise.resolve();
   wireEvents();
+}
+
+function onShellChain(task: () => Promise<void> | void): Promise<void> {
+  const epoch = shellEpoch;
+  const next = shellChain.then(
+    async () => {
+      if (epoch !== shellEpoch) return;
+      await task();
+    },
+    async () => {
+      if (epoch !== shellEpoch) return;
+      await task();
+    },
+  );
+  shellChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/** Remember that `key` needs the service webview out of the way. Claiming is
+ * synchronous so a release queued in the same turn cannot restore early. */
+function claimCover(key: string): void {
+  shellCovers.add(key);
+}
+
+async function suspendForCover(): Promise<void> {
+  await onShellChain(async () => {
+    if (shellCovers.size === 0) return;
+    if (suspendedId || !activeId) return;
+    const previous = activeId;
+    suspendedId = previous;
+    const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: null }));
+    if (shellCovers.size === 0) {
+      suspendedId = null;
+      if (!snapshot) return;
+      const back = await run(() => invoke<Snapshot>("set_active_service", { id: previous }));
+      if (back) applySnapshot(back);
+      return;
+    }
+    if (!snapshot) {
+      if (activeId === previous) suspendedId = null;
+      return;
+    }
+    applySnapshot(snapshot);
+  });
+}
+
+function releaseCover(key: string): Promise<void> {
+  return onShellChain(async () => {
+    if (!shellCovers.delete(key)) return;
+    if (shellCovers.size > 0) return;
+    const restore = suspendedId;
+    suspendedId = null;
+    if (!restore || activeId) return;
+    const service = services.find((item) => item.id === restore);
+    if (!service || !serviceInWorkspace(service, activeWorkspaceId)) return;
+    const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: restore }));
+    if (snapshot) applySnapshot(snapshot);
+  });
+}
+
+/** Native menu actions run while the menu is still tearing down. Opening a
+ * dialog in that same turn is dropped on WebView2, so wait one task. */
+function deferMenuAction(action: () => void): void {
+  window.setTimeout(action, 0);
 }
 
 /** Apply a backend snapshot exactly as an `app-snapshot` event would. */
@@ -546,18 +626,26 @@ function clearError(): void {
 async function activate(id: string): Promise<void> {
   clearError();
   closeEditor();
-  const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id }));
-  if (snapshot) applySnapshot(snapshot);
+  // Explicit navigation cancels a cover that was about to restore another service.
+  suspendedId = null;
+  await onShellChain(async () => {
+    const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id }));
+    if (snapshot) applySnapshot(snapshot);
+  });
 }
 
 async function showDashboard(): Promise<void> {
   clearError();
+  suspendedId = null;
   if (!activeId) {
     render();
     return;
   }
-  const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: null }));
-  if (snapshot) applySnapshot(snapshot);
+  await onShellChain(async () => {
+    if (!activeId) return;
+    const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: null }));
+    if (snapshot) applySnapshot(snapshot);
+  });
 }
 
 async function setCollapsed(collapsed: boolean): Promise<void> {
@@ -619,7 +707,12 @@ function renderWorkspaceRail(): void {
   shell.classList.toggle("rail-hidden", !visible);
 
   const add = rail.querySelector<HTMLButtonElement>("#workspace-add");
-  if (add) add.hidden = workspaces.length >= MAX_WORKSPACES;
+  if (add) {
+    add.hidden = workspaces.length >= MAX_WORKSPACES;
+    const label = "New workspace";
+    add.title = label;
+    add.setAttribute("aria-label", label);
+  }
 
   const list = rail.querySelector<HTMLElement>("#workspace-list");
   if (!list) throw new Error("Missing #workspace-list");
@@ -708,11 +801,12 @@ function renderWorkspaceSwitcher(): void {
   const visible = workspaceSwitcherVisible();
   container.hidden = !visible;
   if (!visible) {
-    if (workspaceSwitcherOpen) closeWorkspaceSwitcher();
+    if (workspaceSwitcherOpen || shellCovers.has("switcher")) closeWorkspaceSwitcher();
     // Leaving the old rows behind kept a stale workspace list in the DOM after
     // the last extra workspace was deleted.
     popup.hidden = true;
     popup.replaceChildren();
+    clearWorkspacePopupPlacement(popup);
     mark.replaceChildren();
     return;
   }
@@ -735,6 +829,7 @@ function renderWorkspaceSwitcher(): void {
     const row = document.createElement("button");
     row.type = "button";
     row.className = workspace.id === activeWorkspaceId ? "ws-popup-row active" : "ws-popup-row";
+    row.style.setProperty("--ws-color", workspace.color || DEFAULT_SERVICE_COLOR);
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", workspace.id === activeWorkspaceId ? "true" : "false");
     row.dataset.workspaceId = workspace.id;
@@ -767,8 +862,19 @@ function renderWorkspaceSwitcher(): void {
     }
 
     row.addEventListener("click", () => {
+      const restore = suspendedId;
+      const same = workspace.id === activeWorkspaceId;
+      // Switching workspace must not put the previous service back on top of
+      // the desk. Closing on the current workspace still restores it.
+      if (!same) suspendedId = null;
       closeWorkspaceSwitcher();
-      void switchWorkspace(workspace.id);
+      if (same) return;
+      void (async () => {
+        await switchWorkspace(workspace.id);
+        if (!restore || activeId) return;
+        const service = services.find((item) => item.id === restore);
+        if (service && serviceInWorkspace(service, activeWorkspaceId)) await activate(restore);
+      })();
     });
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -784,29 +890,86 @@ function renderWorkspaceSwitcher(): void {
   add.textContent = "New workspace";
   add.disabled = workspaces.length >= MAX_WORKSPACES;
   add.addEventListener("click", () => {
-    closeWorkspaceSwitcher();
+    // Claim the editor before the popup releases, or the service webview
+    // pops back for a frame and covers the dialog.
     openWorkspaceEditor(null, "create");
+    closeWorkspaceSwitcher();
   });
   popup.append(add);
+  placeWorkspacePopup();
+}
+
+function clearWorkspacePopupPlacement(popup: HTMLElement): void {
+  popup.style.top = "";
+  popup.style.left = "";
+  popup.style.width = "";
+  popup.style.maxHeight = "";
+}
+
+/** The chip list is HTML, so it cannot paint over a child webview. Pin it to
+ * the viewport (never wider than the window) and keep it in the shell's
+ * stacking order, above the sidebar and, once the service is suspended, above
+ * the empty stage. */
+function placeWorkspacePopup(): void {
+  const popup = document.querySelector<HTMLElement>("#workspace-switcher-popup");
+  const button = document.querySelector<HTMLElement>("#workspace-switcher-button");
+  if (!popup || !button) return;
+  if (popup.hidden) {
+    clearWorkspacePopupPlacement(popup);
+    return;
+  }
+  const rect = button.getBoundingClientRect();
+  const margin = 8;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const available = Math.max(96, viewportWidth - margin * 2);
+  const width = Math.min(Math.max(rect.width, Math.min(240, available)), available);
+  let left = rect.left;
+  if (left + width > viewportWidth - margin) left = Math.max(margin, viewportWidth - margin - width);
+  if (left < margin) left = margin;
+  const top = Math.min(Math.max(margin, rect.bottom + 4), Math.max(margin, viewportHeight - margin));
+  const maxHeight = Math.max(96, viewportHeight - top - margin);
+  popup.style.top = `${Math.round(top)}px`;
+  popup.style.left = `${Math.round(left)}px`;
+  popup.style.width = `${Math.round(width)}px`;
+  popup.style.maxHeight = `${Math.round(maxHeight)}px`;
+}
+
+function revealWorkspaceSwitcher(): void {
+  if (!shellCovers.has("switcher")) return;
+  if (!workspaceSwitcherVisible()) {
+    void releaseCover("switcher");
+    return;
+  }
+  workspaceSwitcherOpen = true;
+  renderWorkspaceSwitcher();
+  document.querySelector<HTMLButtonElement>("#workspace-switcher-popup .ws-popup-row")?.focus();
 }
 
 function openWorkspaceSwitcher(): void {
-  workspaceSwitcherOpen = true;
-  renderWorkspaceSwitcher();
-  const popup = document.querySelector<HTMLElement>("#workspace-switcher-popup");
-  popup?.querySelector<HTMLButtonElement>(".ws-popup-row")?.focus();
+  if (workspaceSwitcherOpen || shellCovers.has("switcher")) return;
+  claimCover("switcher");
+  if (suspendedId || !activeId) {
+    revealWorkspaceSwitcher();
+    return;
+  }
+  void suspendForCover().then(() => revealWorkspaceSwitcher());
 }
 
 function closeWorkspaceSwitcher(): void {
   workspaceSwitcherOpen = false;
   const popup = document.querySelector<HTMLElement>("#workspace-switcher-popup");
-  if (popup) popup.hidden = true;
+  if (popup) {
+    popup.hidden = true;
+    clearWorkspacePopupPlacement(popup);
+  }
   const button = document.querySelector<HTMLButtonElement>("#workspace-switcher-button");
   button?.setAttribute("aria-expanded", "false");
+  if (shellCovers.has("switcher")) void releaseCover("switcher");
 }
 
 function toggleWorkspaceSwitcher(): void {
-  if (workspaceSwitcherOpen) closeWorkspaceSwitcher();
+  if (workspaceSwitcherOpen || shellCovers.has("switcher")) closeWorkspaceSwitcher();
   else openWorkspaceSwitcher();
 }
 
@@ -861,6 +1024,13 @@ function renderSidebar(): void {
     : "Pause sounds and notifications for every service.";
   dnd.setAttribute("aria-label", dnd.title);
 
+  const manage = document.querySelector<HTMLButtonElement>("#manage-button");
+  if (manage) {
+    const label = "Add a service";
+    manage.title = label;
+    manage.setAttribute("aria-label", label);
+  }
+
   const railToggle = document.querySelector<HTMLButtonElement>("#rail-toggle-button");
   if (railToggle) {
     const available = workspaces.length > 1;
@@ -883,7 +1053,8 @@ function renderSidebar(): void {
     const include = empty.querySelector<HTMLButtonElement>("#empty-include-services");
     if (include) include.hidden = services.length === 0;
   }
-  list.hidden = shown.length === 0;  for (const service of shown) {
+  list.hidden = shown.length === 0;
+  for (const service of shown) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = service.id === activeId ? "svc active" : "svc";
@@ -1053,12 +1224,7 @@ function serviceCard(service: Service): HTMLElement {
       void openEditor(service);
     }),
     actionButton("Remove", "danger", () => {
-      if (!window.confirm(`Remove ${service.name}? Its saved session will be deleted.`)) return;
-      void run(async () => {
-        clearError();
-        if (editingId === service.id) closeEditor();
-        applySnapshot(await invoke<Snapshot>("remove_service", { id: service.id }));
-      });
+      void confirmRemoveService(service);
     }),
   );
 
@@ -1463,14 +1629,37 @@ function closeEditor(): void {
   editingId = null;
   const dialog = document.querySelector<HTMLDialogElement>("#editor");
   if (dialog?.open) dialog.close();
+  if (shellCovers.has("editor")) void releaseCover("editor");
+}
+
+async function confirmRemoveService(service: Service): Promise<void> {
+  claimCover("confirm-service");
+  await suspendForCover();
+  const accepted = window.confirm(`Remove ${service.name}? Its saved session will be deleted.`);
+  if (!accepted) {
+    await releaseCover("confirm-service");
+    return;
+  }
+  try {
+    await run(async () => {
+      clearError();
+      if (editingId === service.id) closeEditor();
+      applySnapshot(await invoke<Snapshot>("remove_service", { id: service.id }));
+    });
+  } finally {
+    await releaseCover("confirm-service");
+  }
 }
 
 async function openEditor(service: Service): Promise<void> {
+  claimCover("editor");
   const manager = must<HTMLDialogElement>("#manager");
   if (manager.open) {
     manager.close();
-    suspendedId = null;
+    void releaseCover("manager");
   }
+  if (!suspendedId && activeId) await suspendForCover();
+  if (!shellCovers.has("editor")) return;
   editingId = service.id;
   if (!editorForm) editorForm = mountServiceForm(must("#editor-fields"));
   if (service.icon?.startsWith("local:") && !localIconUrls.has(service.icon)) {
@@ -1700,6 +1889,18 @@ function readWorkspaceIncludeSelection(): string[] {
     .map((input) => input.value);
 }
 
+function revealWorkspaceEditor(): void {
+  if (!shellCovers.has("workspace-editor") || !workspaceDraft) return;
+  const nodes = workspaceEditorNodes();
+  if (!nodes.dialog.open) nodes.dialog.showModal();
+  if (workspaceDraft.mode === "appearance") {
+    nodes.icon.focus();
+  } else {
+    nodes.name.focus();
+    nodes.name.select();
+  }
+}
+
 function openWorkspaceEditor(workspace: Workspace | null, mode: WorkspaceEditorMode): void {
   const nodes = workspaceEditorNodes();
   workspaceDraft = {
@@ -1729,13 +1930,12 @@ function openWorkspaceEditor(workspace: Workspace | null, mode: WorkspaceEditorM
   setWorkspaceColor(workspaceDraft.color);
   paintWorkspacePreview();
   syncWorkspaceSave();
-  if (!nodes.dialog.open) nodes.dialog.showModal();
-  if (workspaceDraft.mode === "appearance") {
-    nodes.icon.focus();
-  } else {
-    nodes.name.focus();
-    nodes.name.select();
+  claimCover("workspace-editor");
+  if (suspendedId || !activeId) {
+    revealWorkspaceEditor();
+    return;
   }
+  void suspendForCover().then(() => revealWorkspaceEditor());
 }
 
 function closeWorkspaceEditor(): void {
@@ -1746,6 +1946,7 @@ function closeWorkspaceEditor(): void {
   nodes.includeOptions.replaceChildren();
   nodes.includeField.hidden = true;
   if (nodes.dialog.open) nodes.dialog.close();
+  if (shellCovers.has("workspace-editor")) void releaseCover("workspace-editor");
 }
 
 async function saveWorkspaceEditor(): Promise<void> {
@@ -1903,7 +2104,16 @@ function openIncludeServices(workspaceId: string | null = activeWorkspaceId): vo
       ? `${pinned} service${pinned === 1 ? " already appears" : "s already appear"} in every workspace and ${pinned === 1 ? "is" : "are"} not listed here.`
       : "Ticked services also appear in this workspace. They keep their session and stay in every workspace they are already in.";
   renderIncludeOptions(workspaceId, new Set());
-  if (!nodes.dialog.open) nodes.dialog.showModal();
+  claimCover("include");
+  const reveal = (): void => {
+    if (!shellCovers.has("include") || includeTargetWorkspaceId !== workspaceId) return;
+    if (!nodes.dialog.open) nodes.dialog.showModal();
+  };
+  if (suspendedId || !activeId) {
+    reveal();
+    return;
+  }
+  void suspendForCover().then(() => reveal());
 }
 
 function closeIncludeServices(): void {
@@ -1911,6 +2121,7 @@ function closeIncludeServices(): void {
   includeTargetWorkspaceId = null;
   includeServicesPending = false;
   if (nodes?.open) nodes.close();
+  if (shellCovers.has("include")) void releaseCover("include");
 }
 
 async function saveIncludeServices(): Promise<void> {
@@ -1943,23 +2154,19 @@ async function saveIncludeServices(): Promise<void> {
 
 async function openManager(): Promise<void> {
   clearError();
+  claimCover("manager");
   closeEditor();
-  if (activeId) {
-    suspendedId = activeId;
-    const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: null }));
-    if (snapshot) applySnapshot(snapshot);
-  }
+  await suspendForCover();
+  if (!shellCovers.has("manager")) return;
   renderManager();
-  must<HTMLDialogElement>("#manager").showModal();
+  const dialog = must<HTMLDialogElement>("#manager");
+  if (!dialog.open) dialog.showModal();
 }
 
 async function closeManager(): Promise<void> {
-  must<HTMLDialogElement>("#manager").close();
-  const restore = suspendedId;
-  suspendedId = null;
-  if (restore && services.some((service) => service.id === restore)) {
-    await activate(restore);
-  }
+  const dialog = document.querySelector<HTMLDialogElement>("#manager");
+  if (dialog?.open) dialog.close();
+  if (shellCovers.has("manager")) await releaseCover("manager");
 }
 
 function serviceInWorkspace(service: Service, workspaceId: string | null): boolean {
@@ -2119,9 +2326,19 @@ async function removeWorkspace(workspace: Workspace): Promise<void> {
     `Delete the ${workspace.name} workspace?\n\n` +
     "No service or session is deleted. Services that are only in this workspace " +
     `move to ${workspaces.find((item) => item.id !== workspace.id)?.name ?? "the first workspace"}.`;
-  if (!window.confirm(message)) return;
-  const snapshot = await run(() => invoke<Snapshot>("remove_workspace", { id: workspace.id }));
-  if (snapshot) applySnapshot(snapshot);
+  claimCover("confirm-workspace");
+  await suspendForCover();
+  const accepted = window.confirm(message);
+  if (!accepted) {
+    await releaseCover("confirm-workspace");
+    return;
+  }
+  try {
+    const snapshot = await run(() => invoke<Snapshot>("remove_workspace", { id: workspace.id }));
+    if (snapshot) applySnapshot(snapshot);
+  } finally {
+    await releaseCover("confirm-workspace");
+  }
 }
 
 async function closeWorkspaceMenu(): Promise<void> {
@@ -2151,11 +2368,11 @@ async function openWorkspaceMenu(workspaceId: string, x: number, y: number): Pro
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
       text: "Rename…",
-      action: () => void openWorkspaceEditor(workspace, "rename"),
+      action: () => deferMenuAction(() => openWorkspaceEditor(workspace, "rename")),
     }));
     add(await MenuItem.new({
       text: "Edit icon and color…",
-      action: () => void openWorkspaceEditor(workspace, "appearance"),
+      action: () => deferMenuAction(() => openWorkspaceEditor(workspace, "appearance")),
     }));
     add(await MenuItem.new({
       text: workspace.dnd ? "Turn off Do not disturb" : "Do not disturb",
@@ -2176,7 +2393,7 @@ async function openWorkspaceMenu(workspaceId: string, x: number, y: number): Pro
     add(await MenuItem.new({
       text: "Delete workspace…",
       enabled: workspaces.length > 1,
-      action: () => void removeWorkspace(workspace),
+      action: () => deferMenuAction(() => void removeWorkspace(workspace)),
     }));
 
     workspaceMenu = await Menu.new({ items });
@@ -2273,10 +2490,19 @@ function wireEvents(): void {
     toggleWorkspaceSwitcher();
   });
   document.addEventListener("pointerdown", (event) => {
-    if (!workspaceSwitcherOpen) return;
+    if (!workspaceSwitcherOpen && !shellCovers.has("switcher")) return;
     const container = document.querySelector<HTMLElement>("#workspace-switcher");
     if (container && event.target instanceof Node && container.contains(event.target)) return;
+    // A click that opens another shell surface takes over. Restoring the
+    // service here would cover that dialog, or fight the click's own activate.
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("#service-list .svc, #brand-button, #manage-button, #dash-add, #dash-workspace-add, #workspace-add, #empty-add-service, #empty-include-services, #dash-empty-add, #dash-empty-include")) {
+      suspendedId = null;
+    }
     closeWorkspaceSwitcher();
+  });
+  window.addEventListener("resize", () => {
+    if (workspaceSwitcherOpen) placeWorkspacePopup();
   });
   const emptyActions: [string, () => void][] = [
     ["#empty-add-service", () => void openManager()],
@@ -2425,6 +2651,14 @@ function wireEvents(): void {
   window.addEventListener(
     "keydown",
     (event) => {
+      if (event.key === "Escape" && (workspaceSwitcherOpen || shellCovers.has("switcher"))) {
+        if (!document.querySelector("dialog[open]")) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeWorkspaceSwitcher();
+          return;
+        }
+      }
       if (
         !event.repeat &&
         !event.altKey &&

@@ -144,7 +144,7 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-2) 0;
+  padding: var(--space-2) 0 var(--space-3);
   background: var(--soft-panel);
   border-right: 1px solid var(--line);
 }
@@ -248,14 +248,15 @@ button:disabled {
 }
 
 .ws-add {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   flex: none;
+  padding: 0;
   border: 1px dashed var(--rail-border);
-  border-radius: 11px;
+  border-radius: 12px;
   background: transparent;
   color: var(--copper);
-  font-size: 19px;
+  font-size: 22px;
   line-height: 1;
 }
 
@@ -324,20 +325,22 @@ button:disabled {
 }
 
 .ws-popup {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + var(--space-1));
-  left: var(--space-2);
-  right: var(--space-2);
-  min-width: 200px;
+  position: fixed;
+  z-index: 80;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: calc(100vw - 16px);
   padding: var(--space-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   background: var(--panel);
+  color: var(--text);
   box-shadow: 0 var(--space-4) 40px var(--shadow);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ws-popup[hidden] {
@@ -347,7 +350,9 @@ button:disabled {
 .ws-popup-row {
   position: relative;
   width: 100%;
-  min-height: 34px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -357,6 +362,8 @@ button:disabled {
   background: transparent;
   color: var(--text);
   font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
   text-align: left;
 }
 
@@ -367,6 +374,7 @@ button:disabled {
 .ws-popup-row.active {
   background: var(--active);
   box-shadow: inset 3px 0 0 var(--ws-color, var(--copper));
+  color: var(--text);
 }
 
 .ws-popup-row .ws-mark {
@@ -392,10 +400,12 @@ button:disabled {
 
 .ws-popup-name {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
 }
 
 .ws-popup-add {
@@ -403,7 +413,7 @@ button:disabled {
   border-top: 1px solid var(--line);
   border-radius: 0 0 7px 7px;
   color: var(--copper);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 #shell.sidebar-collapsed .workspace-switcher {
@@ -421,11 +431,6 @@ button:disabled {
 #shell.sidebar-collapsed .ws-switch-name,
 #shell.sidebar-collapsed .ws-switch-caret {
   display: none;
-}
-
-#shell.sidebar-collapsed .ws-popup {
-  left: 0;
-  right: auto;
 }
 
 .dash-scope-row {
@@ -475,6 +480,10 @@ button:disabled {
 }
 
 .brand-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: Palatino, "Palatino Linotype", Georgia, serif;
   font-size: 22px;
   letter-spacing: -0.03em;
@@ -728,11 +737,12 @@ select:focus-visible {
 }
 
 #shell.sidebar-collapsed .dnd-button {
-  width: 42px;
-  height: 42px;
-  min-height: 42px;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
   padding: 0;
   justify-content: center;
+  border-radius: 12px;
 }
 
 #shell.sidebar-collapsed .dnd-label {
@@ -748,16 +758,23 @@ select:focus-visible {
 }
 
 .rail-button {
-  width: 42px;
-  height: 42px;
-  border: 1px dashed var(--rail-border);
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
   border-radius: 12px;
   background: transparent;
-  color: var(--copper);
-  font-size: 26px;
+  color: var(--muted);
+  font-size: 18px;
   line-height: 1;
   display: grid;
   place-items: center;
+}
+
+.rail-button.is-add {
+  border: 1px dashed var(--rail-border);
+  color: var(--copper);
+  font-size: 22px;
 }
 
 .rail-button[hidden] {
@@ -800,9 +817,13 @@ select:focus-visible {
   background: var(--hover);
 }
 
+#shell.sidebar-collapsed .rail-footer {
+  gap: var(--space-2);
+}
+
 #shell.sidebar-collapsed .rail-footer .rail-button {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
 }
 
 #stage {
@@ -1543,14 +1564,19 @@ input[type="color"] {
 
 .app-error {
   position: fixed;
-  z-index: 60;
-  left: 50%;
-  bottom: var(--space-4);
-  transform: translateX(-50%);
-  max-width: min(760px, calc(100vw - var(--space-6)));
+  z-index: 70;
+  top: var(--space-2);
+  left: var(--space-2);
+  transform: none;
+  box-sizing: border-box;
+  width: calc(var(--sidebar-width) - var(--space-4));
+  max-width: calc(100vw - var(--space-4));
+  max-height: 40vh;
+  overflow: auto;
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--danger);
   border-radius: var(--radius-control);
@@ -1559,6 +1585,20 @@ input[type="color"] {
   font-size: 13px;
   line-height: 1.4;
   box-shadow: 0 var(--space-3) 32px var(--shadow);
+}
+
+#shell.rail-visible .app-error {
+  left: calc(var(--workspace-rail-width) + var(--space-2));
+}
+
+#shell.sidebar-collapsed .app-error {
+  left: var(--space-1);
+  width: calc(var(--sidebar-collapsed-width) - var(--space-2));
+  font-size: 11px;
+}
+
+#shell.sidebar-collapsed.rail-visible .app-error {
+  left: calc(var(--workspace-rail-width) + var(--space-1));
 }
 
 .app-error[hidden] {
@@ -1605,6 +1645,18 @@ button:disabled,
 
   #server-url-add {
     justify-self: start;
+  }
+}
+
+@media (max-width: 360px) {
+  #sidebar {
+    width: min(var(--sidebar-width), 100vw);
+    max-width: 100vw;
+  }
+
+  #shell.rail-visible #sidebar {
+    width: min(var(--sidebar-width), calc(100vw - var(--workspace-rail-width)));
+    max-width: calc(100vw - var(--workspace-rail-width));
   }
 }
 
