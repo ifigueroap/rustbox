@@ -622,15 +622,16 @@ impl Config {
         if self.workspaces.is_empty() {
             return false;
         }
-        let members: Vec<&Workspace> = if service.all_workspaces {
-            self.workspaces.iter().collect()
+        let flags: Vec<bool> = if service.all_workspaces {
+            self.workspaces.iter().map(|workspace| workspace.dnd).collect()
         } else {
             self.workspaces
                 .iter()
                 .filter(|workspace| service.workspaces.iter().any(|id| id == &workspace.id))
+                .map(|workspace| workspace.dnd)
                 .collect()
         };
-        !members.is_empty() && members.iter().all(|workspace| workspace.dnd)
+        crate::policy::silenced_by_workspaces(&flags)
     }
 
     pub fn add_workspace(&mut self, input: NewWorkspace) -> Result<Workspace, String> {

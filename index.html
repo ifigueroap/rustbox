@@ -9,6 +9,18 @@
   </head>
   <body>
     <div id="shell">
+      <nav id="workspace-rail" aria-label="Workspaces" hidden>
+        <div id="workspace-list" role="listbox" aria-label="Workspaces"></div>
+        <button
+          id="workspace-add"
+          class="ws-add"
+          type="button"
+          title="New workspace"
+          aria-label="New workspace"
+        >
+          +
+        </button>
+      </nav>
       <aside id="sidebar">
         <button id="brand-button" class="brand" type="button" title="rustbox" aria-label="Show the rustbox dashboard">
           <span class="brand-mark">rb</span>
@@ -57,9 +69,9 @@
         <div id="dashboard">
           <header class="dash-head">
             <div>
-              <p class="eyebrow">desk</p>
-              <h1>rustbox</h1>
-              <p class="lede">Every service in this window, with its own session.</p>
+              <p id="dash-eyebrow" class="eyebrow">desk</p>
+              <h1 id="dash-title">rustbox</h1>
+              <p id="dash-lede" class="lede">Every service in this window, with its own session.</p>
             </div>
             <div class="dash-tools">
               <label class="appearance-control" for="theme-select">
@@ -75,11 +87,19 @@
                 <input id="close-tray" type="checkbox" checked />
                 <span>Close to tray</span>
               </label>
+              <label class="close-tray" title="Show the workspace rail beside the sidebar.">
+                <input id="rail-toggle" type="checkbox" checked />
+                <span>Workspace rail</span>
+              </label>
+              <button id="dash-workspace-add" type="button">New workspace</button>
               <button id="dash-add" type="button">Add service</button>
             </div>
           </header>
+          <div class="dash-scope-row">
+            <button id="dash-scope" class="text-action" type="button" hidden>All services</button>
+          </div>
           <div id="dash-grid" class="dash-grid"></div>
-          <p id="dash-empty" class="empty-desk" hidden>No services yet. Add a preset or a custom URL.</p>
+          <p id="dash-empty" class="empty-desk" hidden>No services in this workspace yet. Add one, or switch to All services.</p>
         </div>
         <p id="stage-status" hidden></p>
       </section>
@@ -139,6 +159,50 @@
         <div class="dialog-footer">
           <button id="editor-cancel" type="button">Cancel</button>
           <button id="editor-save" class="primary" type="submit" disabled>Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="workspace-editor">
+      <form id="workspace-form" class="manager-card" method="dialog">
+        <header class="manager-head">
+          <div>
+            <p class="eyebrow">workspace</p>
+            <h2 id="workspace-editor-title">New workspace</h2>
+          </div>
+          <button id="workspace-close" class="text-button" type="button">Close</button>
+        </header>
+        <div class="dialog-body">
+          <p id="workspace-error" class="error" hidden></p>
+          <div class="custom-grid">
+            <label class="wide">
+              Name
+              <input id="workspace-name" type="text" maxlength="80" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="wide">
+              Icon
+              <div class="icon-row">
+                <span id="workspace-preview" class="avatar icon-preview"></span>
+                <button id="workspace-choose" class="file-button" type="button">Choose image</button>
+                <input id="workspace-file" type="file" accept=".png,.svg,.ico,.jpg,.jpeg,.webp,image/png,image/svg+xml,image/jpeg,image/webp,image/x-icon" hidden />
+                <input id="workspace-icon" type="text" placeholder="Emoji, URL, or leave blank for the initial" spellcheck="false" />
+                <button id="workspace-icon-reset" class="text-action" type="button">Use initial</button>
+              </div>
+              <p class="field-hint">An emoji like 💼, an image URL, or a file copied into Rustbox's data folder.</p>
+            </label>
+            <label class="wide">
+              Accent color
+              <div class="accent-row">
+                <input id="workspace-color" type="color" value="#8d8478" aria-label="Workspace accent color" />
+                <input id="workspace-hex" type="text" class="hex-input" value="#8d8478" spellcheck="false" aria-label="Workspace accent color hex" />
+              </div>
+              <p class="field-hint">Used for the rail highlight and the letter fallback.</p>
+            </label>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button id="workspace-cancel" type="button">Cancel</button>
+          <button id="workspace-save" class="primary" type="submit" disabled>Save</button>
         </div>
       </form>
     </dialog>
