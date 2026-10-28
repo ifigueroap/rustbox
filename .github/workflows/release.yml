@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+  # Pull requests build macOS only and do not publish. The release job stays
+  # off for that event so a PR cannot create or overwrite a GitHub Release.
+  pull_request:
 
 permissions:
   contents: write
@@ -16,6 +19,7 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.platform }}
+    if: github.event_name != 'pull_request' || matrix.platform == 'macos-latest'
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -23,8 +27,13 @@ jobs:
         include:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
+            rust_targets: x86_64-pc-windows-msvc
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            rust_targets: x86_64-unknown-linux-gnu
+          - platform: macos-latest
+            target: universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
     defaults:
       run:
         shell: bash
@@ -38,7 +47,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -82,6 +91,62 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: npm run tauri build -- --target ${{ matrix.target }} --bundles appimage
 
+      - name: Build macOS app and disk image
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          sign=1
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Apple secret $name is not set; building with an ad-hoc signature"
+              sign=0
+              break
+            fi
+          done
+          P12=""
+          KEYCHAIN=""
+          cleanup() {
+            if [ -n "$KEYCHAIN" ]; then
+              security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
+            fi
+            if [ -n "$P12" ]; then
+              rm -f "$P12"
+            fi
+          }
+          trap cleanup EXIT
+          if [ "$sign" -eq 0 ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            export APPLE_SIGNING_IDENTITY="-"
+          else
+            echo "Apple signing secrets are present; importing the certificate into a temporary keychain"
+            P12="$RUNNER_TEMP/rustbox-certificate.p12"
+            KEYCHAIN="$RUNNER_TEMP/rustbox-signing.keychain-db"
+            KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+            export RUSTBOX_P12="$P12"
+            python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["RUSTBOX_P12"]).write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE"].strip()))'
+            unset RUSTBOX_P12
+            security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+            security default-keychain -s "$KEYCHAIN"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+            security set-keychain-settings -t 3600 -u "$KEYCHAIN"
+            existing=$(security list-keychains -d user | sed 's/^[[:space:]]*//;s/"//g')
+            # shellcheck disable=SC2086
+            security list-keychains -d user -s "$KEYCHAIN" $existing
+            security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign -T /usr/bin/productbuild
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+            rm -f "$P12"
+            P12=""
+            echo "Certificate imported"
+          fi
+          npm run tauri build -- --target ${{ matrix.target }} --bundles dmg,app
+
       - name: Package Windows asset
         if: matrix.platform == 'windows-latest'
         run: |
@@ -112,6 +177,26 @@ jobs:
           cp "$APPIMAGE" rustbox-linux-x64.AppImage
           chmod +x rustbox-linux-x64.AppImage
 
+      - name: Package macOS assets
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euo pipefail
+          BUNDLE="src-tauri/target/${{ matrix.target }}/release/bundle"
+          DMG=$(find "$BUNDLE/dmg" -type f -name '*.dmg' | head -n 1)
+          if [ -z "$DMG" ]; then
+            echo "DMG was not produced"
+            find "$BUNDLE" -type f | head -n 100
+            exit 1
+          fi
+          cp "$DMG" rustbox-macos-universal.dmg
+          APP=$(find "$BUNDLE/macos" -maxdepth 1 -type d -name '*.app' | head -n 1)
+          if [ -z "$APP" ]; then
+            echo ".app bundle was not produced"
+            find "$BUNDLE" | head -n 100
+            exit 1
+          fi
+          COPYFILE_DISABLE=1 tar -C "$BUNDLE/macos" -czf rustbox-macos-universal.app.tar.gz "$(basename "$APP")"
+
       - uses: actions/upload-artifact@v4
         if: matrix.platform == 'windows-latest'
         with:
@@ -130,9 +215,19 @@ jobs:
             rustbox-linux-x64.tar.gz
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'macos-latest'
+        with:
+          name: rustbox-macos-universal
+          path: |
+            rustbox-macos-universal.dmg
+            rustbox-macos-universal.app.tar.gz
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -185,6 +280,8 @@ jobs:
             artifacts/rustbox-windows-x64-setup.exe
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.tar.gz
+            artifacts/rustbox-macos-universal.dmg
+            artifacts/rustbox-macos-universal.app.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -201,6 +298,8 @@ jobs:
             artifacts/rustbox-windows-x64-setup.exe
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.tar.gz
+            artifacts/rustbox-macos-universal.dmg
+            artifacts/rustbox-macos-universal.app.tar.gz
           body: |
             Rustbox ${{ steps.tag.outputs.name }} builds.
 
@@ -216,6 +315,10 @@ jobs:
 
             Both Linux artifacts need WebKitGTK 4.1 installed (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit.
 
-            macOS is not part of this release.
+            ### macOS
+            - `rustbox-macos-universal.dmg` — open the disk image and drag Rustbox to Applications. One build covers Apple Silicon and Intel.
+            - `rustbox-macos-universal.app.tar.gz` — contains `Rustbox.app`.
+
+            macOS 14 or newer is required. When Apple signing secrets are not configured, the build is ad-hoc signed and Gatekeeper quarantines it. Right-click Rustbox, choose Open, and confirm, or run `xattr -dr com.apple.quarantine /Applications/Rustbox.app`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

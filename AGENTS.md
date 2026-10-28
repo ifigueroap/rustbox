@@ -13,7 +13,7 @@ Before changing behavior, read the relevant README section and inspect both side
 - Keep navigation, popup, external-link, login-provider, unread-title, and user-agent policy centralized in `src-tauri/src/policy.rs`. Validate URLs before opening them externally.
 - Keep sound and notification behavior aligned with Do Not Disturb and per-service settings. The injected webview script is in `src-tauri/src/inject.js`.
 - When adding a Tauri command, update the invoke handler and the relevant capability/permission files under `src-tauri/capabilities/` and `src-tauri/permissions/` as needed. Do not grant a webview broader native access than the feature requires.
-- Preserve the Linux GTK/WebKit host workaround in `linux_host.rs` when changing webview geometry or lifecycle. Windows uses WebView2. macOS is not currently built or tested; do not claim support based only on compilation.
+- Preserve the Linux GTK/WebKit host workaround in `linux_host.rs` when changing webview geometry or lifecycle. Windows uses WebView2. macOS release CI builds a universal bundle; interactive macOS behavior is not tested, so do not claim runtime support from compilation or a green bundle alone.
 - Avoid logging service URLs with embedded credentials, config contents, cookies, or other session data.
 
 ## Releases

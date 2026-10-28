@@ -279,6 +279,10 @@ mod tests {
         assert!(agent.contains("Safari/537.36"));
         #[cfg(target_os = "linux")]
         assert!(agent.contains("X11; Linux x86_64"));
+        #[cfg(target_os = "macos")]
+        assert!(agent.contains("Macintosh; Intel Mac OS X 10_15_7"));
+        #[cfg(target_os = "windows")]
+        assert!(agent.contains("Windows NT 10.0; Win64; x64"));
     }
 
     #[test]

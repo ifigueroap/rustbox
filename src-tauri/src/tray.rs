@@ -93,52 +93,56 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
     .map_err(|err| err.to_string())?;
 
     let icon = tray_image(false)?;
-    TrayIconBuilder::with_id(TRAY_ID)
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Rustbox")
         .icon(icon)
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| {
-            let id = event.id().as_ref().to_string();
-            if let Some(workspace_id) = id.strip_prefix("tray-workspace-dnd:") {
-                let next = !workspace_flag(app, workspace_id);
-                let _ = store_workspace_dnd(app, workspace_id, next);
-                return;
+        .show_menu_on_left_click(false);
+    // The menu-bar glyph is the color mark, including the copper unread dot.
+    // A template image would keep only the alpha channel and drop that color.
+    #[cfg(target_os = "macos")]
+    let tray = tray.icon_as_template(false);
+    tray.on_menu_event(|app, event| {
+        let id = event.id().as_ref().to_string();
+        if let Some(workspace_id) = id.strip_prefix("tray-workspace-dnd:") {
+            let next = !workspace_flag(app, workspace_id);
+            let _ = store_workspace_dnd(app, workspace_id, next);
+            return;
+        }
+        match id.as_str() {
+            "tray-show" => {
+                let _ = reveal(app);
             }
-            match id.as_str() {
-                "tray-show" => {
-                    let _ = reveal(app);
-                }
-                "tray-hide" => {
-                    let _ = hide(app);
-                }
-                "tray-dnd" => {
-                    let next = !flag(app, |config| config.do_not_disturb);
-                    let _ = store_do_not_disturb(app, next);
-                }
-                "tray-close" => {
-                    let next = !flag(app, |config| config.close_to_tray);
-                    let _ = store_close_to_tray(app, next);
-                }
-                "tray-quit" => request_quit(app),
-                _ => {}
+            "tray-hide" => {
+                let _ = hide(app);
             }
-        })
-        .on_tray_icon_event(|tray, event| {
-            let left_up = matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            );
-            if left_up {
-                toggle(tray.app_handle());
+            "tray-dnd" => {
+                let next = !flag(app, |config| config.do_not_disturb);
+                let _ = store_do_not_disturb(app, next);
             }
-        })
-        .build(app)
-        .map_err(|err| err.to_string())?;
+            "tray-close" => {
+                let next = !flag(app, |config| config.close_to_tray);
+                let _ = store_close_to_tray(app, next);
+            }
+            "tray-quit" => request_quit(app),
+            _ => {}
+        }
+    })
+    .on_tray_icon_event(|tray, event| {
+        let left_up = matches!(
+            event,
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+        );
+        if left_up {
+            toggle(tray.app_handle());
+        }
+    })
+    .build(app)
+    .map_err(|err| err.to_string())?;
 
     app.manage(TrayMenu {
         dnd,
