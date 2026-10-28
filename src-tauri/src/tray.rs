@@ -6,7 +6,8 @@ use tauri::image::Image;
 use tauri::menu::{
     CheckMenuItem, CheckMenuItemBuilder, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem,
     Submenu, SubmenuBuilder,
-};use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::services::{self, RuntimeState};
@@ -73,9 +74,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         .build()
         .map_err(|err| err.to_string())?;
     for (_, item) in &workspaces {
-        workspace_menu
-            .append(item)
-            .map_err(|err| err.to_string())?;
+        workspace_menu.append(item).map_err(|err| err.to_string())?;
     }
 
     let menu = Menu::with_items(
@@ -240,7 +239,10 @@ fn sync_workspace_items(app: &AppHandle, menu: &TrayMenu) {
         let items = services::lock(&menu.workspaces);
         (
             items.iter().map(|(id, _)| id.clone()).collect(),
-            items.iter().map(|(_, item)| item.text().unwrap_or_default()).collect()
+            items
+                .iter()
+                .map(|(_, item)| item.text().unwrap_or_default())
+                .collect(),
         )
     };
     let expected_labels: Vec<String> = current
@@ -278,7 +280,9 @@ pub fn store_workspace_dnd(
     workspace_id: &str,
     enabled: bool,
 ) -> Result<(), String> {
-    services::mutate(app, |config| config.set_workspace_dnd(workspace_id, enabled))?;
+    services::mutate(app, |config| {
+        config.set_workspace_dnd(workspace_id, enabled)
+    })?;
     services::apply_sound_policy(app);
     let _ = app.emit("app-snapshot", services::snapshot(app));
     sync(app);

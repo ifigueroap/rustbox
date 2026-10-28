@@ -13,7 +13,7 @@ use url::Url;
 
 use crate::config::{
     Config, PRESETS, PresetInfo, Service, Theme, Workspace, import_legacy_sessions,
-    legacy_config_candidates, legacy_session_roots, service_in_workspace,
+    legacy_config_candidates, legacy_session_roots, save_if_changed, service_in_workspace,
 };
 use crate::policy::{self, PopupDecision};
 use crate::shortcuts::{self, ShortcutDestination};
@@ -117,6 +117,15 @@ impl RuntimeState {
                     );
                 }
             }
+        }
+        // Write the migrated layout back once, so the file on disk already has
+        // its workspaces the next time it is read. A load that changed nothing
+        // is not rewritten; the comparison is on the serialized text.
+        if let Err(err) = save_if_changed(&config_path, &config) {
+            eprintln!(
+                "rustbox: could not store the workspace layout in {}: {err}",
+                config_path.display()
+            );
         }
         Ok(Self {
             config_path,
@@ -1042,10 +1051,7 @@ fn content_bounds(
         let config = lock(&state.config);
         policy::shell_width(
             config.sidebar_collapsed,
-            policy::workspace_rail_visible(
-                config.workspace_rail_hidden,
-                config.workspaces.len(),
-            ),
+            policy::workspace_rail_visible(config.workspace_rail_hidden, config.workspaces.len()),
         )
     };
     let scale = window.scale_factor().map_err(|err| err.to_string())?;
@@ -1153,19 +1159,23 @@ mod tests {
     #[test]
     fn a_silenced_workspace_hides_its_badge() {
         let mut config = config_with(&["Work", "Teaching"]);
-        let work = config.workspaces[0].id.clone();
         let teaching = config.workspaces[1].id.clone();
         let only_teaching = add(&mut config, "Zulip", &[&teaching], false);
         let mut unread = HashMap::new();
         unread.insert(only_teaching, 5);
 
-        config.set_workspace_dnd(&teaching, true);
+        config.set_workspace_dnd(&teaching, true).unwrap();
         let (visible, raw, _) = workspace_totals(&config, &unread, &config.workspaces[1]);
         assert_eq!(visible, 0, "a silenced workspace shows no badge");
         assert_eq!(raw, 5, "the count is still tracked");
 
-        // The awake workspace is unaffected.
-        let _ = work;
+        let (work_visible, _, work_count) =
+            workspace_totals(&config, &unread, &config.workspaces[0]);
+        assert_eq!(
+            (work_visible, work_count),
+            (0, 0),
+            "the awake workspace is unaffected"
+        );
     }
 
     #[test]
@@ -1176,7 +1186,7 @@ mod tests {
         let shared = add(&mut config, "Slack", &[&work, &teaching], false);
         let mut unread = HashMap::new();
         unread.insert(shared, 4);
-        config.set_workspace_dnd(&teaching, true);
+        config.set_workspace_dnd(&teaching, true).unwrap();
 
         let (visible, _, _) = workspace_totals(&config, &unread, &config.workspaces[0]);
         assert_eq!(visible, 4, "one awake workspace keeps the service audible");
@@ -1193,7 +1203,14 @@ mod tests {
         for workspace in &config.workspaces {
             let (visible, raw, _) = workspace_totals(&config, &unread, workspace);
             assert_eq!(visible, 0);
-            assert_eq!(raw, if workspace.id == config.workspaces[0].id { 7 } else { 0 });
+            assert_eq!(
+                raw,
+                if workspace.id == config.workspaces[0].id {
+                    7
+                } else {
+                    0
+                }
+            );
         }
     }
 

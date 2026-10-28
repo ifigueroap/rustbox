@@ -178,11 +178,7 @@ fn update_workspace(app: tauri::AppHandle, workspace: WorkspaceUpdate) -> Result
 }
 
 #[tauri::command]
-fn set_workspace_dnd(
-    app: tauri::AppHandle,
-    id: String,
-    enabled: bool,
-) -> Result<Snapshot, String> {
+fn set_workspace_dnd(app: tauri::AppHandle, id: String, enabled: bool) -> Result<Snapshot, String> {
     services::mutate(&app, |config| config.set_workspace_dnd(&id, enabled))?;
     services::apply_sound_policy(&app);
     tray::sync(&app);

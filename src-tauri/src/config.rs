@@ -296,7 +296,6 @@ pub struct WorkspaceUpdate {
     pub color: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetInfo {
@@ -604,7 +603,8 @@ impl Config {
     }
 
     pub fn active_workspace_id(&self) -> Option<String> {
-        self.active_workspace().map(|workspace| workspace.id.clone())
+        self.active_workspace()
+            .map(|workspace| workspace.id.clone())
     }
 
     /// Services shown for a workspace, in sidebar order. `None` means every
@@ -623,7 +623,10 @@ impl Config {
             return false;
         }
         let flags: Vec<bool> = if service.all_workspaces {
-            self.workspaces.iter().map(|workspace| workspace.dnd).collect()
+            self.workspaces
+                .iter()
+                .map(|workspace| workspace.dnd)
+                .collect()
         } else {
             self.workspaces
                 .iter()
@@ -997,7 +1000,11 @@ fn unique_name(config: &Config, base: &str) -> String {
 }
 
 fn unique_workspace_name(config: &Config, base: &str) -> String {
-    if !config.workspaces.iter().any(|workspace| workspace.name == base) {
+    if !config
+        .workspaces
+        .iter()
+        .any(|workspace| workspace.name == base)
+    {
         return base.to_string();
     }
     for number in 2..100 {
@@ -1076,6 +1083,18 @@ fn repair_preset_colors(config: &mut Config) {
             service.color = preset.color.to_string();
         }
     }
+}
+
+/// Persist a config only when its serialized text differs from the file, so a
+/// normal launch leaves the file's mtime alone and a migrated layout is
+/// written exactly once.
+pub fn save_if_changed(path: &Path, config: &Config) -> Result<bool, String> {
+    let next = serde_json::to_string_pretty(config).map_err(|err| err.to_string())?;
+    if std::fs::read_to_string(path).is_ok_and(|current| current == next) {
+        return Ok(false);
+    }
+    config.save(path)?;
+    Ok(true)
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -1387,7 +1406,10 @@ mod tests {
             assert_eq!(service.workspaces, vec![main.id.clone()]);
             assert!(!service.all_workspaces);
         }
-        assert_eq!(loaded.active_workspace_id.as_deref(), Some(main.id.as_str()));
+        assert_eq!(
+            loaded.active_workspace_id.as_deref(),
+            Some(main.id.as_str())
+        );
         assert!(loaded.sidebar_collapsed);
         assert!(loaded.do_not_disturb);
         assert_eq!(loaded.theme, Theme::Dark);
@@ -1412,7 +1434,10 @@ mod tests {
         migrate_workspaces(&mut config);
         config.normalize();
         assert_eq!(config.workspaces.len(), 1);
-        assert_eq!(config.active_workspace_id(), Some(config.workspaces[0].id.clone()));
+        assert_eq!(
+            config.active_workspace_id(),
+            Some(config.workspaces[0].id.clone())
+        );
     }
 
     #[test]
