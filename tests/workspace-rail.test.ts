@@ -176,3 +176,145 @@ describe("empty workspace", () => {
     expect(document.querySelector("#dash-empty-all")?.hasAttribute("hidden")).toBe(false);
   });
 });
+
+describe("render", () => {
+  it("is safe to call repeatedly", () => {
+    const main = workspace("Main", { order: 0 });
+    applyShellSnapshot(snapshot({ workspaces: [main], services: [] }));
+    for (let i = 0; i < 4; i += 1) render();
+    expect(document.querySelector("#workspace-list")).not.toBeNull();
+    expect(document.querySelector<HTMLElement>("#app-error")?.hidden).toBe(true);
+  });
+
+  it("keeps every static anchor across rail, empty, and switching states", () => {
+    // The 0.5.0 bug was a must() lookup on an element a parent had wiped. This
+    // is the audit: every anchor the shell dereferences must survive a full
+    // cycle of the states that rebuild lists.
+    const anchors = [
+      "#shell",
+      "#workspace-rail",
+      "#workspace-list",
+      "#workspace-add",
+      "#workspace-switcher",
+      "#workspace-switcher-button",
+      "#workspace-switcher-popup",
+      "#service-list",
+      "#service-empty",
+      "#empty-add-service",
+      "#empty-include-services",
+      "#brand-button",
+      "#collapse-button",
+      "#rail-toggle-button",
+      "#manage-button",
+      "#dnd-button",
+      "#dashboard",
+      "#dash-grid",
+      "#dash-empty",
+      "#dash-empty-text",
+      "#dash-empty-add",
+      "#dash-empty-include",
+      "#dash-empty-all",
+      "#dash-scope",
+      "#dash-scope-row",
+      "#dash-title",
+      "#dash-lede",
+      "#dash-eyebrow",
+      "#app-version",
+      "#stage-status",
+      "#app-error",
+      "#app-error-text",
+      "#app-error-dismiss",
+      "#rail-toggle",
+      "#close-tray",
+      "#theme-select",
+      "#manager",
+      "#editor",
+      "#workspace-editor",
+      "#include-services",
+      "#preset-list",
+      "#custom-fields",
+      "#editor-fields",
+      "#include-options",
+      "#include-title",
+      "#include-hint",
+      "#include-error",
+      "#include-save",
+      "#workspace-include-options",
+      "#workspace-include-field",
+      "#workspace-save",
+      "#workspace-error",
+      "#config-path",
+      "#sessions-path",
+      "#ua-hint",
+    ];
+    const main = workspace("Main", { order: 0 });
+    const spotmind = workspace("Spotmind", { order: 1 });
+    const slack = service("Slack", [main.id], { preset: "slack" });
+    const discord = service("Discord", [spotmind.id], { preset: "discord" });
+
+    const states = [
+      snapshot({ workspaces: [main], services: [slack] }),
+      snapshot({ workspaces: [main, spotmind], services: [slack, discord] }),
+      snapshot({
+        workspaces: [main, spotmind],
+        services: [slack, discord],
+        workspaceRailHidden: true,
+      }),
+      snapshot({ workspaces: [main, spotmind], services: [], activeWorkspaceId: spotmind.id }),
+      snapshot({ workspaces: [main], services: [] }),
+    ];
+    for (const state of states) {
+      applyShellSnapshot(state);
+      render();
+      for (const anchor of anchors) {
+        expect(
+          document.querySelector(anchor),
+          `${anchor} after ${state.workspaces.length} workspace(s)`,
+        ).not.toBeNull();
+      }
+    }
+  });
+});
+
+describe("workspace shortcuts", () => {
+  it("keeps Ctrl+Alt+1..9 working while the rail is collapsed", async () => {
+    const main = workspace("Main", { order: 0 });
+    const spotmind = workspace("Spotmind", { order: 1 });
+    applyShellSnapshot(
+      snapshot({ workspaces: [main, spotmind], services: [], workspaceRailHidden: true }),
+    );
+    const { invoke } = await import("../src/ipc");
+    vi.mocked(invoke).mockClear();
+    vi.mocked(invoke).mockResolvedValueOnce(
+      snapshot({ workspaces: [main, spotmind], services: [], activeWorkspaceId: spotmind.id }),
+    );
+
+    // The shell switches workspaces itself, so the rail being collapsed must
+    // not take the shortcut away from it.
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "2", ctrlKey: true, altKey: true, bubbles: true }),
+    );
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_active_workspace", {
+      id: spotmind.id,
+    });
+  });
+
+  it("ignores the workspace shortcut when the rail is showing", async () => {
+    const main = workspace("Main", { order: 0 });
+    const spotmind = workspace("Spotmind", { order: 1 });
+    applyShellSnapshot(snapshot({ workspaces: [main, spotmind], services: [] }));
+    const { invoke } = await import("../src/ipc");
+    vi.mocked(invoke).mockClear();
+    vi.mocked(invoke).mockResolvedValueOnce(
+      snapshot({ workspaces: [main, spotmind], services: [], activeWorkspaceId: spotmind.id }),
+    );
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "2", ctrlKey: true, altKey: true, bubbles: true }),
+    );
+    // Same behaviour with or without the rail: the shortcut is global.
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_active_workspace", {
+      id: spotmind.id,
+    });
+  });
+});

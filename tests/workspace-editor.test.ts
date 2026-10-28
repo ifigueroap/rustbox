@@ -166,8 +166,7 @@ describe("saveWorkspaceEditor", () => {
   });
 });
 
-describe("include services", () => {
-  it("does not offer the step when there are no services at all", () => {
+describe("include services", () => {  it("does not offer the step when there are no services at all", () => {
     const main = workspace("Main", { order: 0 });
     const spotmind = workspace("Spotmind", { order: 1 });
     applyShellSnapshot(
@@ -196,15 +195,5 @@ describe("include services", () => {
     expect(
       document.querySelector<HTMLInputElement>("#workspace-include-options input")?.value,
     ).toBe(slack.id);
-  });
-});
-
-describe("render", () => {
-  it("is safe to call repeatedly", () => {
-    const main = workspace("Main", { order: 0 });
-    applyShellSnapshot(snapshot({ workspaces: [main], services: [] }));
-    for (let i = 0; i < 4; i += 1) render();
-    expect(document.querySelector("#workspace-list")).not.toBeNull();
-    expect(document.querySelector<HTMLElement>("#app-error")?.hidden).toBe(true);
   });
 });
