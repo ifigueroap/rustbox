@@ -529,15 +529,17 @@ function renderWorkspaceRail(): void {
 
     if (workspace.unread > 0) {
       const badge = document.createElement("span");
-      badge.className = workspace.dnd ? "ws-badge muted" : "ws-badge";
+      badge.className = "ws-badge";
       badge.textContent = workspace.unread > 99 ? "99+" : String(workspace.unread);
       button.append(badge);
     }
     if (workspace.dnd) {
       const flag = document.createElement("span");
       flag.className = "ws-dnd";
-      flag.textContent = "z";
+      flag.title = "Do not disturb";
       flag.setAttribute("aria-hidden", "true");
+      flag.innerHTML =
+        '<svg viewBox="0 0 24 24" width="10" height="10"><path fill="currentColor" d="M21 12.8A8.5 8.5 0 0 1 11.2 3a8.5 8.5 0 1 0 9.8 9.8z"/></svg>';
       button.append(flag);
     }
 
@@ -719,8 +721,11 @@ function renderDashboard(): void {
   must<HTMLElement>("#dash-lede").textContent = lede;
 
   const toggle = must<HTMLButtonElement>("#dash-scope");
+  const scopeRow = must<HTMLElement>("#dash-scope-row");
   const scoped = visibleServices();
-  toggle.hidden = workspace === undefined || services.length === scoped.length;
+  const showToggle = workspace !== undefined && services.length !== scoped.length;
+  scopeRow.hidden = !showToggle;
+  toggle.hidden = !showToggle;
   toggle.textContent = deskShowAll ? `Only ${workspace?.name ?? "this workspace"}` : "All services";
   toggle.title = deskShowAll
     ? "Show only the services in this workspace."
@@ -961,7 +966,6 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
 
   const syncMembership = (): void => {
     const all = allInput.checked;
-    options.hidden = all;
     for (const option of workspaceOptions) {
       option.input.disabled = all;
       option.row.classList.toggle("disabled", all);
@@ -1468,10 +1472,31 @@ async function closeManager(): Promise<void> {
   }
 }
 
+function serviceInWorkspace(service: Service, workspaceId: string | null): boolean {
+  if (!workspaceId) return true;
+  return service.allWorkspaces || service.workspaces.includes(workspaceId);
+}
+
+/** Recompute each workspace badge from the service badges it contains. A
+ * service shared by two workspaces counts in both, exactly as the backend
+ * sums it. A workspace in Do not disturb hides its badge, the same way
+ * global Do not disturb hides service badges. */
+function recomputeWorkspaceUnread(): void {
+  for (const workspace of workspaces) {
+    let total = 0;
+    for (const service of services) {
+      if (serviceInWorkspace(service, workspace.id)) total += service.unread;
+    }
+    workspace.unread = workspace.dnd ? 0 : total;
+  }
+}
+
 function refreshUnread(serviceId: string, count: number): void {
   const service = services.find((item) => item.id === serviceId);
   if (!service || service.unread === count) return;
   service.unread = count;
+  recomputeWorkspaceUnread();
+  renderWorkspaceRail();
   renderSidebar();
   document.querySelectorAll<HTMLElement>(`[data-unread-for="${CSS.escape(serviceId)}"]`).forEach((node) => {
     if (node.classList.contains("badge")) return;
@@ -1481,13 +1506,16 @@ function refreshUnread(serviceId: string, count: number): void {
 }
 
 function soundOff(service: Service): boolean {
-  return !doNotDisturb && !service.soundEnabled;
+  return !doNotDisturb && !service.workspaceSilenced && !service.soundEnabled;
 }
 
 function serviceTitle(service: Service): string {
   const parts = [service.unread > 0 ? `${service.name} (${service.unread})` : service.name];
-  if (!doNotDisturb && !service.soundEnabled) parts.push("Sound off");
-  if (!doNotDisturb && !service.notificationsEnabled) parts.push("Notifications off");
+  if (!doNotDisturb && !service.workspaceSilenced && !service.soundEnabled) parts.push("Sound off");
+  if (!doNotDisturb && !service.workspaceSilenced && !service.notificationsEnabled) {
+    parts.push("Notifications off");
+  }
+  if (service.workspaceSilenced) parts.push("Silenced by workspace Do not disturb");
   return parts.join(". ");
 }
 

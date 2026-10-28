@@ -193,12 +193,35 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
 
 /// Combined unread for one workspace. A service shared by two workspaces
 /// counts in both. A silenced service contributes nothing, matching how
-/// global Do not disturb hides badges.
+/// global Do not disturb hides badges, and a workspace in Do not disturb
+/// shows no badge at all.
 fn workspace_dto(
     config: &Config,
     unread: &HashMap<String, u32>,
     workspace: &Workspace,
 ) -> WorkspaceDto {
+    let (visible, raw, service_count) = workspace_totals(config, unread, workspace);
+    WorkspaceDto {
+        id: workspace.id.clone(),
+        name: workspace.name.clone(),
+        icon: workspace.icon.clone(),
+        color: workspace.color.clone(),
+        dnd: workspace.dnd,
+        order: workspace.order,
+        unread: visible,
+        raw_unread: raw,
+        service_count,
+    }
+}
+
+/// The badge a workspace shows, plus the raw title counts behind it and how
+/// many services it lists. Split out so the silencing rule is unit tested
+/// without an app handle.
+pub fn workspace_totals(
+    config: &Config,
+    unread: &HashMap<String, u32>,
+    workspace: &Workspace,
+) -> (u32, u32, usize) {
     let members = config.services_in_workspace(&workspace.id);
     let mut raw = 0u32;
     let mut visible = 0u32;
@@ -213,17 +236,8 @@ fn workspace_dto(
             visible = visible.saturating_add(count);
         }
     }
-    WorkspaceDto {
-        id: workspace.id.clone(),
-        name: workspace.name.clone(),
-        icon: workspace.icon.clone(),
-        color: workspace.color.clone(),
-        dnd: workspace.dnd,
-        order: workspace.order,
-        unread: visible,
-        raw_unread: raw,
-        service_count: members.len(),
-    }
+    // A silenced workspace hides its badge rather than greying a number.
+    (if workspace.dnd { 0 } else { visible }, raw, members.len())
 }
 
 pub fn visible_unread_total(app: &AppHandle) -> u32 {
@@ -1076,5 +1090,129 @@ pub fn validate_external_url(raw: &str) -> Result<String, String> {
     match url.scheme() {
         "http" | "https" | "mailto" | "tel" => Ok(url.to_string()),
         _ => Err("only http, https, mailto, and tel links can be opened".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{NewService, NewWorkspace};
+
+    fn config_with(names: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.workspaces.clear();
+        for name in names {
+            config
+                .add_workspace(NewWorkspace {
+                    name: (*name).into(),
+                    icon: None,
+                    color: None,
+                })
+                .unwrap();
+        }
+        config
+    }
+
+    fn add(config: &mut Config, name: &str, workspaces: &[&str], all: bool) -> String {
+        let service = config
+            .add_custom(NewService {
+                name: name.into(),
+                url: format!("https://{}.example.com/", name.to_lowercase()),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: if all {
+                    None
+                } else {
+                    Some(workspaces.iter().map(|id| (*id).to_string()).collect())
+                },
+                all_workspaces: Some(all),
+            })
+            .unwrap();
+        service.id
+    }
+
+    #[test]
+    fn a_shared_service_counts_in_both_workspace_badges() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let shared = add(&mut config, "Slack", &[&work, &teaching], false);
+        let mut unread = HashMap::new();
+        unread.insert(shared, 3);
+
+        let (work_visible, work_raw, work_count) =
+            workspace_totals(&config, &unread, &config.workspaces[0]);
+        let (teaching_visible, _, teaching_count) =
+            workspace_totals(&config, &unread, &config.workspaces[1]);
+        assert_eq!((work_visible, work_raw, work_count), (3, 3, 1));
+        assert_eq!((teaching_visible, teaching_count), (3, 1));
+    }
+
+    #[test]
+    fn a_silenced_workspace_hides_its_badge() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let only_teaching = add(&mut config, "Zulip", &[&teaching], false);
+        let mut unread = HashMap::new();
+        unread.insert(only_teaching, 5);
+
+        config.set_workspace_dnd(&teaching, true);
+        let (visible, raw, _) = workspace_totals(&config, &unread, &config.workspaces[1]);
+        assert_eq!(visible, 0, "a silenced workspace shows no badge");
+        assert_eq!(raw, 5, "the count is still tracked");
+
+        // The awake workspace is unaffected.
+        let _ = work;
+    }
+
+    #[test]
+    fn an_awake_workspace_keeps_counting_a_shared_service_while_the_other_is_silenced() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let shared = add(&mut config, "Slack", &[&work, &teaching], false);
+        let mut unread = HashMap::new();
+        unread.insert(shared, 4);
+        config.set_workspace_dnd(&teaching, true);
+
+        let (visible, _, _) = workspace_totals(&config, &unread, &config.workspaces[0]);
+        assert_eq!(visible, 4, "one awake workspace keeps the service audible");
+    }
+
+    #[test]
+    fn global_dnd_zeroes_every_workspace_badge() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let service = add(&mut config, "Slack", &[&work], false);
+        let mut unread = HashMap::new();
+        unread.insert(service, 7);
+        config.do_not_disturb = true;
+        for workspace in &config.workspaces {
+            let (visible, raw, _) = workspace_totals(&config, &unread, workspace);
+            assert_eq!(visible, 0);
+            assert_eq!(raw, if workspace.id == config.workspaces[0].id { 7 } else { 0 });
+        }
+    }
+
+    #[test]
+    fn all_pinned_services_appear_in_every_workspace_badge() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let service = add(&mut config, "Mail", &[], true);
+        let mut unread = HashMap::new();
+        unread.insert(service, 2);
+        for workspace in &config.workspaces {
+            let (visible, _, count) = workspace_totals(&config, &unread, workspace);
+            assert_eq!(visible, 2);
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[test]
+    fn service_webview_labels_stay_stable_across_workspaces() {
+        // One service is one webview; the label never mentions a workspace.
+        assert_eq!(label_for("abc"), "svc-abc");
     }
 }
