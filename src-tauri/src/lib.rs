@@ -6,7 +6,7 @@ mod services;
 mod shortcuts;
 mod tray;
 
-use config::{NewService, ServiceUpdate, Theme};
+use config::{NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
 use services::{RuntimeState, Snapshot};
 use tauri::{Manager, WindowEvent};
 
@@ -158,6 +158,78 @@ fn set_theme(app: tauri::AppHandle, theme: Theme) -> Result<Snapshot, String> {
 }
 
 #[tauri::command]
+fn add_workspace(app: tauri::AppHandle, workspace: NewWorkspace) -> Result<Snapshot, String> {
+    let mut created_id = String::new();
+    services::mutate(&app, |config| {
+        let created = config.add_workspace(workspace)?;
+        config.active_workspace_id = Some(created.id.clone());
+        created_id = created.id;
+        Ok(())
+    })?;
+    services::switch_workspace(&app, &created_id)?;
+    let _ = tauri::Emitter::emit(&app, "app-snapshot", services::snapshot(&app));
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn update_workspace(app: tauri::AppHandle, workspace: WorkspaceUpdate) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| config.update_workspace(workspace))?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_workspace_dnd(app: tauri::AppHandle, id: String, enabled: bool) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| config.set_workspace_dnd(&id, enabled))?;
+    services::apply_sound_policy(&app);
+    tray::sync(&app);
+    Ok(services::snapshot(&app))
+}
+
+/// Deleting a workspace never deletes a service. A service left with no
+/// workspace moves to the first remaining one; sessions stay where they are.
+#[tauri::command]
+fn remove_workspace(app: tauri::AppHandle, id: String) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.remove_workspace(&id)?;
+        Ok(())
+    })?;
+    services::close_if_outside_active_workspace(&app)?;
+    services::apply_sound_policy(&app);
+    tray::sync(&app);
+    let _ = tauri::Emitter::emit(&app, "app-snapshot", services::snapshot(&app));
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_active_workspace(app: tauri::AppHandle, id: String) -> Result<Snapshot, String> {
+    services::switch_workspace(&app, &id)?;
+    let _ = tauri::Emitter::emit(&app, "app-snapshot", services::snapshot(&app));
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn move_workspace(app: tauri::AppHandle, id: String, delta: i32) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| config.move_workspace(&id, delta))?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn reorder_workspaces(app: tauri::AppHandle, ids: Vec<String>) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| config.reorder_workspaces(&ids))?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_workspace_rail_hidden(app: tauri::AppHandle, hidden: bool) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.workspace_rail_hidden = hidden;
+        Ok(())
+    })?;
+    services::sync_bounds(&app)?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 fn apply_service_shortcut(
     app: tauri::AppHandle,
     key: String,
@@ -269,6 +341,14 @@ pub fn run() {
             set_close_to_tray,
             quit_app,
             set_theme,
+            add_workspace,
+            update_workspace,
+            set_workspace_dnd,
+            remove_workspace,
+            set_active_workspace,
+            move_workspace,
+            reorder_workspaces,
+            set_workspace_rail_hidden,
             apply_service_shortcut,
             reload_service,
             open_external,

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{
     CheckMenuItem, CheckMenuItemBuilder, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem,
+    Submenu, SubmenuBuilder,
 };
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Wry};
@@ -22,6 +23,10 @@ struct TrayMenu {
     close_to_tray: CheckMenuItem<Wry>,
     show: MenuItem<Wry>,
     hide: MenuItem<Wry>,
+    /// One check item per workspace, in rail order. Rebuilt when the
+    /// workspace list changes because native menus are not dynamic.
+    workspaces: Mutex<Vec<(String, CheckMenuItem<Wry>)>>,
+    workspace_menu: Mutex<Option<Submenu<Wry>>>,
 }
 
 pub fn hide_instead_of_quit(close_to_tray: bool, tray_ready: bool, quitting: bool) -> bool {
@@ -63,12 +68,22 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
     let separator = PredefinedMenuItem::separator(app).map_err(|err| err.to_string())?;
     let separator_after = PredefinedMenuItem::separator(app).map_err(|err| err.to_string())?;
+
+    let workspaces = build_workspace_items(app)?;
+    let workspace_menu = SubmenuBuilder::with_id(app, "tray-workspaces", "Workspaces")
+        .build()
+        .map_err(|err| err.to_string())?;
+    for (_, item) in &workspaces {
+        workspace_menu.append(item).map_err(|err| err.to_string())?;
+    }
+
     let menu = Menu::with_items(
         app,
         &[
             &show_item,
             &hide_item,
             &separator,
+            &workspace_menu,
             &dnd,
             &close_to_tray,
             &separator_after,
@@ -83,23 +98,31 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "tray-show" => {
-                let _ = reveal(app);
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_string();
+            if let Some(workspace_id) = id.strip_prefix("tray-workspace-dnd:") {
+                let next = !workspace_flag(app, workspace_id);
+                let _ = store_workspace_dnd(app, workspace_id, next);
+                return;
             }
-            "tray-hide" => {
-                let _ = hide(app);
+            match id.as_str() {
+                "tray-show" => {
+                    let _ = reveal(app);
+                }
+                "tray-hide" => {
+                    let _ = hide(app);
+                }
+                "tray-dnd" => {
+                    let next = !flag(app, |config| config.do_not_disturb);
+                    let _ = store_do_not_disturb(app, next);
+                }
+                "tray-close" => {
+                    let next = !flag(app, |config| config.close_to_tray);
+                    let _ = store_close_to_tray(app, next);
+                }
+                "tray-quit" => request_quit(app),
+                _ => {}
             }
-            "tray-dnd" => {
-                let next = !flag(app, |config| config.do_not_disturb);
-                let _ = store_do_not_disturb(app, next);
-            }
-            "tray-close" => {
-                let next = !flag(app, |config| config.close_to_tray);
-                let _ = store_close_to_tray(app, next);
-            }
-            "tray-quit" => request_quit(app),
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             let left_up = matches!(
@@ -122,8 +145,56 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         close_to_tray,
         show: show_item,
         hide: hide_item,
+        workspaces: Mutex::new(workspaces),
+        workspace_menu: Mutex::new(Some(workspace_menu)),
     });
     sync(app);
+    Ok(())
+}
+
+/// One "Do not disturb" check item per workspace. The ids carry the workspace
+/// id so a click can be routed back without re-reading a snapshot index.
+fn build_workspace_items(app: &AppHandle) -> Result<Vec<(String, CheckMenuItem<Wry>)>, String> {
+    let workspaces: Vec<(String, String, bool)> = {
+        let state = app.state::<RuntimeState>();
+        let config = services::lock(&state.config);
+        config
+            .workspaces
+            .iter()
+            .map(|workspace| (workspace.id.clone(), workspace.name.clone(), workspace.dnd))
+            .collect()
+    };
+    let mut items = Vec::with_capacity(workspaces.len());
+    for (id, name, dnd) in workspaces {
+        let item = CheckMenuItemBuilder::with_id(
+            format!("tray-workspace-dnd:{id}"),
+            format!("{name} — Do not disturb"),
+        )
+        .checked(dnd)
+        .build(app)
+        .map_err(|err| err.to_string())?;
+        items.push((id, item));
+    }
+    Ok(items)
+}
+
+/// The workspace list changed shape. Native menus cannot edit the id or label
+/// of an existing item, so new check items are appended and the old ones
+/// removed from the same submenu.
+fn rebuild_workspace_items(app: &AppHandle, menu: &TrayMenu) -> Result<(), String> {
+    let items = build_workspace_items(app)?;
+    let slot = services::lock(&menu.workspace_menu);
+    let Some(submenu) = slot.as_ref() else {
+        return Ok(());
+    };
+    let mut previous = services::lock(&menu.workspaces);
+    for (_, item) in &items {
+        submenu.append(item).map_err(|err| err.to_string())?;
+    }
+    for (_, item) in previous.iter() {
+        let _ = submenu.remove(item);
+    }
+    *previous = items;
     Ok(())
 }
 
@@ -144,10 +215,78 @@ pub fn sync(app: &AppHandle) {
     let open = window_is_open(app);
     let _ = menu.show.set_enabled(!open);
     let _ = menu.hide.set_enabled(open);
+    sync_workspace_items(app, &menu);
     let _ = tray.set_tooltip(Some(tooltip(unread)));
     if let Ok(icon) = tray_image(unread > 0) {
         let _ = tray.set_icon(Some(icon));
     }
+}
+
+/// Keep the per-workspace check items and their labels in step with the
+/// config. Only rebuilds when the id set changed.
+fn sync_workspace_items(app: &AppHandle, menu: &TrayMenu) {
+    let current: Vec<(String, String, bool)> = {
+        let state = app.state::<RuntimeState>();
+        let config = services::lock(&state.config);
+        config
+            .workspaces
+            .iter()
+            .map(|workspace| (workspace.id.clone(), workspace.name.clone(), workspace.dnd))
+            .collect()
+    };
+    let ids: Vec<String> = current.iter().map(|(id, _, _)| id.clone()).collect();
+    let (known_ids, labels): (Vec<String>, Vec<String>) = {
+        let items = services::lock(&menu.workspaces);
+        (
+            items.iter().map(|(id, _)| id.clone()).collect(),
+            items
+                .iter()
+                .map(|(_, item)| item.text().unwrap_or_default())
+                .collect(),
+        )
+    };
+    let expected_labels: Vec<String> = current
+        .iter()
+        .map(|(_, name, _)| tray_dnd_label(name))
+        .collect();
+    if ids != known_ids || labels != expected_labels {
+        if let Err(err) = rebuild_workspace_items(app, menu) {
+            eprintln!("rustbox: could not update the workspace tray items: {err}");
+        }
+        return;
+    }
+    let items = services::lock(&menu.workspaces);
+    for ((_, _, dnd), (_, item)) in current.iter().zip(items.iter()) {
+        let _ = item.set_checked(*dnd);
+    }
+}
+
+fn tray_dnd_label(name: &str) -> String {
+    format!("{name} — Do not disturb")
+}
+
+fn workspace_flag(app: &AppHandle, workspace_id: &str) -> bool {
+    let state = app.state::<RuntimeState>();
+    let config = services::lock(&state.config);
+    config
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .is_some_and(|workspace| workspace.dnd)
+}
+
+pub fn store_workspace_dnd(
+    app: &AppHandle,
+    workspace_id: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    services::mutate(app, |config| {
+        config.set_workspace_dnd(workspace_id, enabled)
+    })?;
+    services::apply_sound_policy(app);
+    let _ = app.emit("app-snapshot", services::snapshot(app));
+    sync(app);
+    Ok(())
 }
 
 pub fn reveal(app: &AppHandle) -> Result<(), String> {

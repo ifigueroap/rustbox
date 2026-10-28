@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -8,6 +9,10 @@ fn default_version() -> u32 {
     1
 }
 
+fn default_schema_version() -> u32 {
+    CONFIG_SCHEMA_VERSION
+}
+
 fn default_true() -> bool {
     true
 }
@@ -15,6 +20,15 @@ fn default_true() -> bool {
 fn default_color() -> String {
     "#8d8478".to_string()
 }
+
+/// Workspace layout version written next to the legacy `version` field.
+///
+/// `version` stays at 1 on purpose: an older build rejects any other value,
+/// moves the config aside, and starts empty. Every workspaces field is
+/// additive, so an older reader ignores it and still shows the services.
+pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+
+pub const DEFAULT_WORKSPACE_NAME: &str = "Main";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -102,6 +116,40 @@ pub const PRESETS: &[Preset] = &[
     },
 ];
 
+/// A named grouping of services. One service can be listed in several
+/// workspaces; it keeps a single webview and a single session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default = "default_color")]
+    pub color: String,
+    /// Silences sound, notifications, and badges for every service that is
+    /// only shared with other silenced workspaces. Global Do not disturb wins.
+    #[serde(default)]
+    pub dnd: bool,
+    /// Position in the rail. `Config::normalize` keeps this equal to the
+    /// index in `Config::workspaces`.
+    #[serde(default)]
+    pub order: u32,
+}
+
+impl Workspace {
+    fn new(name: &str) -> Self {
+        Self {
+            id: new_id(),
+            name: name.to_string(),
+            icon: None,
+            color: default_color(),
+            dnd: false,
+            order: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
@@ -124,6 +172,12 @@ pub struct Service {
     /// Unread badges and desktop notifications. Do not disturb hides them anyway.
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
+    /// Workspace ids this service is listed under.
+    #[serde(default)]
+    pub workspaces: Vec<String>,
+    /// Shown in every workspace, including ones created later.
+    #[serde(default)]
+    pub all_workspaces: bool,
 }
 
 impl Service {
@@ -137,6 +191,17 @@ impl Service {
 pub struct Config {
     #[serde(default = "default_version")]
     pub version: u32,
+    /// Additive layout marker for workspaces. Older builds ignore it.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
+    #[serde(default)]
+    pub active_workspace_id: Option<String>,
+    /// The service that was open, so a restart lands back on it. Cleared when
+    /// the desk is showing instead, and ignored when that service is gone.
+    #[serde(default)]
+    pub active_service_id: Option<String>,
     #[serde(default)]
     pub services: Vec<Service>,
     /// When true the sidebar is the icon rail. Names stay available as tooltips.
@@ -148,18 +213,28 @@ pub struct Config {
     /// Closing the window hides it. Quit from the tray, or Ctrl+Q, to exit.
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
+    /// Hide the workspace rail. The rail also hides while only one workspace exists.
+    #[serde(default)]
+    pub workspace_rail_hidden: bool,
     #[serde(default)]
     pub theme: Theme,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let mut workspace = Workspace::new(DEFAULT_WORKSPACE_NAME);
+        workspace.order = 0;
         Self {
             version: 1,
+            schema_version: CONFIG_SCHEMA_VERSION,
+            active_workspace_id: Some(workspace.id.clone()),
+            active_service_id: None,
+            workspaces: vec![workspace],
             services: Vec::new(),
             sidebar_collapsed: false,
             do_not_disturb: false,
             close_to_tray: true,
+            workspace_rail_hidden: false,
             theme: Theme::Auto,
         }
     }
@@ -179,6 +254,10 @@ pub struct NewService {
     pub user_agent: Option<String>,
     #[serde(default = "default_true")]
     pub use_chrome_user_agent: bool,
+    #[serde(default)]
+    pub workspaces: Option<Vec<String>>,
+    #[serde(default)]
+    pub all_workspaces: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +274,31 @@ pub struct ServiceUpdate {
     pub user_agent: Option<String>,
     #[serde(default = "default_true")]
     pub use_chrome_user_agent: bool,
+    #[serde(default)]
+    pub workspaces: Option<Vec<String>>,
+    #[serde(default)]
+    pub all_workspaces: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewWorkspace {
+    pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceUpdate {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -393,6 +497,7 @@ impl Config {
                 .ok_or_else(|| format!("{} has no URL", preset.name))?
                 .to_string()
         };
+        let workspace = self.active_workspace().map(|item| item.id.clone());
         let service = Service {
             id: new_id(),
             name: unique_name(self, preset.name),
@@ -404,12 +509,17 @@ impl Config {
             preset: Some(preset.id.to_string()),
             sound_enabled: true,
             notifications_enabled: true,
+            workspaces: workspace.into_iter().collect(),
+            all_workspaces: false,
         };
         self.services.push(service.clone());
         Ok(service)
     }
 
     pub fn add_custom(&mut self, input: NewService) -> Result<Service, String> {
+        let fallback = self.active_workspace().map(|item| item.id.clone());
+        let (workspaces, all_workspaces) =
+            self.resolve_membership(input.workspaces, input.all_workspaces, fallback)?;
         let service = Service {
             id: new_id(),
             name: normalize_name(&input.name)?,
@@ -421,6 +531,8 @@ impl Config {
             preset: None,
             sound_enabled: true,
             notifications_enabled: true,
+            workspaces,
+            all_workspaces,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -432,6 +544,9 @@ impl Config {
         let icon = normalize_icon(input.icon.as_deref())?;
         let color = normalize_color(input.color.as_deref());
         let user_agent = normalize_user_agent(input.user_agent.as_deref())?;
+        let fallback = self.active_workspace().map(|item| item.id.clone());
+        let (workspaces, all_workspaces) =
+            self.resolve_membership(input.workspaces, input.all_workspaces, fallback)?;
         let service = self
             .services
             .iter_mut()
@@ -446,6 +561,8 @@ impl Config {
         service.color = color;
         service.user_agent = user_agent;
         service.use_chrome_user_agent = input.use_chrome_user_agent;
+        service.workspaces = workspaces;
+        service.all_workspaces = all_workspaces;
         Ok(reload)
     }
 
@@ -455,6 +572,9 @@ impl Config {
             .iter()
             .position(|service| service.id == id)
             .ok_or_else(|| "service not found".to_string())?;
+        if self.active_service_id.as_deref() == Some(id) {
+            self.active_service_id = None;
+        }
         Ok(self.services.remove(index))
     }
 
@@ -478,6 +598,257 @@ impl Config {
         self.services = next;
         Ok(())
     }
+
+    // ---- Workspaces -------------------------------------------------------
+
+    /// The workspace the shell is showing. Falls back to the first one when the
+    /// saved id is gone, so deleting a workspace never leaves the shell blank.
+    pub fn active_workspace(&self) -> Option<&Workspace> {
+        let saved = self.active_workspace_id.as_deref();
+        saved
+            .and_then(|id| self.workspaces.iter().find(|workspace| workspace.id == id))
+            .or_else(|| self.workspaces.first())
+    }
+
+    pub fn active_workspace_id(&self) -> Option<String> {
+        self.active_workspace()
+            .map(|workspace| workspace.id.clone())
+    }
+
+    /// Services shown for a workspace, in sidebar order. `None` means every
+    /// service on the desk's "all services" view.
+    pub fn services_in_workspace(&self, workspace_id: &str) -> Vec<&Service> {
+        self.services
+            .iter()
+            .filter(|service| service_in_workspace(service, workspace_id))
+            .collect()
+    }
+
+    /// True when this service is silenced by workspace Do not disturb only.
+    /// A service shared with any awake workspace keeps its sound and badges.
+    pub fn workspace_silenced(&self, service: &Service) -> bool {
+        if self.workspaces.is_empty() {
+            return false;
+        }
+        let flags: Vec<bool> = if service.all_workspaces {
+            self.workspaces
+                .iter()
+                .map(|workspace| workspace.dnd)
+                .collect()
+        } else {
+            self.workspaces
+                .iter()
+                .filter(|workspace| service.workspaces.iter().any(|id| id == &workspace.id))
+                .map(|workspace| workspace.dnd)
+                .collect()
+        };
+        crate::policy::silenced_by_workspaces(&flags)
+    }
+
+    pub fn add_workspace(&mut self, input: NewWorkspace) -> Result<Workspace, String> {
+        let name = normalize_name(&input.name)?;
+        if self.workspaces.len() >= MAX_WORKSPACES {
+            return Err(format!("at most {MAX_WORKSPACES} workspaces"));
+        }
+        let mut workspace = Workspace::new(&unique_workspace_name(self, &name));
+        workspace.icon = normalize_icon(input.icon.as_deref())?;
+        workspace.color = normalize_color(input.color.as_deref());
+        workspace.order = self.workspaces.len() as u32;
+        self.workspaces.push(workspace.clone());
+        if self.active_workspace_id.is_none() {
+            self.active_workspace_id = Some(workspace.id.clone());
+        }
+        Ok(workspace)
+    }
+
+    pub fn update_workspace(&mut self, input: WorkspaceUpdate) -> Result<(), String> {
+        let name = normalize_name(&input.name)?;
+        let icon = normalize_icon(input.icon.as_deref())?;
+        let color = normalize_color(input.color.as_deref());
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == input.id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        workspace.name = name;
+        workspace.icon = icon;
+        workspace.color = color;
+        Ok(())
+    }
+
+    pub fn set_workspace_dnd(&mut self, id: &str, dnd: bool) -> Result<(), String> {
+        let workspace = self
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.id == id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        workspace.dnd = dnd;
+        Ok(())
+    }
+
+    /// Removing a workspace never removes a service. A service that is left
+    /// with no workspace at all moves to the first remaining workspace.
+    pub fn remove_workspace(&mut self, id: &str) -> Result<Workspace, String> {
+        if self.workspaces.len() <= 1 {
+            return Err("keep at least one workspace".into());
+        }
+        let index = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        let removed = self.workspaces.remove(index);
+        let fallback = self.workspaces[0].id.clone();
+        for service in &mut self.services {
+            service.workspaces.retain(|item| item != id);
+            if !service.all_workspaces && service.workspaces.is_empty() {
+                service.workspaces.push(fallback.clone());
+            }
+        }
+        if self.active_workspace_id.as_deref() == Some(id) {
+            self.active_workspace_id = Some(fallback);
+        }
+        self.resequence_workspaces();
+        Ok(removed)
+    }
+
+    pub fn reorder_workspaces(&mut self, ids: &[String]) -> Result<(), String> {
+        if ids.len() != self.workspaces.len() {
+            return Err("reorder must include every workspace exactly once".into());
+        }
+        let mut next = Vec::with_capacity(ids.len());
+        for id in ids {
+            if next.iter().any(|workspace: &Workspace| &workspace.id == id) {
+                return Err(format!("duplicate workspace {id}"));
+            }
+            let workspace = self
+                .workspaces
+                .iter()
+                .find(|workspace| &workspace.id == id)
+                .cloned()
+                .ok_or_else(|| format!("unknown workspace {id}"))?;
+            next.push(workspace);
+        }
+        self.workspaces = next;
+        self.resequence_workspaces();
+        Ok(())
+    }
+
+    /// Move one workspace one slot up the rail, without a full reorder list.
+    pub fn move_workspace(&mut self, id: &str, delta: i32) -> Result<(), String> {
+        let index = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        let target = index as i32 + delta;
+        if target < 0 || target >= self.workspaces.len() as i32 {
+            return Ok(());
+        }
+        self.workspaces.swap(index, target as usize);
+        self.resequence_workspaces();
+        Ok(())
+    }
+
+    fn resequence_workspaces(&mut self) {
+        for (index, workspace) in self.workspaces.iter_mut().enumerate() {
+            workspace.order = index as u32;
+        }
+    }
+
+    /// Validate a requested membership. A missing list falls back to the active
+    /// workspace; an explicit list that ends up empty is an error so the UI can
+    /// tell the user why the service would be invisible everywhere.
+    fn resolve_membership(
+        &self,
+        requested: Option<Vec<String>>,
+        all_workspaces: Option<bool>,
+        fallback: Option<String>,
+    ) -> Result<(Vec<String>, bool), String> {
+        if all_workspaces.unwrap_or(false) {
+            return Ok((Vec::new(), true));
+        }
+        let Some(requested) = requested else {
+            return match fallback {
+                Some(id) => Ok((vec![id], false)),
+                None => Err(EMPTY_MEMBERSHIP_MESSAGE.into()),
+            };
+        };
+        let mut ids: Vec<String> = Vec::new();
+        for id in requested {
+            if !self.workspaces.iter().any(|workspace| workspace.id == id) {
+                continue;
+            }
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        if ids.is_empty() {
+            return Err(EMPTY_MEMBERSHIP_MESSAGE.into());
+        }
+        Ok((ids, false))
+    }
+
+    /// Repair anything an older build, a hand edit, or a deleted workspace
+    /// could have left inconsistent. Never drops a service.
+    pub fn normalize(&mut self) {
+        self.schema_version = CONFIG_SCHEMA_VERSION;
+        dedupe_workspaces(&mut self.workspaces);
+        if self.workspaces.is_empty() {
+            let mut workspace = Workspace::new(DEFAULT_WORKSPACE_NAME);
+            workspace.order = 0;
+            self.workspaces.push(workspace);
+        }
+        self.resequence_workspaces();
+
+        let known: HashSet<String> = self
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect();
+        let first = self.workspaces[0].id.clone();
+        for service in &mut self.services {
+            service.workspaces.retain(|id| known.contains(id));
+            service.workspaces.dedup();
+            if service.all_workspaces {
+                service.workspaces.clear();
+            } else if service.workspaces.is_empty() {
+                service.workspaces.push(first.clone());
+            }
+        }
+
+        let active_ok = self
+            .active_workspace_id
+            .as_deref()
+            .is_some_and(|id| self.workspaces.iter().any(|workspace| workspace.id == id));
+        if !active_ok {
+            self.active_workspace_id = Some(self.workspaces[0].id.clone());
+        }
+
+        let open_ok = self
+            .active_service_id
+            .as_deref()
+            .is_some_and(|id| self.services.iter().any(|service| service.id == id));
+        if !open_ok {
+            self.active_service_id = None;
+        }
+    }
+}
+
+pub const MAX_WORKSPACES: usize = 24;
+
+pub const EMPTY_MEMBERSHIP_MESSAGE: &str =
+    "Pick at least one workspace, or tick All workspaces, so this service is not hidden.";
+
+/// A service is listed under a workspace when it is pinned to all of them or
+/// when the workspace id is on its own list.
+pub fn service_in_workspace(service: &Service, workspace_id: &str) -> bool {
+    service.all_workspaces || service.workspaces.iter().any(|id| id == workspace_id)
+}
+
+fn dedupe_workspaces(workspaces: &mut Vec<Workspace>) {
+    let mut seen: HashSet<String> = HashSet::new();
+    workspaces.retain(|workspace| seen.insert(workspace.id.clone()));
 }
 
 pub fn normalize_service_url(raw: &str) -> Result<String, String> {
@@ -644,6 +1015,27 @@ fn unique_name(config: &Config, base: &str) -> String {
     format!("{base} {}", new_id())
 }
 
+fn unique_workspace_name(config: &Config, base: &str) -> String {
+    if !config
+        .workspaces
+        .iter()
+        .any(|workspace| workspace.name == base)
+    {
+        return base.to_string();
+    }
+    for number in 2..100 {
+        let candidate = format!("{base} {number}");
+        if !config
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.name == candidate)
+        {
+            return candidate;
+        }
+    }
+    format!("{base} {}", new_id())
+}
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -664,11 +1056,32 @@ fn read_config(path: &Path) -> ConfigRead {
     match serde_json::from_str::<Config>(&text) {
         Ok(mut config) if config.version == 1 => {
             repair_preset_colors(&mut config);
+            migrate_workspaces(&mut config);
+            config.normalize();
             ConfigRead::Loaded(config)
         }
         Ok(config) => ConfigRead::Invalid(format!("unsupported config version {}", config.version)),
         Err(err) => ConfigRead::Invalid(err.to_string()),
     }
+}
+
+/// First run after the workspaces upgrade: a config without a `workspaces`
+/// key gets one default workspace holding every existing service. Sessions
+/// stay in `sessions/<service id>` and no service is touched.
+fn migrate_workspaces(config: &mut Config) {
+    if !config.workspaces.is_empty() {
+        return;
+    }
+    let mut workspace = Workspace::new(DEFAULT_WORKSPACE_NAME);
+    workspace.order = 0;
+    for service in &mut config.services {
+        if service.all_workspaces || service.workspaces.is_empty() {
+            service.workspaces = vec![workspace.id.clone()];
+            service.all_workspaces = false;
+        }
+    }
+    config.active_workspace_id = Some(workspace.id.clone());
+    config.workspaces.push(workspace);
 }
 
 /// Preset services saved before `color` existed deserialize as the generic
@@ -686,6 +1099,18 @@ fn repair_preset_colors(config: &mut Config) {
             service.color = preset.color.to_string();
         }
     }
+}
+
+/// Persist a config only when its serialized text differs from the file, so a
+/// normal launch leaves the file's mtime alone and a migrated layout is
+/// written exactly once.
+pub fn save_if_changed(path: &Path, config: &Config) -> Result<bool, String> {
+    let next = serde_json::to_string_pretty(config).map_err(|err| err.to_string())?;
+    if std::fs::read_to_string(path).is_ok_and(|current| current == next) {
+        return Ok(false);
+    }
+    config.save(path)?;
+    Ok(true)
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -865,6 +1290,8 @@ mod tests {
                     color: None,
                     user_agent: None,
                     use_chrome_user_agent: true,
+                    workspaces: None,
+                    all_workspaces: None,
                 })
                 .is_err()
         );
@@ -876,6 +1303,8 @@ mod tests {
                 color: Some("#abc".into()),
                 user_agent: Some("CustomAgent".into()),
                 use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: None,
             })
             .unwrap();
         assert_eq!(service.name, "Notes");
@@ -913,6 +1342,447 @@ mod tests {
     fn missing_sidebar_flag_stays_expanded() {
         let config: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
         assert!(!config.sidebar_collapsed);
+    }
+
+    // ---- Workspaces -------------------------------------------------------
+
+    fn config_with_workspaces(names: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.workspaces.clear();
+        config.active_workspace_id = None;
+        let ids: Vec<String> = names
+            .iter()
+            .map(|name| {
+                let mut workspace = Workspace::new(name);
+                workspace.order = config.workspaces.len() as u32;
+                config.workspaces.push(workspace.clone());
+                workspace.id
+            })
+            .collect();
+        config.active_workspace_id = ids.first().cloned();
+        config
+    }
+
+    fn add_service(config: &mut Config, name: &str, workspaces: &[&str]) -> Service {
+        let membership = if workspaces.is_empty() {
+            None
+        } else {
+            Some(workspaces.iter().map(|id| (*id).to_string()).collect())
+        };
+        config
+            .add_custom(NewService {
+                name: name.into(),
+                url: format!("https://{}.example.com/", name.to_lowercase()),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: membership,
+                all_workspaces: None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_default_config_has_one_workspace() {
+        let config = Config::default();
+        assert_eq!(config.workspaces.len(), 1);
+        assert_eq!(config.workspaces[0].name, DEFAULT_WORKSPACE_NAME);
+        assert_eq!(config.workspaces[0].order, 0);
+        assert_eq!(
+            config.active_workspace_id.as_deref(),
+            Some(config.workspaces[0].id.as_str())
+        );
+    }
+
+    #[test]
+    fn an_old_config_migrates_into_one_workspace_holding_every_service() {
+        let dir = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r##"{"version":1,"sidebarCollapsed":true,"doNotDisturb":true,"theme":"dark",
+                "services":[
+                    {"id":"a","name":"Slack","url":"https://app.slack.com/","preset":"slack"},
+                    {"id":"b","name":"Claude","url":"https://claude.ai/","preset":"claude","color":"#D97757"}
+                ]}"##,
+        )
+        .unwrap();
+
+        let loaded = Config::load_or_default(&path);
+        assert_eq!(loaded.services.len(), 2, "migration must not drop services");
+        assert_eq!(loaded.services[0].id, "a");
+        assert_eq!(loaded.services[1].id, "b");
+        assert_eq!(loaded.workspaces.len(), 1);
+        let main = &loaded.workspaces[0];
+        assert_eq!(main.name, DEFAULT_WORKSPACE_NAME);
+        assert!(!main.dnd);
+        for service in &loaded.services {
+            assert_eq!(service.workspaces, vec![main.id.clone()]);
+            assert!(!service.all_workspaces);
+        }
+        assert_eq!(
+            loaded.active_workspace_id.as_deref(),
+            Some(main.id.as_str())
+        );
+        assert!(loaded.sidebar_collapsed);
+        assert!(loaded.do_not_disturb);
+        assert_eq!(loaded.theme, Theme::Dark);
+        assert_eq!(loaded.schema_version, CONFIG_SCHEMA_VERSION);
+        assert_eq!(loaded.version, 1, "older readers still accept version 1");
+
+        loaded.save(&path).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("\"schemaVersion\""));
+        assert!(written.contains("\"workspaces\""));
+        assert!(written.contains("\"version\": 1"));
+        let reloaded = Config::load_or_default(&path);
+        assert_eq!(reloaded, loaded);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_empty_config_still_gets_one_workspace() {
+        let config: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
+        let mut config = config;
+        migrate_workspaces(&mut config);
+        config.normalize();
+        assert_eq!(config.workspaces.len(), 1);
+        assert_eq!(
+            config.active_workspace_id(),
+            Some(config.workspaces[0].id.clone())
+        );
+    }
+
+    #[test]
+    fn a_service_can_belong_to_several_workspaces() {
+        let mut config = config_with_workspaces(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        add_service(&mut config, "Slack", &[&work, &teaching]);
+        let service = &config.services[0];
+        assert_eq!(service.workspaces, vec![work.clone(), teaching.clone()]);
+        assert!(service_in_workspace(service, &work));
+        assert!(service_in_workspace(service, &teaching));
+        assert_eq!(config.services_in_workspace(&work).len(), 1);
+        assert_eq!(config.services_in_workspace(&teaching).len(), 1);
+    }
+
+    #[test]
+    fn all_workspaces_includes_workspaces_created_later() {
+        let mut config = config_with_workspaces(&["Work"]);
+        config
+            .add_custom(NewService {
+                name: "Mail".into(),
+                url: "https://mail.example.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: Some(true),
+            })
+            .unwrap();
+        let created = config
+            .add_workspace(NewWorkspace {
+                name: "Personal".into(),
+                icon: None,
+                color: None,
+            })
+            .unwrap();
+        let service = &config.services[0];
+        assert!(service.all_workspaces);
+        assert!(service.workspaces.is_empty());
+        assert!(service_in_workspace(service, &config.workspaces[0].id));
+        assert!(service_in_workspace(service, &created.id));
+    }
+
+    #[test]
+    fn membership_must_not_be_empty() {
+        let mut config = config_with_workspaces(&["Work"]);
+        let error = config
+            .add_custom(NewService {
+                name: "Orphan".into(),
+                url: "https://orphan.example.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: Some(vec!["missing".into()]),
+                all_workspaces: Some(false),
+            })
+            .unwrap_err();
+        assert_eq!(error, EMPTY_MEMBERSHIP_MESSAGE);
+        assert!(config.services.is_empty());
+
+        // No workspace list at all falls back to the active workspace.
+        let service = add_service(&mut config, "Slack", &[]);
+        assert_eq!(service.workspaces, vec![config.workspaces[0].id.clone()]);
+    }
+
+    #[test]
+    fn editing_a_service_keeps_multi_workspace_membership() {
+        let mut config = config_with_workspaces(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let service = add_service(&mut config, "Slack", &[&work, &teaching]);
+        config
+            .update_service(ServiceUpdate {
+                id: service.id.clone(),
+                name: "Slack".into(),
+                url: "https://app.slack.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: Some(vec![teaching.clone()]),
+                all_workspaces: Some(false),
+            })
+            .unwrap();
+        assert_eq!(config.services[0].workspaces, vec![teaching]);
+    }
+
+    #[test]
+    fn deleting_a_workspace_keeps_services_and_moves_orphans_to_the_first_one() {
+        let mut config = config_with_workspaces(&["Work", "Teaching", "Personal"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let personal = config.workspaces[2].id.clone();
+        add_service(&mut config, "Slack", &[&teaching]);
+        add_service(&mut config, "Claude", &[&work, &teaching]);
+
+        config.remove_workspace(&teaching).unwrap();
+        assert_eq!(config.services.len(), 2, "no service is deleted");
+        assert_eq!(config.services[0].workspaces, vec![work.clone()]);
+        assert_eq!(config.services[1].workspaces, vec![work.clone()]);
+        assert_eq!(config.workspaces.len(), 2);
+        assert_eq!(config.workspaces[0].order, 0);
+        assert_eq!(config.workspaces[1].order, 1);
+        assert!(config.workspaces.iter().all(|item| item.id != teaching));
+
+        // The active workspace falls back instead of dangling.
+        config.active_workspace_id = Some(teaching);
+        config.normalize();
+        assert_eq!(
+            config.active_workspace_id(),
+            Some(config.workspaces[0].id.clone())
+        );
+
+        // A last workspace cannot be deleted.
+        config.remove_workspace(&personal).unwrap();
+        assert!(config.remove_workspace(&work).is_err());
+    }
+
+    #[test]
+    fn deleting_a_workspace_keeps_an_all_pinned_service_pinned() {
+        let mut config = config_with_workspaces(&["Work", "Teaching"]);
+        config
+            .add_custom(NewService {
+                name: "Mail".into(),
+                url: "https://mail.example.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: Some(true),
+            })
+            .unwrap();
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        config.remove_workspace(&work).unwrap();
+        let service = &config.services[0];
+        assert!(service.all_workspaces);
+        assert!(service.workspaces.is_empty());
+        assert!(service_in_workspace(service, &teaching));
+    }
+
+    #[test]
+    fn workspace_dnd_silences_only_services_with_no_awake_workspace() {
+        let mut config = config_with_workspaces(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let shared = add_service(&mut config, "Slack", &[&work, &teaching]);
+        let _work_only = add_service(&mut config, "Claude", &[&work]);
+
+        let find = |config: &Config, id: &str| {
+            config
+                .services
+                .iter()
+                .find(|service| service.id == id)
+                .cloned()
+                .unwrap()
+        };
+
+        config.set_workspace_dnd(&work, true).unwrap();
+        assert!(
+            !config.workspace_silenced(&find(&config, &shared.id)),
+            "the shared service still has an awake workspace"
+        );
+
+        config.set_workspace_dnd(&teaching, true).unwrap();
+        assert!(
+            config.workspace_silenced(&find(&config, &shared.id)),
+            "every workspace is now in Do not disturb"
+        );
+
+        // Global Do not disturb is separate and always wins.
+        config.set_workspace_dnd(&teaching, false).unwrap();
+        assert!(!config.workspace_silenced(&find(&config, &shared.id)));
+        assert!(crate::policy::sound_muted(
+            true,
+            config.workspace_silenced(&find(&config, &shared.id)),
+            true
+        ));
+    }
+
+    #[test]
+    fn all_pinned_services_are_silenced_only_when_every_workspace_is() {
+        let mut config = config_with_workspaces(&["Work", "Teaching"]);
+        config
+            .add_custom(NewService {
+                name: "Mail".into(),
+                url: "https://mail.example.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: Some(true),
+            })
+            .unwrap();
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        config.set_workspace_dnd(&work, true).unwrap();
+        assert!(!config.workspace_silenced(&config.services[0]));
+        config.set_workspace_dnd(&teaching, true).unwrap();
+        assert!(config.workspace_silenced(&config.services[0]));
+    }
+
+    #[test]
+    fn normalize_repairs_dangling_membership_without_losing_services() {
+        let json = r#"{
+            "version": 1,
+            "schemaVersion": 2,
+            "activeWorkspaceId": "gone",
+            "workspaces": [
+                {"id":"w1","name":"Work","order":9},
+                {"id":"w1","name":"Duplicate","order":4}
+            ],
+            "services": [
+                {"id":"s1","name":"Slack","url":"https://app.slack.com/","workspaces":["nope"]},
+                {"id":"s2","name":"Mail","url":"https://mail.example.com/","allWorkspaces":true,"workspaces":["w1"]}
+            ]
+        }"#;
+        let mut config: Config = serde_json::from_str(json).unwrap();
+        config.normalize();
+        assert_eq!(config.workspaces.len(), 1);
+        assert_eq!(config.workspaces[0].order, 0);
+        assert_eq!(config.services.len(), 2);
+        assert_eq!(config.services[0].workspaces, vec!["w1".to_string()]);
+        assert!(config.services[1].all_workspaces);
+        assert!(config.services[1].workspaces.is_empty());
+        assert_eq!(config.active_workspace_id.as_deref(), Some("w1"));
+    }
+
+    #[test]
+    fn the_open_service_is_remembered_and_forgotten_when_it_is_removed() {
+        let mut config = sample_config();
+        let id = config.services[0].id.clone();
+        config.active_service_id = Some(id.clone());
+        let round_tripped: Config =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_tripped.active_service_id, Some(id.clone()));
+
+        config.remove_service(&id).unwrap();
+        assert_eq!(config.active_service_id, None);
+
+        // A stale id in a hand-edited file is dropped rather than restored.
+        config.active_service_id = Some("gone".into());
+        config.normalize();
+        assert_eq!(config.active_service_id, None);
+    }
+
+    #[test]
+    fn an_older_reader_ignores_the_workspaces_fields() {
+        let mut config = config_with_workspaces(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        add_service(&mut config, "Slack", &[&work]);
+        let json = serde_json::to_string(&config).unwrap();
+        let partial: LegacyConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(partial.version, 1);
+        assert_eq!(partial.services.len(), 1);
+        assert_eq!(partial.services[0].name, "Slack");
+    }
+
+    /// The fields an older Rustbox build reads from `config.json`.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyConfig {
+        version: u32,
+        services: Vec<LegacyService>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyService {
+        name: String,
+    }
+
+    #[test]
+    fn workspaces_reorder_and_move() {
+        let mut config = config_with_workspaces(&["Work", "Teaching", "Personal"]);
+        let ids: Vec<String> = config
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect();
+        config
+            .reorder_workspaces(&[ids[2].clone(), ids[0].clone(), ids[1].clone()])
+            .unwrap();
+        assert_eq!(config.workspaces[0].name, "Personal");
+        assert_eq!(config.workspaces[0].order, 0);
+        assert!(config.reorder_workspaces(&[ids[0].clone()]).is_err());
+
+        config.move_workspace(&ids[0], -1).unwrap();
+        assert_eq!(config.workspaces[0].name, "Work");
+        config.move_workspace(&ids[0], 1).unwrap();
+        assert_eq!(config.workspaces[1].name, "Work");
+        assert!(config.move_workspace(&ids[0], -5).is_ok());
+    }
+
+    #[test]
+    fn workspace_names_stay_inside_the_length_limit() {
+        let mut config = Config::default();
+        assert!(
+            config
+                .add_workspace(NewWorkspace {
+                    name: "  ".into(),
+                    icon: None,
+                    color: None,
+                })
+                .is_err()
+        );
+        let long = "x".repeat(81);
+        assert!(
+            config
+                .add_workspace(NewWorkspace {
+                    name: long,
+                    icon: None,
+                    color: None,
+                })
+                .is_err()
+        );
+        config
+            .add_workspace(NewWorkspace {
+                name: DEFAULT_WORKSPACE_NAME.into(),
+                icon: None,
+                color: None,
+            })
+            .unwrap();
+        assert_eq!(config.workspaces[1].name, "Main 2");
     }
 
     #[test]

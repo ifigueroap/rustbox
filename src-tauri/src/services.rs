@@ -12,8 +12,8 @@ use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
 use crate::config::{
-    Config, PRESETS, PresetInfo, Service, Theme, import_legacy_sessions, legacy_config_candidates,
-    legacy_session_roots,
+    Config, PRESETS, PresetInfo, Service, Theme, Workspace, import_legacy_sessions,
+    legacy_config_candidates, legacy_session_roots, save_if_changed, service_in_workspace,
 };
 use crate::policy::{self, PopupDecision};
 use crate::shortcuts::{self, ShortcutDestination};
@@ -43,18 +43,46 @@ pub struct ServiceDto {
     pub preset: Option<String>,
     pub sound_enabled: bool,
     pub notifications_enabled: bool,
+    /// Workspace ids this service is listed under, empty when pinned to all.
+    pub workspaces: Vec<String>,
+    pub all_workspaces: bool,
+    /// True when workspace Do not disturb silences this service.
+    pub workspace_silenced: bool,
+    /// Raw title-derived count, before any Do not disturb hides it.
+    pub raw_unread: u32,
     pub unread: u32,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDto {
+    pub id: String,
+    pub name: String,
+    pub icon: Option<String>,
+    pub color: String,
+    pub dnd: bool,
+    pub order: u32,
+    /// Combined unread of the services in this workspace, 0 while silenced.
+    pub unread: u32,
+    pub raw_unread: u32,
+    pub service_count: usize,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub services: Vec<ServiceDto>,
+    pub workspaces: Vec<WorkspaceDto>,
+    pub active_workspace_id: Option<String>,
     pub active_id: Option<String>,
+    /// The service that was open when the app last exited, so the shell can
+    /// reopen it. `active_id` stays null until that webview is created.
+    pub last_service_id: Option<String>,
     pub chrome_user_agent: String,
     pub config_path: String,
     pub sessions_dir: String,
     pub sidebar_collapsed: bool,
+    pub workspace_rail_hidden: bool,
     pub do_not_disturb: bool,
     pub close_to_tray: bool,
     pub tray_available: bool,
@@ -93,6 +121,15 @@ impl RuntimeState {
                 }
             }
         }
+        // Write the migrated layout back once, so the file on disk already has
+        // its workspaces the next time it is read. A load that changed nothing
+        // is not rewritten; the comparison is on the serialized text.
+        if let Err(err) = save_if_changed(&config_path, &config) {
+            eprintln!(
+                "rustbox: could not store the workspace layout in {}: {err}",
+                config_path.display()
+            );
+        }
         Ok(Self {
             config_path,
             sessions_dir,
@@ -117,8 +154,12 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         .iter()
         .map(|service| {
             let count = unread.get(&service.id).copied().unwrap_or(0);
-            let shown =
-                policy::notifications_shown(config.do_not_disturb, service.notifications_enabled);
+            let workspace_dnd = config.workspace_silenced(service);
+            let shown = policy::notifications_shown(
+                config.do_not_disturb,
+                workspace_dnd,
+                service.notifications_enabled,
+            );
             ServiceDto {
                 id: service.id.clone(),
                 name: service.name.clone(),
@@ -131,23 +172,85 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 preset: service.preset.clone(),
                 sound_enabled: service.sound_enabled,
                 notifications_enabled: service.notifications_enabled,
+                workspaces: service.workspaces.clone(),
+                all_workspaces: service.all_workspaces,
+                workspace_silenced: workspace_dnd,
+                raw_unread: count,
                 unread: if shown { count } else { 0 },
             }
         })
         .collect();
+    let workspaces = config
+        .workspaces
+        .iter()
+        .map(|workspace| workspace_dto(&config, &unread, workspace))
+        .collect();
     Snapshot {
         services,
+        workspaces,
+        active_workspace_id: config.active_workspace_id(),
         active_id,
+        last_service_id: config.active_service_id.clone(),
         chrome_user_agent: policy::chrome_user_agent(),
         config_path: state.config_path.display().to_string(),
         sessions_dir: state.sessions_dir.display().to_string(),
         sidebar_collapsed: config.sidebar_collapsed,
+        workspace_rail_hidden: config.workspace_rail_hidden,
         do_not_disturb: config.do_not_disturb,
         close_to_tray: config.close_to_tray,
         tray_available: app.tray_by_id("rustbox").is_some(),
         theme: config.theme,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
+}
+
+/// Combined unread for one workspace. A service shared by two workspaces
+/// counts in both. A silenced service contributes nothing, matching how
+/// global Do not disturb hides badges, and a workspace in Do not disturb
+/// shows no badge at all.
+fn workspace_dto(
+    config: &Config,
+    unread: &HashMap<String, u32>,
+    workspace: &Workspace,
+) -> WorkspaceDto {
+    let (visible, raw, service_count) = workspace_totals(config, unread, workspace);
+    WorkspaceDto {
+        id: workspace.id.clone(),
+        name: workspace.name.clone(),
+        icon: workspace.icon.clone(),
+        color: workspace.color.clone(),
+        dnd: workspace.dnd,
+        order: workspace.order,
+        unread: visible,
+        raw_unread: raw,
+        service_count,
+    }
+}
+
+/// The badge a workspace shows, plus the raw title counts behind it and how
+/// many services it lists. Split out so the silencing rule is unit tested
+/// without an app handle.
+pub fn workspace_totals(
+    config: &Config,
+    unread: &HashMap<String, u32>,
+    workspace: &Workspace,
+) -> (u32, u32, usize) {
+    let members = config.services_in_workspace(&workspace.id);
+    let mut raw = 0u32;
+    let mut visible = 0u32;
+    for service in &members {
+        let count = unread.get(&service.id).copied().unwrap_or(0);
+        raw = raw.saturating_add(count);
+        if policy::notifications_shown(
+            config.do_not_disturb,
+            config.workspace_silenced(service),
+            service.notifications_enabled,
+        ) {
+            visible = visible.saturating_add(count);
+        }
+    }
+    // A silenced workspace hides its badge rather than greying a number.
+    (if workspace.dnd { 0 } else { visible }, raw, members.len())
 }
 
 pub fn visible_unread_total(app: &AppHandle) -> u32 {
@@ -159,7 +262,12 @@ pub fn visible_unread_total(app: &AppHandle) -> u32 {
         .iter()
         .map(|service| {
             let count = unread.get(&service.id).copied().unwrap_or(0);
-            if policy::notifications_shown(config.do_not_disturb, service.notifications_enabled) {
+            let workspace_dnd = config.workspace_silenced(service);
+            if policy::notifications_shown(
+                config.do_not_disturb,
+                workspace_dnd,
+                service.notifications_enabled,
+            ) {
                 count
             } else {
                 0
@@ -204,21 +312,40 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
             hide_others(app, Some(&service.id))?;
             ensure_webview(app, &service)?;
             show_webview(app, &service.id)?;
-            *lock(&state.active_id) = Some(service.id);
+            *lock(&state.active_id) = Some(service.id.clone());
             set_window_title(app, Some(&service.name));
+            remember_open_service(app, Some(&service.id));
         }
         None => {
             hide_others(app, None)?;
             *lock(&state.active_id) = None;
             set_window_title(app, None);
+            remember_open_service(app, None);
         }
     }
     Ok(())
 }
 
+/// Store which service is open so a restart lands back on it, like the
+/// workspace does. Best-effort: a failed write must not break the switch.
+fn remember_open_service(app: &AppHandle, id: Option<&str>) {
+    let state = app.state::<RuntimeState>();
+    let mut config = lock(&state.config);
+    let next = id.map(|id| id.to_string());
+    if config.active_service_id == next {
+        return;
+    }
+    config.active_service_id = next;
+    if let Err(err) = config.save(&state.config_path) {
+        eprintln!("rustbox: could not remember the open service: {err}");
+    }
+}
+
 /// Apply a shell shortcut using the current sidebar order. Returns whether
 /// the open service changed. Emits `app-snapshot` so the desk updates when
 /// the key came from a service webview.
+///
+/// Ctrl/Cmd+1..9 and Ctrl+Tab only walk the services of the active workspace.
 pub fn apply_shortcut(
     app: &AppHandle,
     key: &str,
@@ -226,17 +353,35 @@ pub fn apply_shortcut(
     shift: bool,
     alt: bool,
 ) -> Result<bool, String> {
+    if let Some(workspace) = shortcuts::parse_workspace_shortcut(key, ctrl_or_meta, shift, alt) {
+        let shortcuts::WorkspaceShortcut::OpenIndex(index) = workspace;
+        let target = {
+            let state = app.state::<RuntimeState>();
+            let config = lock(&state.config);
+            config.workspaces.get(index).map(|item| item.id.clone())
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        switch_workspace(app, &target)?;
+        let _ = app.emit("app-snapshot", snapshot(app));
+        return Ok(true);
+    }
     let Some(shortcut) = shortcuts::parse_service_shortcut(key, ctrl_or_meta, shift, alt) else {
         return Ok(false);
     };
     let (ids, active_index) = {
         let state = app.state::<RuntimeState>();
         let config = lock(&state.config);
-        let ids: Vec<String> = config
-            .services
-            .iter()
-            .map(|service| service.id.clone())
-            .collect();
+        let workspace = config.active_workspace_id();
+        let ids: Vec<String> = match workspace {
+            Some(workspace_id) => config
+                .services_in_workspace(&workspace_id)
+                .iter()
+                .map(|service| service.id.clone())
+                .collect(),
+            None => Vec::new(),
+        };
         let active = lock(&state.active_id).clone();
         let active_index = active
             .as_ref()
@@ -253,6 +398,42 @@ pub fn apply_shortcut(
     }
     let _ = app.emit("app-snapshot", snapshot(app));
     Ok(true)
+}
+
+/// Switch the visible workspace. The open service stays open when it belongs
+/// to the new workspace; otherwise the desk shows that workspace's cards.
+/// Nothing reloads: one service is one webview with one session dir.
+pub fn switch_workspace(app: &AppHandle, workspace_id: &str) -> Result<(), String> {
+    let keep_open = {
+        let state = app.state::<RuntimeState>();
+        let _ops = lock(&state.ops);
+        let mut config = lock(&state.config);
+        if !config
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == workspace_id)
+        {
+            return Err("workspace not found".into());
+        }
+        if config.active_workspace_id.as_deref() != Some(workspace_id) {
+            config.active_workspace_id = Some(workspace_id.to_string());
+            config.save(&state.config_path)?;
+        }
+        let active = lock(&state.active_id).clone();
+        match active {
+            Some(id) => config
+                .services
+                .iter()
+                .find(|service| service.id == id)
+                .is_some_and(|service| service_in_workspace(service, workspace_id)),
+            None => true,
+        }
+    };
+    if !keep_open {
+        set_active(app, None)?;
+    }
+    crate::tray::sync(app);
+    Ok(())
 }
 
 /// Reload one service's page without touching its session directory.
@@ -323,6 +504,33 @@ pub fn clear_runtime_service(app: &AppHandle, id: &str) {
     if active.as_deref() == Some(id) {
         *active = None;
         set_window_title(app, None);
+    }
+}
+
+/// After a workspace is deleted, drop back to the desk when the open service
+/// no longer belongs to the active workspace.
+pub fn close_if_outside_active_workspace(app: &AppHandle) -> Result<(), String> {
+    let keep_open = {
+        let state = app.state::<RuntimeState>();
+        let config = lock(&state.config);
+        let active = lock(&state.active_id).clone();
+        match active {
+            None => true,
+            Some(id) => {
+                let workspace = config.active_workspace_id();
+                let service = config.services.iter().find(|service| service.id == id);
+                match (service, workspace) {
+                    (Some(service), Some(workspace)) => service_in_workspace(service, &workspace),
+                    (Some(_), None) => true,
+                    (None, _) => false,
+                }
+            }
+        }
+    };
+    if keep_open {
+        Ok(())
+    } else {
+        set_active(app, None)
     }
 }
 
@@ -626,25 +834,31 @@ pub fn refresh_title_if_active(app: &AppHandle, id: &str) {
 
 fn notifications_visible(state: &RuntimeState, service_id: &str) -> bool {
     let config = lock(&state.config);
-    let enabled = config
+    let Some(service) = config
         .services
         .iter()
         .find(|service| service.id == service_id)
-        .map(|service| service.notifications_enabled)
-        .unwrap_or(true);
-    policy::notifications_shown(config.do_not_disturb, enabled)
+    else {
+        return !config.do_not_disturb;
+    };
+    policy::notifications_shown(
+        config.do_not_disturb,
+        config.workspace_silenced(service),
+        service.notifications_enabled,
+    )
 }
 
 fn service_sound_muted(app: &AppHandle, id: &str) -> bool {
     let state = app.state::<RuntimeState>();
     let config = lock(&state.config);
-    let enabled = config
-        .services
-        .iter()
-        .find(|service| service.id == id)
-        .map(|service| service.sound_enabled)
-        .unwrap_or(true);
-    policy::sound_muted(config.do_not_disturb, enabled)
+    let Some(service) = config.services.iter().find(|service| service.id == id) else {
+        return config.do_not_disturb;
+    };
+    policy::sound_muted(
+        config.do_not_disturb,
+        config.workspace_silenced(service),
+        service.sound_enabled,
+    )
 }
 
 pub fn apply_sound_policy(app: &AppHandle) {
@@ -854,7 +1068,13 @@ fn content_bounds(
     window: &tauri::Window,
 ) -> Result<(LogicalPosition<f64>, LogicalSize<f64>), String> {
     let state = app.state::<RuntimeState>();
-    let sidebar = policy::sidebar_width(lock(&state.config).sidebar_collapsed);
+    let sidebar = {
+        let config = lock(&state.config);
+        policy::shell_width(
+            config.sidebar_collapsed,
+            policy::workspace_rail_visible(config.workspace_rail_hidden, config.workspaces.len()),
+        )
+    };
     let scale = window.scale_factor().map_err(|err| err.to_string())?;
     let physical = window.inner_size().map_err(|err| err.to_string())?;
     let logical: LogicalSize<f64> = physical.to_logical(scale);
@@ -897,5 +1117,140 @@ pub fn validate_external_url(raw: &str) -> Result<String, String> {
     match url.scheme() {
         "http" | "https" | "mailto" | "tel" => Ok(url.to_string()),
         _ => Err("only http, https, mailto, and tel links can be opened".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{NewService, NewWorkspace};
+
+    fn config_with(names: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.workspaces.clear();
+        for name in names {
+            config
+                .add_workspace(NewWorkspace {
+                    name: (*name).into(),
+                    icon: None,
+                    color: None,
+                })
+                .unwrap();
+        }
+        config
+    }
+
+    fn add(config: &mut Config, name: &str, workspaces: &[&str], all: bool) -> String {
+        let service = config
+            .add_custom(NewService {
+                name: name.into(),
+                url: format!("https://{}.example.com/", name.to_lowercase()),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: if all {
+                    None
+                } else {
+                    Some(workspaces.iter().map(|id| (*id).to_string()).collect())
+                },
+                all_workspaces: Some(all),
+            })
+            .unwrap();
+        service.id
+    }
+
+    #[test]
+    fn a_shared_service_counts_in_both_workspace_badges() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let shared = add(&mut config, "Slack", &[&work, &teaching], false);
+        let mut unread = HashMap::new();
+        unread.insert(shared, 3);
+
+        let (work_visible, work_raw, work_count) =
+            workspace_totals(&config, &unread, &config.workspaces[0]);
+        let (teaching_visible, _, teaching_count) =
+            workspace_totals(&config, &unread, &config.workspaces[1]);
+        assert_eq!((work_visible, work_raw, work_count), (3, 3, 1));
+        assert_eq!((teaching_visible, teaching_count), (3, 1));
+    }
+
+    #[test]
+    fn a_silenced_workspace_hides_its_badge() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let teaching = config.workspaces[1].id.clone();
+        let only_teaching = add(&mut config, "Zulip", &[&teaching], false);
+        let mut unread = HashMap::new();
+        unread.insert(only_teaching, 5);
+
+        config.set_workspace_dnd(&teaching, true).unwrap();
+        let (visible, raw, _) = workspace_totals(&config, &unread, &config.workspaces[1]);
+        assert_eq!(visible, 0, "a silenced workspace shows no badge");
+        assert_eq!(raw, 5, "the count is still tracked");
+
+        let (work_visible, _, work_count) =
+            workspace_totals(&config, &unread, &config.workspaces[0]);
+        assert_eq!(
+            (work_visible, work_count),
+            (0, 0),
+            "the awake workspace is unaffected"
+        );
+    }
+
+    #[test]
+    fn an_awake_workspace_keeps_counting_a_shared_service_while_the_other_is_silenced() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let shared = add(&mut config, "Slack", &[&work, &teaching], false);
+        let mut unread = HashMap::new();
+        unread.insert(shared, 4);
+        config.set_workspace_dnd(&teaching, true).unwrap();
+
+        let (visible, _, _) = workspace_totals(&config, &unread, &config.workspaces[0]);
+        assert_eq!(visible, 4, "one awake workspace keeps the service audible");
+    }
+
+    #[test]
+    fn global_dnd_zeroes_every_workspace_badge() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let service = add(&mut config, "Slack", &[&work], false);
+        let mut unread = HashMap::new();
+        unread.insert(service, 7);
+        config.do_not_disturb = true;
+        for workspace in &config.workspaces {
+            let (visible, raw, _) = workspace_totals(&config, &unread, workspace);
+            assert_eq!(visible, 0);
+            assert_eq!(
+                raw,
+                if workspace.id == config.workspaces[0].id {
+                    7
+                } else {
+                    0
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn all_pinned_services_appear_in_every_workspace_badge() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let service = add(&mut config, "Mail", &[], true);
+        let mut unread = HashMap::new();
+        unread.insert(service, 2);
+        for workspace in &config.workspaces {
+            let (visible, _, count) = workspace_totals(&config, &unread, workspace);
+            assert_eq!(visible, 2);
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[test]
+    fn service_webview_labels_stay_stable_across_workspaces() {
+        // One service is one webview; the label never mentions a workspace.
+        assert_eq!(label_for("abc"), "svc-abc");
     }
 }

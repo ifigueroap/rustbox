@@ -233,10 +233,16 @@
   }
 
   function isServiceShortcut(event) {
-    if (event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return false;
-    if (event.key === "Tab") return true;
+    if (event.repeat || !(event.ctrlKey || event.metaKey)) return false;
+    if (event.key === "Tab" && !event.altKey) return true;
     if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
-    return event.shiftKey && String(event.key).toLowerCase() === "d";
+    return !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "d";
+  }
+
+  // Ctrl/Cmd+Alt+1..9 jumps to a workspace. The shell decides the meaning.
+  function isWorkspaceShortcut(event) {
+    if (event.repeat || !event.altKey || !(event.ctrlKey || event.metaKey)) return false;
+    return !event.shiftKey && /^[1-9]$/.test(event.key);
   }
 
   document.addEventListener(
@@ -248,7 +254,7 @@
         invoke("quit_app");
         return;
       }
-      if (!isServiceShortcut(event)) return;
+      if (!isServiceShortcut(event) && !isWorkspaceShortcut(event)) return;
       event.preventDefault();
       event.stopPropagation();
       invoke("apply_service_shortcut", {

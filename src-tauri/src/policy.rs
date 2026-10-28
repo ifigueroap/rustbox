@@ -9,6 +9,9 @@ const CHROME_VERSION: &str = "155";
 pub const SIDEBAR_COLLAPSED_WIDTH: f64 = 72.0;
 pub const SIDEBAR_EXPANDED_WIDTH: f64 = 228.0;
 
+/// Matches `--workspace-rail-width` in the shell stylesheet.
+pub const WORKSPACE_RAIL_WIDTH: f64 = 60.0;
+
 pub fn sidebar_width(collapsed: bool) -> f64 {
     if collapsed {
         SIDEBAR_COLLAPSED_WIDTH
@@ -17,15 +20,44 @@ pub fn sidebar_width(collapsed: bool) -> f64 {
     }
 }
 
-/// Page audio is muted when the service itself is muted or Do not disturb is on.
-pub fn sound_muted(do_not_disturb: bool, sound_enabled: bool) -> bool {
-    do_not_disturb || !sound_enabled
+/// The rail only earns its space with a second workspace, and the user can
+/// hide it outright in the desk settings.
+pub fn workspace_rail_visible(hidden_setting: bool, workspace_count: usize) -> bool {
+    !hidden_setting && workspace_count > 1
 }
 
-/// Badges and desktop notifications show only when the service allows them
-/// and Do not disturb is off.
-pub fn notifications_shown(do_not_disturb: bool, notifications_enabled: bool) -> bool {
-    !do_not_disturb && notifications_enabled
+/// Total width to the left of the service webview.
+pub fn shell_width(sidebar_collapsed: bool, rail_visible: bool) -> f64 {
+    let rail = if rail_visible {
+        WORKSPACE_RAIL_WIDTH
+    } else {
+        0.0
+    };
+    sidebar_width(sidebar_collapsed) + rail
+}
+
+/// Page audio is muted when the service itself is muted, when Do not disturb
+/// is on, or when every workspace that lists it is in Do not disturb.
+pub fn sound_muted(do_not_disturb: bool, workspace_dnd: bool, sound_enabled: bool) -> bool {
+    do_not_disturb || workspace_dnd || !sound_enabled
+}
+
+/// Badges and desktop notifications show only when the service allows them,
+/// Do not disturb is off, and at least one workspace that lists it is awake.
+pub fn notifications_shown(
+    do_not_disturb: bool,
+    workspace_dnd: bool,
+    notifications_enabled: bool,
+) -> bool {
+    !do_not_disturb && !workspace_dnd && notifications_enabled
+}
+
+/// Resolve the per-service silencing rule for a service listed in several
+/// workspaces: it is silenced only when every workspace it belongs to has Do
+/// not disturb on. `workspace_dnd` values are the switches of the workspaces
+/// that list this service; an empty list means the service has no workspace.
+pub fn silenced_by_workspaces(workspace_dnd: &[bool]) -> bool {
+    !workspace_dnd.is_empty() && workspace_dnd.iter().all(|flag| *flag)
 }
 
 /// Login hosts whose top-level navigations should stay inside the service
@@ -225,6 +257,17 @@ mod tests {
     fn sidebar_widths_match_the_shell_stylesheet() {
         assert_eq!(sidebar_width(true), 72.0);
         assert_eq!(sidebar_width(false), 228.0);
+        assert_eq!(shell_width(false, false), 228.0);
+        assert_eq!(shell_width(false, true), 288.0);
+        assert_eq!(shell_width(true, true), 132.0);
+    }
+
+    #[test]
+    fn the_workspace_rail_hides_with_one_workspace_or_when_told_to() {
+        assert!(workspace_rail_visible(false, 2));
+        assert!(!workspace_rail_visible(false, 1));
+        assert!(!workspace_rail_visible(false, 0));
+        assert!(!workspace_rail_visible(true, 4));
     }
 
     #[test]
@@ -251,14 +294,25 @@ mod tests {
 
     #[test]
     fn do_not_disturb_overrides_per_service_sound_and_badges() {
-        assert!(!sound_muted(false, true));
-        assert!(sound_muted(false, false));
-        assert!(sound_muted(true, true));
-        assert!(sound_muted(true, false));
-        assert!(notifications_shown(false, true));
-        assert!(!notifications_shown(false, false));
-        assert!(!notifications_shown(true, true));
-        assert!(!notifications_shown(true, false));
+        assert!(!sound_muted(false, false, true));
+        assert!(sound_muted(false, false, false));
+        assert!(sound_muted(true, false, true));
+        assert!(sound_muted(true, false, false));
+        assert!(sound_muted(false, true, true));
+        assert!(notifications_shown(false, false, true));
+        assert!(!notifications_shown(false, false, false));
+        assert!(!notifications_shown(true, false, true));
+        assert!(!notifications_shown(true, false, false));
+        assert!(!notifications_shown(false, true, true));
+    }
+
+    #[test]
+    fn workspace_dnd_silences_only_when_every_workspace_is_asleep() {
+        assert!(!silenced_by_workspaces(&[]));
+        assert!(!silenced_by_workspaces(&[true, false]));
+        assert!(!silenced_by_workspaces(&[false, false]));
+        assert!(silenced_by_workspaces(&[true]));
+        assert!(silenced_by_workspaces(&[true, true]));
     }
 
     #[test]
