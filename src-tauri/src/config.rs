@@ -198,6 +198,10 @@ pub struct Config {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
+    /// The service that was open, so a restart lands back on it. Cleared when
+    /// the desk is showing instead, and ignored when that service is gone.
+    #[serde(default)]
+    pub active_service_id: Option<String>,
     #[serde(default)]
     pub services: Vec<Service>,
     /// When true the sidebar is the icon rail. Names stay available as tooltips.
@@ -224,6 +228,7 @@ impl Default for Config {
             version: 1,
             schema_version: CONFIG_SCHEMA_VERSION,
             active_workspace_id: Some(workspace.id.clone()),
+            active_service_id: None,
             workspaces: vec![workspace],
             services: Vec::new(),
             sidebar_collapsed: false,
@@ -567,6 +572,9 @@ impl Config {
             .iter()
             .position(|service| service.id == id)
             .ok_or_else(|| "service not found".to_string())?;
+        if self.active_service_id.as_deref() == Some(id) {
+            self.active_service_id = None;
+        }
         Ok(self.services.remove(index))
     }
 
@@ -815,6 +823,14 @@ impl Config {
             .is_some_and(|id| self.workspaces.iter().any(|workspace| workspace.id == id));
         if !active_ok {
             self.active_workspace_id = Some(self.workspaces[0].id.clone());
+        }
+
+        let open_ok = self
+            .active_service_id
+            .as_deref()
+            .is_some_and(|id| self.services.iter().any(|service| service.id == id));
+        if !open_ok {
+            self.active_service_id = None;
         }
     }
 }
@@ -1669,6 +1685,24 @@ mod tests {
         assert!(config.services[1].all_workspaces);
         assert!(config.services[1].workspaces.is_empty());
         assert_eq!(config.active_workspace_id.as_deref(), Some("w1"));
+    }
+
+    #[test]
+    fn the_open_service_is_remembered_and_forgotten_when_it_is_removed() {
+        let mut config = sample_config();
+        let id = config.services[0].id.clone();
+        config.active_service_id = Some(id.clone());
+        let round_tripped: Config =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_tripped.active_service_id, Some(id.clone()));
+
+        config.remove_service(&id).unwrap();
+        assert_eq!(config.active_service_id, None);
+
+        // A stale id in a hand-edited file is dropped rather than restored.
+        config.active_service_id = Some("gone".into());
+        config.normalize();
+        assert_eq!(config.active_service_id, None);
     }
 
     #[test]

@@ -75,6 +75,9 @@ pub struct Snapshot {
     pub workspaces: Vec<WorkspaceDto>,
     pub active_workspace_id: Option<String>,
     pub active_id: Option<String>,
+    /// The service that was open when the app last exited, so the shell can
+    /// reopen it. `active_id` stays null until that webview is created.
+    pub last_service_id: Option<String>,
     pub chrome_user_agent: String,
     pub config_path: String,
     pub sessions_dir: String,
@@ -187,6 +190,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         workspaces,
         active_workspace_id: config.active_workspace_id(),
         active_id,
+        last_service_id: config.active_service_id.clone(),
         chrome_user_agent: policy::chrome_user_agent(),
         config_path: state.config_path.display().to_string(),
         sessions_dir: state.sessions_dir.display().to_string(),
@@ -308,16 +312,33 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
             hide_others(app, Some(&service.id))?;
             ensure_webview(app, &service)?;
             show_webview(app, &service.id)?;
-            *lock(&state.active_id) = Some(service.id);
+            *lock(&state.active_id) = Some(service.id.clone());
             set_window_title(app, Some(&service.name));
+            remember_open_service(app, Some(&service.id));
         }
         None => {
             hide_others(app, None)?;
             *lock(&state.active_id) = None;
             set_window_title(app, None);
+            remember_open_service(app, None);
         }
     }
     Ok(())
+}
+
+/// Store which service is open so a restart lands back on it, like the
+/// workspace does. Best-effort: a failed write must not break the switch.
+fn remember_open_service(app: &AppHandle, id: Option<&str>) {
+    let state = app.state::<RuntimeState>();
+    let mut config = lock(&state.config);
+    let next = id.map(|id| id.to_string());
+    if config.active_service_id == next {
+        return;
+    }
+    config.active_service_id = next;
+    if let Err(err) = config.save(&state.config_path) {
+        eprintln!("rustbox: could not remember the open service: {err}");
+    }
 }
 
 /// Apply a shell shortcut using the current sidebar order. Returns whether

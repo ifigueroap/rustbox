@@ -48,6 +48,7 @@ interface Snapshot {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   activeId: string | null;
+  lastServiceId: string | null;
   chromeUserAgent: string;
   configPath: string;
   sessionsDir: string;
@@ -1920,7 +1921,15 @@ async function boot(): Promise<void> {
   });
 
   presets = await invoke<Preset[]>("list_presets");
-  applySnapshot(await invoke<Snapshot>("get_state"));
+  const snapshot = await invoke<Snapshot>("get_state");
+  applySnapshot(snapshot);
+  // Reopen the service that was showing when the app last closed, as long as
+  // it still exists and the active workspace can see it. The workspace itself
+  // was restored by the backend before this runs.
+  const last = services.find((service) => service.id === snapshot.lastServiceId);
+  if (!snapshot.activeId && last && serviceInWorkspace(last, activeWorkspaceId)) {
+    await activate(last.id);
+  }
 }
 
 void boot().catch((error: unknown) => showError(errorText(error)));
