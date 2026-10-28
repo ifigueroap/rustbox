@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/ifigueroap/rustbox/compare/v0.4.0...v0.5.0) (2026-10-28)
+
+
+### Features
+
+* add workspaces to group services ([#15](https://github.com/ifigueroap/rustbox/issues/15)) ([984cee5](https://github.com/ifigueroap/rustbox/commit/984cee573041c424862a684b6c77a67ade01103b))
+
 ## [0.4.0](https://github.com/ifigueroap/rustbox/compare/v0.3.2...v0.4.0) (2026-10-23)
 
 
