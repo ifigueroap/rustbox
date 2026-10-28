@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-workspace-dnd"
+description = "Enables the set_workspace_dnd command without any pre-configured scope."
+commands.allow = ["set_workspace_dnd"]
+
+[[permission]]
+identifier = "deny-set-workspace-dnd"
+description = "Denies the set_workspace_dnd command without any pre-configured scope."
+commands.deny = ["set_workspace_dnd"]

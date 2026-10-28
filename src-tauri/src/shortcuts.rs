@@ -11,6 +11,13 @@ pub enum ServiceShortcut {
     Desk,
 }
 
+/// A chord that changes which workspace is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceShortcut {
+    /// Zero-based position in the rail. `0` is Ctrl/Cmd+Alt+1.
+    OpenIndex(usize),
+}
+
 /// Where that chord should land, given how many services exist and which
 /// one is open. `None` means the chord does not change anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +55,27 @@ pub fn parse_service_shortcut(
         return None;
     }
     Some(ServiceShortcut::OpenIndex((digit as u8 - b'1') as usize))
+}
+
+/// Ctrl/Cmd+Alt+1 … 9 selects a workspace by rail position.
+pub fn parse_workspace_shortcut(
+    key: &str,
+    ctrl_or_meta: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<WorkspaceShortcut> {
+    if !ctrl_or_meta || !alt || shift {
+        return None;
+    }
+    let key = key.trim();
+    if key.chars().count() != 1 {
+        return None;
+    }
+    let digit = key.chars().next()?;
+    if !('1'..='9').contains(&digit) {
+        return None;
+    }
+    Some(WorkspaceShortcut::OpenIndex((digit as u8 - b'1') as usize))
 }
 
 pub fn shortcut_destination(
@@ -159,6 +187,27 @@ mod tests {
         assert_eq!(
             shortcut_destination(0, None, ServiceShortcut::Desk),
             Some(ShortcutDestination::Desk)
+        );
+    }
+
+    #[test]
+    fn alt_numbers_switch_workspaces_and_plain_numbers_do_not() {
+        assert_eq!(
+            parse_workspace_shortcut("1", true, false, true),
+            Some(WorkspaceShortcut::OpenIndex(0))
+        );
+        assert_eq!(
+            parse_workspace_shortcut("9", true, false, true),
+            Some(WorkspaceShortcut::OpenIndex(8))
+        );
+        assert_eq!(parse_workspace_shortcut("1", true, false, false), None);
+        assert_eq!(parse_workspace_shortcut("1", true, true, true), None);
+        assert_eq!(parse_workspace_shortcut("0", true, false, true), None);
+        assert_eq!(parse_workspace_shortcut("Tab", true, false, true), None);
+        assert_eq!(
+            parse_service_shortcut("1", true, false, true),
+            None,
+            "a workspace chord must not also open a service"
         );
     }
 }
