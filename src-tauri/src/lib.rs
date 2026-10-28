@@ -374,8 +374,22 @@ pub fn run() {
             import_local_icon,
             read_local_icon,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running rustbox");
+        .build(tauri::generate_context!())
+        .expect("error while building rustbox")
+        .run(|app_handle, event| {
+            // A hidden window leaves the Dock icon. Clicking it asks the app
+            // to reopen; show the same window instead of leaving it hidden.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = event
+            {
+                let _ = tray::reveal(app_handle);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
+        });
 }
 
 fn box_err(err: String) -> Box<dyn std::error::Error> {

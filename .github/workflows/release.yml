@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+  # Pull requests build macOS only and do not publish. The release job stays
+  # off for that event so a PR cannot create or overwrite a GitHub Release.
+  pull_request:
 
 permissions:
   contents: write
@@ -16,6 +19,7 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.platform }}
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -23,8 +27,10 @@ jobs:
         include:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
+            rust_targets: x86_64-pc-windows-msvc
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            rust_targets: x86_64-unknown-linux-gnu
     defaults:
       run:
         shell: bash
@@ -38,7 +44,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -130,9 +136,64 @@ jobs:
             rustbox-linux-x64.tar.gz
           if-no-files-found: error
 
+  build-macos:
+    name: Build macos-latest
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Check tag matches the app version
+        run: |
+          node -e 'const fs=require("fs"); const version=JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json","utf8")).version; if (process.env.GITHUB_REF_TYPE==="tag" && process.env.GITHUB_REF_NAME!=="v"+version) { console.error("Tag "+process.env.GITHUB_REF_NAME+" does not match app version "+version); process.exit(1); }'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build macOS app and disk image
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/release-macos-build.sh
+
+      - name: Package macOS assets
+        run: bash scripts/release-macos-package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustbox-macos-universal
+          path: |
+            rustbox-macos-universal.dmg
+            rustbox-macos-universal.app.tar.gz
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, build-macos]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -185,6 +246,8 @@ jobs:
             artifacts/rustbox-windows-x64-setup.exe
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.tar.gz
+            artifacts/rustbox-macos-universal.dmg
+            artifacts/rustbox-macos-universal.app.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -201,6 +264,8 @@ jobs:
             artifacts/rustbox-windows-x64-setup.exe
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.tar.gz
+            artifacts/rustbox-macos-universal.dmg
+            artifacts/rustbox-macos-universal.app.tar.gz
           body: |
             Rustbox ${{ steps.tag.outputs.name }} builds.
 
@@ -216,6 +281,10 @@ jobs:
 
             Both Linux artifacts need WebKitGTK 4.1 installed (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit.
 
-            macOS is not part of this release.
+            ### macOS
+            - `rustbox-macos-universal.dmg` — open the disk image and drag Rustbox to Applications. One build covers Apple Silicon and Intel.
+            - `rustbox-macos-universal.app.tar.gz` — contains `Rustbox.app`.
+
+            macOS 14 or newer is required. When Apple signing secrets are not configured, the build is ad-hoc signed and Gatekeeper quarantines it. Right-click Rustbox, choose Open, and confirm, or run `xattr -dr com.apple.quarantine /Applications/Rustbox.app`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

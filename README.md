@@ -2,16 +2,26 @@
 
 Rustbox is a desktop shell for web apps. It keeps WhatsApp, Slack, Discord, Zulip, Telegram, Grok, ChatGPT, Claude, and any other site you add in one window. Each service has its own webview, its own persistent session, and a sidebar icon. Services are grouped into workspaces, named sets like Work, Teaching, and Personal, that you switch between from a rail at the far left; a service can appear in more than one while keeping a single session.
 
-The shell is [Tauri](https://v2.tauri.app/) 2 on the system webview: WebView2 on Windows and WebKitGTK 4.1 on Linux. Several webviews in one window use Tauri's `unstable` feature.
+The shell is [Tauri](https://v2.tauri.app/) 2 on the system webview: WebView2 on Windows, WKWebView on macOS, and WebKitGTK 4.1 on Linux. Several webviews in one window use Tauri's `unstable` feature.
 
 ## Run it from a release
 
-Published Windows builds include an installer and a portable executable.
+Published builds include a Windows installer and portable executable, a Linux AppImage and binary, and a universal macOS disk image and app archive.
 
 - **Windows installer:** download `rustbox-windows-x64-setup.exe`. It offers **Just me** and **All users**. On an administrator account Windows asks for approval first, then shows the choice. Just me installs under the current account; when an older per-user copy is already installed, that choice upgrades it in place. All users installs to Program Files. A standard account does not see All users and installs for the current user only. Either choice uses the same app id `app.rustbox.desktop` as the portable executable, so each person's config and sessions stay in their own `%APPDATA%\app.rustbox.desktop`. A machine-wide install does not move or share that folder. Choosing All users when a per-user copy is already installed removes that copy's program files and does not delete AppData. An upgrade replaces program files and does not delete services. The installer creates a Start Menu shortcut and an uninstaller. The uninstaller removes services and sessions only if you check **Delete app data**; leave that unchecked to keep them. Windows 11 and current Windows 10 already include the WebView2 runtime it needs.
 - **Windows portable:** download `rustbox-windows-x64.exe` and run it. It also needs WebView2.
 - **Linux AppImage:** `chmod +x rustbox-linux-x64.AppImage` and run it.
 - **Linux binary:** extract `rustbox-linux-x64.tar.gz` and run `./rustbox`.
+- **macOS disk image:** download `rustbox-macos-universal.dmg`, open it, and drag Rustbox to Applications. The same file runs on Apple Silicon and Intel. macOS 14 or newer is required.
+- **macOS app archive:** extract `rustbox-macos-universal.app.tar.gz` and open `Rustbox.app`.
+
+The published macOS build is ad-hoc signed unless the release workflow has Apple signing secrets. Gatekeeper then quarantines the download. The first time, right-click Rustbox, choose **Open**, and confirm. Or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Rustbox.app
+```
+
+Use the path of the app you opened if it is not in Applications.
 
 Linux builds still need WebKitGTK 4.1 on the machine (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit. On Debian or Ubuntu:
 
@@ -27,7 +37,7 @@ Install Rust (stable), Node.js 22, and the Tauri Linux packages if you are on Li
 sudo apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential libssl-dev
 ```
 
-Windows development needs the Visual Studio C++ build tools and the WebView2 runtime. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+Windows development needs the Visual Studio C++ build tools and the WebView2 runtime. macOS development needs Xcode and the command-line tools. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
 npm install
@@ -45,9 +55,13 @@ npm run tauri build -- --no-bundle
 
 # Windows: NSIS setup installer
 npm run tauri build -- --bundles nsis
+
+# macOS: universal disk image and .app (Apple Silicon and Intel)
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin --bundles dmg,app
 ```
 
-The Windows executable is `src-tauri/target/release/rustbox.exe` (or under `target/<triple>/release` when you pass `--target`).
+The Windows executable is `src-tauri/target/release/rustbox.exe` (or under `target/<triple>/release` when you pass `--target`). On macOS the bundles are under `src-tauri/target/universal-apple-darwin/release/bundle/`. A local macOS build ad-hoc signs (`signingIdentity` is `-` in `tauri.macos.conf.json`) unless `APPLE_SIGNING_IDENTITY` is set.
 
 Unit tests for config, workspace migration and membership, Do not disturb resolution, unread-title parsing, and link policy:
 
@@ -113,18 +127,18 @@ A number past the end of the list does nothing. Ctrl+0 is left for the service p
 
 ### Tray
 
-While Rustbox is running it keeps one tray icon, drawn from the app's 32×32 icon. A copper dot and a tooltip count appear when there are unread messages (hidden while Do not disturb is on, and always excluding services that a workspace's Do not disturb has silenced). Left-click toggles the same window: show and focus, or hide. The menu has **Show window**, **Hide window**, **Workspaces** with one **Do not disturb** item per workspace, the global **Do not disturb**, **Close window to tray**, and **Quit**. Closing the window hides it when that setting is on, which is the default, and does not destroy service webviews. **Quit** and Ctrl+Q are what exit the process. Starting Rustbox again while it is hidden focuses the existing window instead of opening a second copy, so a restart does not add another tray icon. On a Linux desktop whose tray does not send an activate click, use **Show window**.
+While Rustbox is running it keeps one tray icon, drawn from the app's 32×32 icon. A copper dot and a tooltip count appear when there are unread messages (hidden while Do not disturb is on, and always excluding services that a workspace's Do not disturb has silenced). Left-click toggles the same window: show and focus, or hide. The menu has **Show window**, **Hide window**, **Workspaces** with one **Do not disturb** item per workspace, the global **Do not disturb**, **Close window to tray**, and **Quit**. Closing the window hides it when that setting is on, which is the default, and does not destroy service webviews. **Quit** and Ctrl+Q (Command+Q on macOS) are what exit the process. Starting Rustbox again while it is hidden focuses the existing window instead of opening a second copy, so a restart does not add another tray icon. On a Linux desktop whose tray does not send an activate click, use **Show window**. On macOS the icon is in the menu bar. It stays the color mark, not a template image, so it does not take on the menu bar's light or dark style. Left-click still toggles the window and the menu is on right-click. Clicking the Dock icon while the window is hidden shows it again.
 
 ### Where data lives
 
 The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`:
 
-| | Linux | Windows |
-| --- | --- | --- |
-| Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` |
-| Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` |
+| | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` | `~/Library/Application Support/app.rustbox.desktop/config.json` |
+| Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` | `~/Library/Application Support/app.rustbox.desktop/sessions/<id>/` |
 
-`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, per-service sound and notification switches, the workspace list with its names, icons, colors, and Do not disturb switches, which workspace and service were last active, whether the workspace rail is shown, Do not disturb, and whether closing the window hides to the tray. A chosen icon is stored as `local:<id>.<ext>` plus the file under the data directory's `icons` folder, not as a path on disk. Cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. The portable Windows `.exe`, a Just me install, an All users install, and the Linux AppImage use these same per-user directories, not a folder next to the program file. Installing or upgrading does not wipe them.
+`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, per-service sound and notification switches, the workspace list with its names, icons, colors, and Do not disturb switches, which workspace and service were last active, whether the workspace rail is shown, Do not disturb, and whether closing the window hides to the tray. A chosen icon is stored as `local:<id>.<ext>` plus the file under the data directory's `icons` folder, not as a path on disk. On Linux and Windows, cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. On macOS, WKWebView cannot use that directory. Each service gets a website data store id from its service id, which WebKit honors on macOS 14 and later and ignores on older systems by sharing one store. Rustbox still creates the sessions folder. Removing a service deletes that folder and does not call WebKit's data-store removal, so the WebKit store can remain under `~/Library/WebKit/`. The portable Windows `.exe`, a Just me install, an All users install, the Linux AppImage, and the macOS app use these same per-user directories, not a folder next to the program file. Installing or upgrading does not wipe them.
 
 ### User agent
 
@@ -134,7 +148,7 @@ Every service uses a recent Chrome user agent by default (Chrome 155 as of Octob
 
 A script injected into each service webview wraps `window.Notification` and forwards the title and body to a native OS notification. The notification is attributed to the service (`Slack: New message`). Each service is limited to 6 notifications per 20 seconds. Turning notifications off for a service, or silencing it, drops those notifications and hides the unread badge. The count is still tracked, so the badge comes back when you allow notifications again. A service is silenced when global Do not disturb is on, or when every workspace that lists it is in Do not disturb.
 
-The same script mutes `audio` and `video` elements and suspends `AudioContext` while that service's sound is off or while the service is silenced. On Linux the WebKit view is muted as well.
+The same script mutes `audio` and `video` elements and suspends `AudioContext` while that service's sound is off or while the service is silenced. On Linux the WebKit view is muted as well. On macOS the native WKWebView is not muted; only that script runs, and it was not exercised inside WKWebView.
 
 Unread badges are parsed from the document title, which is how these apps usually report them: `(3) WhatsApp`, `Slack (12)`, `[4] Telegram`. A leading `•` with no number counts as one. The badge appears after that service's webview has been created, and it updates while the webview is hidden.
 
@@ -193,12 +207,13 @@ A scope is optional (`fix(sidebar): ...`). This mapping is the default Release P
 
 On every push to `master`, `.github/workflows/release-please.yml` runs Release Please. After a releasable commit, it opens a release pull request that bumps `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the `rustbox` entry in `src-tauri/Cargo.lock`, and writes `CHANGELOG.md`. Merging that pull request creates the tag `vX.Y.Z` and a GitHub Release whose notes are the changelog. The same workflow then starts `.github/workflows/release.yml` on that tag.
 
-`release.yml` also runs when a `v*` tag is pushed and on manual `workflow_dispatch`. It builds:
+`release.yml` also runs when a `v*` tag is pushed and on manual `workflow_dispatch`. Those runs build:
 
 - `rustbox-windows-x64-setup.exe` (NSIS installer) and `rustbox-windows-x64.exe` (portable) on `windows-latest`
 - `rustbox-linux-x64.AppImage` and `rustbox-linux-x64.tar.gz` on `ubuntu-22.04`
+- `rustbox-macos-universal.dmg` and `rustbox-macos-universal.app.tar.gz` on `macos-latest` (one universal binary, Apple Silicon and Intel)
 
-and uploads them to the GitHub Release. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets.
+and upload them to the GitHub Release. A pull request runs the macOS job only (tests, the universal disk image, and the app archive) and does not publish. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets.
 
 The Cargo version lines Release Please rewrites are marked with `x-release-please-version`. Keep that comment on the package version in `src-tauri/Cargo.toml` and on the `rustbox` version in `src-tauri/Cargo.lock`. `cargo update` rewrites the lockfile and drops the comment; put it back on the `rustbox` version line before merging. `node scripts/check-release-versions.mjs` checks that the versions match and that both markers are present.
 
@@ -211,8 +226,10 @@ A tag created with `GITHUB_TOKEN` does not start `release.yml` on its own. Relea
 
 ## Known limitations
 
-- **macOS is not built or tested.** The code selects a WebKit data-store id on macOS because `data_directory` is unavailable there, but there is no macOS workflow.
-- **Multiple webviews depend on Tauri's `unstable` API.** That API is the supported way to keep more than one webview in a single window, and it can still change. On Linux, Tauri currently packs those children into a vertical box and ignores the requested position, so Rustbox moves the shell and each service onto a single `GtkFixed` after creation.
+- **macOS builds are produced and not run.** CI compiles the app, runs `cargo test`, and uploads a universal `.dmg` and `.app.tar.gz`. Nobody has launched that bundle on a Mac from this repository. Tray clicks, close-to-tray, the Dock icon, single-instance focus, notifications, and the injected script inside WKWebView are untested. Signing and notarization run only when `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` are all set; otherwise the build is ad-hoc signed and must not fail for the missing secrets. An ad-hoc signature was not notarized.
+- **macOS service sessions need macOS 14.** WKWebView has no data directory. Rustbox passes a 16-byte data-store id derived from the service UUID. WebKit uses a separate store on macOS 14 and later; on older systems every service would share the default store, so the bundle's minimum version is 14.0. Removing a service does not delete that WebKit store.
+- **macOS service pages are WKWebView.** The Chrome user agent is only a string (`Macintosh; Intel Mac OS X 10_15_7`). Sites can still reject the session after inspecting WebKit. The injected script is the same one Linux and Windows use. It was not run in WKWebView, so link handling, shortcuts, notification forwarding, and sound muting there are unchecked. Command is accepted wherever Ctrl is: Command+1 through Command+9, Command+Tab, Command+Alt+1 through Command+Alt+9, Command+Shift+D, and Command+Q.
+- **Multiple webviews depend on Tauri's `unstable` API.** That API is the supported way to keep more than one webview in a single window, and it can still change. On Linux, Tauri currently packs those children into a vertical box and ignores the requested position, so Rustbox moves the shell and each service onto a single `GtkFixed` after creation. macOS uses the webview bounds API instead, and that placement was not checked on a Mac.
 - **Linux is WebKit, not Chrome.** The Chrome user agent fixes the simple rejection check. WhatsApp Web and other sites can still refuse the session after inspecting browser features, service workers, or codecs. WebKitGTK 4.1 also has to be installed on the host.
 - **Windows builds need WebView2.** The installer and portable executable do not embed the runtime. Toasts from the portable executable sometimes fail to register with Windows even when the in-app badge still updates.
 - **Notification forwarding covers the page `Notification` constructor.** Service-worker push notifications are not forwarded. Linux needs a running notification daemon.
@@ -222,4 +239,4 @@ A tag created with `GITHUB_TOKEN` does not start `release.yml` on its own. Relea
 - **Popup OAuth is best-effort.** Redirect sign-in stays inside the webview. A login flow that depends on `window.opener` in a popup can still fail because the popup does not share the service session.
 - **External-link handling is click and `window.open` based.** A script that assigns `location` to another site stays in the webview, so a login redirect is not kicked out to the browser.
 - **Downloads, camera, microphone, and screen sharing** use whatever the system webview allows. They were not exercised in testing.
-- **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, loading Telegram Web, and switching between three workspaces with a shared and an all-pinned service were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, signing in to WhatsApp, Slack, or the other presets, or the tray's per-workspace Do not disturb items. The Windows builds are produced by CI and were not run.
+- **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, loading Telegram Web, and switching between three workspaces with a shared and an all-pinned service were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, signing in to WhatsApp, Slack, or the other presets, or the tray's per-workspace Do not disturb items. The Windows and macOS builds are produced by CI and were not run.

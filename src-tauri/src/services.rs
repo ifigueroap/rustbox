@@ -633,6 +633,9 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn delete_session_dir(app: &AppHandle, id: &str) {
+    // Linux and Windows keep the webview profile in this directory. macOS
+    // stores cookies in a WKWebsiteDataStore keyed by the service id, so
+    // deleting the directory does not remove that store.
     let state = app.state::<RuntimeState>();
     let dir = state.sessions_dir.join(id);
     if let Err(err) = std::fs::remove_dir_all(&dir) {
@@ -991,6 +994,8 @@ fn isolate_session(
 ) -> Result<WebviewBuilder<tauri::Wry>, String> {
     #[cfg(target_os = "macos")]
     {
+        // WKWebView has no data-directory API. A per-service store id isolates
+        // cookies on macOS 14 and later; older systems share the default store.
         let _ = app;
         Ok(builder.data_store_identifier(store_id(&service.id)))
     }
@@ -1124,6 +1129,14 @@ pub fn validate_external_url(raw: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::config::{NewService, NewWorkspace};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn store_id_is_the_service_uuid() {
+        let id = "00112233-4455-6677-8899-aabbccddeeff";
+        assert_eq!(store_id(id), *uuid::Uuid::parse_str(id).unwrap().as_bytes());
+        assert_eq!(store_id("not-a-uuid"), [1; 16]);
+    }
 
     fn config_with(names: &[&str]) -> Config {
         let mut config = Config::default();
