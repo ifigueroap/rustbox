@@ -1134,6 +1134,7 @@ mod tests {
                     name: (*name).into(),
                     icon: None,
                     color: None,
+                    include_services: Vec::new(),
                 })
                 .unwrap();
         }

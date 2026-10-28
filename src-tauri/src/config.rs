@@ -288,6 +288,10 @@ pub struct NewWorkspace {
     pub icon: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    /// Existing services to add to the new workspace. They keep the workspace
+    /// memberships they already have; this only adds one.
+    #[serde(default)]
+    pub include_services: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -654,11 +658,74 @@ impl Config {
         workspace.icon = normalize_icon(input.icon.as_deref())?;
         workspace.color = normalize_color(input.color.as_deref());
         workspace.order = self.workspaces.len() as u32;
+        let new_id_owned = workspace.id.clone();
         self.workspaces.push(workspace.clone());
         if self.active_workspace_id.is_none() {
             self.active_workspace_id = Some(workspace.id.clone());
         }
+        for service_id in input.include_services {
+            let Some(service) = self
+                .services
+                .iter_mut()
+                .find(|service| service.id == service_id)
+            else {
+                continue;
+            };
+            // Pinned-to-all already shows in the new workspace, and adding an
+            // id to that list would be dead weight in the file.
+            if service.all_workspaces || service.workspaces.contains(&new_id_owned) {
+                continue;
+            }
+            service.workspaces.push(new_id_owned.clone());
+        }
         Ok(workspace)
+    }
+
+    /// Add services to a workspace without touching their other memberships.
+    /// A service pinned to all workspaces already appears there and is left
+    /// alone. Returns how many services actually changed.
+    pub fn include_services(
+        &mut self,
+        workspace_id: &str,
+        service_ids: &[String],
+    ) -> Result<usize, String> {
+        if !self
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == workspace_id)
+        {
+            return Err("workspace not found".into());
+        }
+        let mut changed = 0usize;
+        for service_id in service_ids {
+            let Some(service) = self
+                .services
+                .iter_mut()
+                .find(|service| &service.id == service_id)
+            else {
+                continue;
+            };
+            if service.all_workspaces || service.workspaces.iter().any(|id| id == workspace_id) {
+                continue;
+            }
+            service.workspaces.push(workspace_id.to_string());
+            changed += 1;
+        }
+        Ok(changed)
+    }
+
+    /// Every service that is not already visible in `workspace_id`, in sidebar
+    /// order. Services pinned to all workspaces already appear there, so they
+    /// are not candidates. The shell applies the same rule when it builds the
+    /// include picker from the snapshot; keep the two in step.
+    #[cfg(test)]
+    fn includable_services(&self, workspace_id: &str) -> Vec<&Service> {
+        self.services
+            .iter()
+            .filter(|service| {
+                !service.all_workspaces && !service_in_workspace(service, workspace_id)
+            })
+            .collect()
     }
 
     pub fn update_workspace(&mut self, input: WorkspaceUpdate) -> Result<(), String> {
@@ -1490,6 +1557,7 @@ mod tests {
                 name: "Personal".into(),
                 icon: None,
                 color: None,
+                include_services: Vec::new(),
             })
             .unwrap();
         let service = &config.services[0];
@@ -1762,6 +1830,7 @@ mod tests {
                     name: "  ".into(),
                     icon: None,
                     color: None,
+                    include_services: Vec::new(),
                 })
                 .is_err()
         );
@@ -1772,6 +1841,7 @@ mod tests {
                     name: long,
                     icon: None,
                     color: None,
+                    include_services: Vec::new(),
                 })
                 .is_err()
         );
@@ -1780,9 +1850,185 @@ mod tests {
                 name: DEFAULT_WORKSPACE_NAME.into(),
                 icon: None,
                 color: None,
+                include_services: Vec::new(),
             })
             .unwrap();
         assert_eq!(config.workspaces[1].name, "Main 2");
+    }
+
+    #[test]
+    fn a_new_workspace_can_start_from_existing_services() {
+        let mut config = Config::default();
+        let main = config.workspaces[0].id.clone();
+        let slack = config
+            .add_custom(NewService {
+                name: "Slack".into(),
+                url: "https://app.slack.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: Some(vec![main.clone()]),
+                all_workspaces: None,
+            })
+            .unwrap();
+        let pinned = config
+            .add_custom(NewService {
+                name: "Grok".into(),
+                url: "https://grok.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: Some(true),
+            })
+            .unwrap();
+
+        let created = config
+            .add_workspace(NewWorkspace {
+                name: "Work".into(),
+                icon: None,
+                color: None,
+                include_services: vec![slack.id.clone(), pinned.id.clone(), "svc-missing".into()],
+            })
+            .unwrap();
+
+        let slack = config
+            .services
+            .iter()
+            .find(|item| item.id == slack.id)
+            .unwrap();
+        assert!(slack.workspaces.contains(&main));
+        assert!(slack.workspaces.contains(&created.id));
+        // A service pinned to all workspaces already shows there; its list
+        // stays empty so the file does not grow dead ids.
+        let pinned = config
+            .services
+            .iter()
+            .find(|item| item.id == pinned.id)
+            .unwrap();
+        assert!(pinned.all_workspaces);
+        assert!(pinned.workspaces.is_empty());
+        assert!(service_in_workspace(pinned, &created.id));
+    }
+
+    #[test]
+    fn including_services_never_removes_an_existing_membership() {
+        let mut config = Config::default();
+        let main = config.workspaces[0].id.clone();
+        let service = config
+            .add_custom(NewService {
+                name: "Slack".into(),
+                url: "https://app.slack.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: Some(vec![main.clone()]),
+                all_workspaces: None,
+            })
+            .unwrap();
+        let work = config
+            .add_workspace(NewWorkspace {
+                name: "Work".into(),
+                icon: None,
+                color: None,
+                include_services: Vec::new(),
+            })
+            .unwrap();
+
+        let changed = config
+            .include_services(&work.id, &[service.id.clone()])
+            .unwrap();
+        assert_eq!(changed, 1);
+        let stored = config
+            .services
+            .iter()
+            .find(|item| item.id == service.id)
+            .unwrap();
+        assert_eq!(stored.workspaces, vec![main.clone(), work.id.clone()]);
+
+        // Adding it a second time is a no-op, not a duplicate id.
+        let changed = config
+            .include_services(&work.id, &[service.id.clone()])
+            .unwrap();
+        assert_eq!(changed, 0);
+        let stored = config
+            .services
+            .iter()
+            .find(|item| item.id == service.id)
+            .unwrap();
+        assert_eq!(stored.workspaces, vec![main, work.id.clone()]);
+    }
+
+    #[test]
+    fn including_services_rejects_an_unknown_workspace() {
+        let mut config = Config::default();
+        assert!(
+            config
+                .include_services("ws-missing", &["svc-1".into()])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn includable_services_skips_the_ones_already_visible() {
+        let mut config = Config::default();
+        let main = config.workspaces[0].id.clone();
+        let work = config
+            .add_workspace(NewWorkspace {
+                name: "Work".into(),
+                icon: None,
+                color: None,
+                include_services: Vec::new(),
+            })
+            .unwrap();
+        let pinned = config
+            .add_custom(NewService {
+                name: "Grok".into(),
+                url: "https://grok.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: Some(true),
+            })
+            .unwrap();
+        let shared = config
+            .add_custom(NewService {
+                name: "Slack".into(),
+                url: "https://app.slack.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: Some(vec![main.clone(), work.id.clone()]),
+                all_workspaces: None,
+            })
+            .unwrap();
+        let elsewhere = config
+            .add_custom(NewService {
+                name: "Discord".into(),
+                url: "https://discord.com/app".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: Some(vec![main.clone()]),
+                all_workspaces: None,
+            })
+            .unwrap();
+
+        let candidates: Vec<String> = config
+            .includable_services(&work.id)
+            .iter()
+            .map(|service| service.id.clone())
+            .collect();
+        assert_eq!(candidates, vec![elsewhere.id.clone()]);
+        assert!(!candidates.contains(&pinned.id));
+        assert!(!candidates.contains(&shared.id));
     }
 
     #[test]

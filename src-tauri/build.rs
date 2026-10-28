@@ -18,6 +18,7 @@ fn main() {
             "set_theme",
             "add_workspace",
             "update_workspace",
+            "include_services",
             "set_workspace_dnd",
             "remove_workspace",
             "set_active_workspace",

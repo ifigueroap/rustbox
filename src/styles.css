@@ -23,7 +23,7 @@
   --tag-fg: #c4b8aa;
   --sidebar-width: 228px;
   --sidebar-collapsed-width: 72px;
-  --workspace-rail-width: 60px;
+  --workspace-rail-width: 48px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -143,8 +143,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
   background: var(--soft-panel);
   border-right: 1px solid var(--line);
 }
@@ -162,20 +162,20 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
+  gap: var(--space-1);
+  padding: 0;
 }
 
 .ws {
   position: relative;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 12px;
+  border-radius: 11px;
   background: transparent;
 }
 
@@ -190,13 +190,13 @@ button:disabled {
 }
 
 .ws-mark {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 9px;
   font-family: Palatino, "Palatino Linotype", Georgia, serif;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
   overflow: hidden;
@@ -248,19 +248,184 @@ button:disabled {
 }
 
 .ws-add {
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   flex: none;
   border: 1px dashed var(--rail-border);
-  border-radius: 12px;
+  border-radius: 11px;
   background: transparent;
   color: var(--copper);
-  font-size: 22px;
+  font-size: 19px;
   line-height: 1;
+}
+
+.ws-add[hidden] {
+  display: none;
 }
 
 .ws-add:hover {
   background: var(--hover);
+}
+
+/* ---- Workspace switcher (rail collapsed) -------------------------------- */
+
+.workspace-switcher {
+  position: relative;
+  width: 100%;
+  flex: none;
+  padding: 0 var(--space-2) var(--space-1);
+}
+
+.workspace-switcher[hidden] {
+  display: none;
+}
+
+.ws-switch-button {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft-panel);
+  color: var(--text);
+  text-align: left;
+}
+
+.ws-switch-button:hover {
+  background: var(--hover);
+}
+
+.ws-switch-button .ws-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 12px;
+  flex: none;
+}
+
+.ws-switch-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ws-switch-caret {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.ws-popup {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + var(--space-1));
+  left: var(--space-2);
+  right: var(--space-2);
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  box-shadow: 0 var(--space-4) 40px var(--shadow);
+}
+
+.ws-popup[hidden] {
+  display: none;
+}
+
+.ws-popup-row {
+  position: relative;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.ws-popup-row:hover {
+  background: var(--hover);
+}
+
+.ws-popup-row.active {
+  background: var(--active);
+  box-shadow: inset 3px 0 0 var(--ws-color, var(--copper));
+}
+
+.ws-popup-row .ws-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 12px;
+  flex: none;
+}
+
+.ws-popup-row .ws-badge {
+  position: static;
+  margin-left: auto;
+  border-color: var(--panel);
+}
+
+.ws-popup-row .ws-dnd {
+  position: static;
+  flex: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.ws-popup-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-popup-add {
+  margin-top: 2px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 7px 7px;
+  color: var(--copper);
+  font-weight: 600;
+}
+
+#shell.sidebar-collapsed .workspace-switcher {
+  padding: 0 0 var(--space-1);
+  width: auto;
+}
+
+#shell.sidebar-collapsed .ws-switch-button {
+  width: 42px;
+  min-height: 42px;
+  justify-content: center;
+  padding: 0;
+}
+
+#shell.sidebar-collapsed .ws-switch-name,
+#shell.sidebar-collapsed .ws-switch-caret {
+  display: none;
+}
+
+#shell.sidebar-collapsed .ws-popup {
+  left: 0;
+  right: auto;
 }
 
 .dash-scope-row {
@@ -326,6 +491,70 @@ button:disabled {
   align-items: stretch;
   gap: var(--space-1);
   padding: var(--space-1) 0;
+}
+
+#service-list[hidden] {
+  display: none;
+}
+
+.sidebar-services {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.service-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.service-empty[hidden] {
+  display: none;
+}
+
+.service-empty p {
+  margin: 0;
+}
+
+.service-empty button {
+  box-sizing: border-box;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft-panel);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.service-empty button:hover {
+  background: var(--hover);
+}
+
+#shell.sidebar-collapsed .service-empty {
+  padding: var(--space-1);
+}
+
+#shell.sidebar-collapsed .service-empty p {
+  font-size: 10px;
+  text-align: center;
+}
+
+#shell.sidebar-collapsed .service-empty button {
+  font-size: 10px;
+  text-align: center;
+  padding: 0 var(--space-1);
 }
 
 .svc {
@@ -527,6 +756,12 @@ select:focus-visible {
   color: var(--copper);
   font-size: 26px;
   line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.rail-button[hidden] {
+  display: none;
 }
 
 .rail-button.collapse {
@@ -534,8 +769,40 @@ select:focus-visible {
   font-family: Palatino, "Palatino Linotype", Georgia, serif;
 }
 
+.rail-button.rail-toggle {
+  font-size: 0;
+}
+
+.rail-toggle-fill {
+  opacity: 0;
+  fill: var(--copper);
+}
+
+/* A filled rail means it is showing; an outlined rail with an arrow means it is
+   collapsed and one click brings it back. */
+.rail-button.rail-toggle[aria-pressed="true"] .rail-toggle-fill {
+  opacity: 0.35;
+}
+
+/* The arrow points the way the rail will go: left, back to the edge it came
+   from, whether it is showing or hidden. */
+.rail-toggle-arrow {
+  display: none;
+  transform: rotate(180deg);
+  transform-origin: 15px 12px;
+}
+
+.rail-button.rail-toggle[aria-pressed="false"] .rail-toggle-arrow {
+  display: inline;
+}
+
 .rail-button:hover {
   background: var(--hover);
+}
+
+#shell.sidebar-collapsed .rail-footer .rail-button {
+  width: 42px;
+  height: 42px;
 }
 
 #stage {
@@ -1105,6 +1372,10 @@ input[type="color"] {
   border: 0;
 }
 
+.membership[hidden] {
+  display: none;
+}
+
 .membership legend {
   padding: 0;
   color: var(--muted);
@@ -1209,8 +1480,100 @@ input[type="color"] {
 }
 
 .empty-desk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
   color: var(--muted);
   margin: 0;
+  padding: var(--space-6) 0;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  padding-left: var(--space-5);
+  padding-right: var(--space-5);
+}
+
+.empty-desk[hidden] {
+  display: none;
+}
+
+.empty-desk p {
+  margin: 0;
+  max-width: 46ch;
+  line-height: 1.5;
+}
+
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.empty-actions button {
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft-panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.empty-actions button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.empty-actions button[hidden] {
+  display: none;
+}
+
+.empty-actions .text-action {
+  border-color: transparent;
+  background: transparent;
+  color: var(--copper);
+}
+
+.dash-grid[hidden] {
+  display: none;
+}
+
+/* ---- App error banner -------------------------------------------------- */
+
+.app-error {
+  position: fixed;
+  z-index: 60;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  max-width: min(760px, calc(100vw - var(--space-6)));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--danger-text);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 var(--space-3) 32px var(--shadow);
+}
+
+.app-error[hidden] {
+  display: none;
+}
+
+.app-error .text-button {
+  flex: none;
+  color: inherit;
+  border: 1px solid currentColor;
+}
+
+.field-hint-inline {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 button:disabled,

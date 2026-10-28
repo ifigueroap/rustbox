@@ -25,6 +25,7 @@
     "allow-set-theme",
     "allow-add-workspace",
     "allow-update-workspace",
+    "allow-include-services",
     "allow-set-workspace-dnd",
     "allow-remove-workspace",
     "allow-set-active-workspace",

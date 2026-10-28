@@ -2,10 +2,13 @@ import { defineConfig } from "vite";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 
+import { mockPage } from "./scripts/mock-page.mjs";
+
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(() => ({
   clearScreen: false,
+  plugins: [mockPage()],
   server: {
     port: 1420,
     strictPort: true,
@@ -20,5 +23,11 @@ export default defineConfig(() => ({
     watch: {
       ignored: ["**/src-tauri/**"],
     },
+  },
+  test: {
+    environment: "jsdom",
+    include: ["tests/**/*.test.ts"],
+    setupFiles: ["tests/setup.ts"],
+    restoreMocks: true,
   },
 }));

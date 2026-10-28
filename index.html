@@ -9,6 +9,10 @@
   </head>
   <body>
     <div id="shell">
+      <div id="app-error" class="app-error" role="alert" hidden>
+        <span id="app-error-text"></span>
+        <button id="app-error-dismiss" class="text-button" type="button">Dismiss</button>
+      </div>
       <nav id="workspace-rail" aria-label="Workspaces" hidden>
         <div id="workspace-list" role="listbox" aria-label="Workspaces"></div>
         <button
@@ -26,7 +30,35 @@
           <span class="brand-mark">rb</span>
           <span class="brand-name">rustbox</span>
         </button>
-        <div id="service-list" role="listbox" aria-label="Services"></div>
+        <div id="workspace-switcher" class="workspace-switcher" hidden>
+          <button
+            id="workspace-switcher-button"
+            class="ws-switch-button"
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            title="Switch workspace"
+          >
+            <span id="workspace-switcher-mark" class="ws-mark"></span>
+            <span id="workspace-switcher-name" class="ws-switch-name"></span>
+            <span class="ws-switch-caret" aria-hidden="true">▾</span>
+          </button>
+          <div
+            id="workspace-switcher-popup"
+            class="ws-popup"
+            role="listbox"
+            aria-label="Workspaces"
+            hidden
+          ></div>
+        </div>
+        <div class="sidebar-services">
+          <div id="service-list" role="listbox" aria-label="Services"></div>
+          <div id="service-empty" class="service-empty" hidden>
+            <p>No services in this workspace yet.</p>
+            <button id="empty-add-service" type="button">Add service</button>
+            <button id="empty-include-services" type="button">Include existing services…</button>
+          </div>
+        </div>
         <button
           id="dnd-button"
           class="dnd-button"
@@ -53,6 +85,22 @@
             aria-label="Collapse sidebar"
           >
             <span aria-hidden="true">‹</span>
+          </button>
+          <button
+            id="rail-toggle-button"
+            class="rail-button rail-toggle"
+            type="button"
+            title="Hide workspace rail"
+            aria-label="Hide workspace rail"
+            aria-pressed="true"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.6" />
+              <line x1="9.5" y1="4.5" x2="9.5" y2="19.5" stroke="currentColor" stroke-width="1.6" />
+              <rect x="4.5" y="5.5" width="4" height="13" rx="2" class="rail-toggle-fill" />
+              <path class="rail-toggle-arrow" d="M14 9.5 16.5 12 14 14.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
           </button>
           <button
             id="manage-button"
@@ -99,7 +147,14 @@
             <button id="dash-scope" class="text-action" type="button" hidden>All services</button>
           </div>
           <div id="dash-grid" class="dash-grid"></div>
-          <p id="dash-empty" class="empty-desk" hidden>No services in this workspace yet. Add one, or switch to All services.</p>
+          <div id="dash-empty" class="empty-desk" hidden>
+            <p id="dash-empty-text">No services in this workspace yet.</p>
+            <div class="empty-actions">
+              <button id="dash-empty-add" type="button">Add service</button>
+              <button id="dash-empty-include" type="button">Include existing services…</button>
+              <button id="dash-empty-all" class="text-action" type="button" hidden>Show all services</button>
+            </div>
+          </div>
         </div>
         <p id="stage-status" hidden></p>
       </section>
@@ -198,11 +253,41 @@
               </div>
               <p class="field-hint">Used for the rail highlight and the letter fallback.</p>
             </label>
+            <fieldset id="workspace-include-field" class="membership wide">
+              <legend>Include existing services <span class="field-hint-inline">(optional)</span></legend>
+              <p class="field-hint">
+                Ticked services are added to this workspace too. Nothing is removed from the workspaces they are already in.
+              </p>
+              <div id="workspace-include-options" class="membership-options"></div>
+            </fieldset>
           </div>
         </div>
         <div class="dialog-footer">
           <button id="workspace-cancel" type="button">Cancel</button>
           <button id="workspace-save" class="primary" type="submit" disabled>Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="include-services">
+      <form id="include-form" class="manager-card" method="dialog">
+        <header class="manager-head">
+          <div>
+            <p class="eyebrow">workspace</p>
+            <h2 id="include-title">Include existing services</h2>
+          </div>
+          <button id="include-close" class="text-button" type="button">Close</button>
+        </header>
+        <div class="dialog-body">
+          <p id="include-error" class="error" hidden></p>
+          <p id="include-hint" class="field-hint">
+            Ticked services also appear in this workspace. They keep their session and stay in every workspace they are already in.
+          </p>
+          <div id="include-options" class="membership-options"></div>
+        </div>
+        <div class="dialog-footer">
+          <button id="include-cancel" type="button">Cancel</button>
+          <button id="include-save" class="primary" type="submit" disabled>Save</button>
         </div>
       </form>
     </dialog>

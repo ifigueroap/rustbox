@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-include-services"
+description = "Enables the include_services command without any pre-configured scope."
+commands.allow = ["include_services"]
+
+[[permission]]
+identifier = "deny-include-services"
+description = "Denies the include_services command without any pre-configured scope."
+commands.deny = ["include_services"]

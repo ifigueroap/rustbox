@@ -9,8 +9,9 @@ const CHROME_VERSION: &str = "155";
 pub const SIDEBAR_COLLAPSED_WIDTH: f64 = 72.0;
 pub const SIDEBAR_EXPANDED_WIDTH: f64 = 228.0;
 
-/// Matches `--workspace-rail-width` in the shell stylesheet.
-pub const WORKSPACE_RAIL_WIDTH: f64 = 60.0;
+/// Matches `--workspace-rail-width` in the shell stylesheet. Kept slim: the
+/// rail is a strip of 40px marks, so anything wider is wasted content width.
+pub const WORKSPACE_RAIL_WIDTH: f64 = 48.0;
 
 pub fn sidebar_width(collapsed: bool) -> f64 {
     if collapsed {
@@ -258,8 +259,8 @@ mod tests {
         assert_eq!(sidebar_width(true), 72.0);
         assert_eq!(sidebar_width(false), 228.0);
         assert_eq!(shell_width(false, false), 228.0);
-        assert_eq!(shell_width(false, true), 288.0);
-        assert_eq!(shell_width(true, true), 132.0);
+        assert_eq!(shell_width(false, true), 276.0);
+        assert_eq!(shell_width(true, true), 120.0);
     }
 
     #[test]
