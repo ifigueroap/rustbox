@@ -397,8 +397,14 @@ export function currentWorkspaceState(): {
   };
 }
 
-export { render, saveWorkspaceEditor, closeWorkspaceEditor, openWorkspaceEditor };
-export { saveEditor, openIncludeServices, saveIncludeServices };
+export {
+  render,
+  saveWorkspaceEditor,
+  closeWorkspaceEditor,
+  openWorkspaceEditor,
+  openIncludeServices,
+  saveIncludeServices,
+};
 
 function applySnapshot(snapshot: Snapshot): void {
   services = snapshot.services;
