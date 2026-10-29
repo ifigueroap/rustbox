@@ -186,6 +186,39 @@ impl Service {
     }
 }
 
+/// Update-check preferences. Every field is optional on disk so a config
+/// written before updates existed still loads. `version` stays 1.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSettings {
+    /// Background checks. On unless the user turns them off.
+    #[serde(default = "default_true")]
+    pub auto_check: bool,
+    /// RFC3339 time of the last check that reached GitHub. Unset after a
+    /// network error, so the shell does not claim a check that failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<String>,
+    /// Automatic checks stay quiet for this version. A manual check still
+    /// shows it. A newer version is not covered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_version: Option<String>,
+    /// The version we already notified for, so a restart does not notify again.
+    /// Do not disturb leaves this unset until a check can actually notify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notified_version: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            last_checked_at: None,
+            skipped_version: None,
+            notified_version: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -218,6 +251,9 @@ pub struct Config {
     pub workspace_rail_hidden: bool,
     #[serde(default)]
     pub theme: Theme,
+    /// Background update checks. Missing on older files, which means on.
+    #[serde(default)]
+    pub updates: UpdateSettings,
 }
 
 impl Default for Config {
@@ -236,6 +272,7 @@ impl Default for Config {
             close_to_tray: true,
             workspace_rail_hidden: false,
             theme: Theme::Auto,
+            updates: UpdateSettings::default(),
         }
     }
 }
@@ -412,6 +449,7 @@ impl Config {
                 chosen.sidebar_collapsed = existing.sidebar_collapsed;
                 chosen.do_not_disturb = existing.do_not_disturb;
                 chosen.close_to_tray = existing.close_to_tray;
+                chosen.updates = existing.updates.clone();
             }
 
             if matches!(current_read, ConfigRead::Invalid(_)) {
@@ -1496,6 +1534,10 @@ mod tests {
         assert!(loaded.sidebar_collapsed);
         assert!(loaded.do_not_disturb);
         assert_eq!(loaded.theme, Theme::Dark);
+        assert!(loaded.updates.auto_check);
+        assert!(loaded.updates.last_checked_at.is_none());
+        assert!(loaded.updates.skipped_version.is_none());
+        assert!(loaded.updates.notified_version.is_none());
         assert_eq!(loaded.schema_version, CONFIG_SCHEMA_VERSION);
         assert_eq!(loaded.version, 1, "older readers still accept version 1");
 
@@ -1508,6 +1550,24 @@ mod tests {
         assert_eq!(reloaded, loaded);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn update_settings_round_trip_and_old_files_default_to_checking() {
+        let bare: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
+        assert!(bare.updates.auto_check);
+        assert!(bare.updates.skipped_version.is_none());
+
+        let mut config = Config::default();
+        config.updates.auto_check = false;
+        config.updates.last_checked_at = Some("2026-10-29T01:00:00Z".into());
+        config.updates.skipped_version = Some("0.7.0".into());
+        config.updates.notified_version = Some("0.7.0".into());
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"autoCheck\":false") || json.contains("\"autoCheck\": false"));
+        let loaded: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.updates, config.updates);
+        assert_eq!(loaded.version, 1);
     }
 
     #[test]

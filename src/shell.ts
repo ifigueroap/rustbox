@@ -60,6 +60,20 @@ interface Snapshot {
   trayAvailable: boolean;
   theme: ThemePreference;
   appVersion: string;
+  update: UpdateStatus;
+}
+
+type UpdatePhase = "idle" | "checking" | "available" | "upToDate" | "error";
+
+interface UpdateStatus {
+  state: UpdatePhase;
+  current: string;
+  latest: string | null;
+  notes: string | null;
+  url: string | null;
+  canInstall: boolean;
+  autoCheck: boolean;
+  lastCheckedAt: string | null;
 }
 
 type ThemePreference = "auto" | "light" | "dark";
@@ -111,6 +125,9 @@ let closeToTray = true;
 let trayAvailable = false;
 let themePreference: ThemePreference = "auto";
 let appVersion = "";
+let updateStatus: UpdateStatus = idleUpdate("");
+/** Set once Download and install has finished for this version. */
+let updateInstalledVersion: string | null = null;
 let serviceMenu: Menu | null = null;
 let serviceMenuItems: (CheckMenuItem | MenuItem | PredefinedMenuItem)[] = [];
 let workspaceMenu: Menu | null = null;
@@ -166,6 +183,38 @@ interface ServiceForm {
 
 let customForm: ServiceForm | null = null;
 let editorForm: ServiceForm | null = null;
+
+function idleUpdate(current: string): UpdateStatus {
+  return {
+    state: "idle",
+    current,
+    latest: null,
+    notes: null,
+    url: null,
+    canInstall: false,
+    autoCheck: true,
+    lastCheckedAt: null,
+  };
+}
+
+function displayVersion(version: string | null | undefined): string {
+  return (version ?? "").trim().replace(/^v/, "");
+}
+
+function lastCheckedText(status: UpdateStatus): string {
+  if (status.state === "checking") return "Checking for updates…";
+  if (status.state === "error") return "Couldn't check for updates.";
+  const when = formatChecked(status.lastCheckedAt);
+  if (status.state === "upToDate") return `${when} · Up to date`;
+  return when;
+}
+
+function formatChecked(iso: string | null): string {
+  if (!iso) return "Last checked: never";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Last checked: never";
+  return `Last checked: ${date.toLocaleString()}`;
+}
 
 function isServiceShortcut(event: KeyboardEvent): boolean {
   if (event.repeat || !(event.ctrlKey || event.metaKey)) return false;
@@ -484,6 +533,8 @@ export {
   openWorkspaceEditor,
   openIncludeServices,
   saveIncludeServices,
+  openUpdateDialog,
+  closeUpdateDialog,
 };
 
 function applySnapshot(snapshot: Snapshot): void {
@@ -501,6 +552,10 @@ function applySnapshot(snapshot: Snapshot): void {
   trayAvailable = snapshot.trayAvailable;
   themePreference = snapshot.theme;
   appVersion = snapshot.appVersion;
+  updateStatus = snapshot.update ?? idleUpdate(snapshot.appVersion);
+  if (updateInstalledVersion && updateInstalledVersion !== updateStatus.latest) {
+    updateInstalledVersion = null;
+  }
   const closeTray = document.querySelector<HTMLInputElement>("#close-tray");
   if (closeTray) {
     closeTray.checked = closeToTray;
@@ -1024,6 +1079,8 @@ function renderSidebar(): void {
     : "Pause sounds and notifications for every service.";
   dnd.setAttribute("aria-label", dnd.title);
 
+  paintUpdateChrome();
+
   const manage = document.querySelector<HTMLButtonElement>("#manage-button");
   if (manage) {
     const label = "Add a service";
@@ -1131,6 +1188,7 @@ function renderStage(): void {
 
 function renderDashboard(): void {
   must<HTMLElement>("#app-version").textContent = appVersion ? `v${appVersion}` : "";
+  paintUpdateChrome();
   const workspace = activeWorkspace();
   must<HTMLElement>("#dash-eyebrow").textContent = workspace ? "workspace" : "desk";
   must<HTMLElement>("#dash-title").textContent = workspace ? workspace.name : "rustbox";
@@ -2434,6 +2492,12 @@ export async function renderShell(): Promise<void> {
   await listen<Snapshot>("app-snapshot", (event) => {
     applySnapshot(event.payload);
   });
+  await listen<UpdateStatus>("update-status", (event) => {
+    applyUpdateStatus(event.payload);
+  });
+  await listen("open-update-dialog", () => {
+    deferMenuAction(() => openUpdateDialog());
+  });
 
   presets = await invoke<Preset[]>("list_presets");
   const snapshot = await invoke<Snapshot>("get_state");
@@ -2445,6 +2509,135 @@ export async function renderShell(): Promise<void> {
   if (!snapshot.activeId && last && serviceInWorkspace(last, activeWorkspaceId)) {
     await activate(last.id);
   }
+}
+
+function paintUpdateChrome(): void {
+  const badge = document.querySelector<HTMLButtonElement>("#update-badge");
+  if (badge) {
+    const version = displayVersion(updateStatus.latest);
+    const available = updateStatus.state === "available" && version.length > 0;
+    badge.hidden = !available;
+    const label = available ? `Update available: v${version}` : "Check for updates";
+    badge.title = label;
+    badge.setAttribute("aria-label", label);
+  }
+  const toggle = document.querySelector<HTMLInputElement>("#auto-update");
+  if (toggle) toggle.checked = updateStatus.autoCheck;
+  const checked = document.querySelector<HTMLElement>("#update-checked");
+  if (checked) checked.textContent = lastCheckedText(updateStatus);
+  const check = document.querySelector<HTMLButtonElement>("#check-updates");
+  if (check) {
+    check.disabled = updateStatus.state === "checking";
+    check.textContent = updateStatus.state === "checking" ? "Checking…" : "Check now";
+  }
+}
+
+function paintUpdateDialog(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#update-dialog");
+  if (!dialog) return;
+  const version = displayVersion(updateStatus.latest);
+  const current = displayVersion(updateStatus.current) || displayVersion(appVersion);
+  const versionLine = document.querySelector<HTMLElement>("#update-version");
+  if (versionLine) {
+    versionLine.textContent = version
+      ? `Version ${version} is available. You are on ${current}.`
+      : "";
+  }
+  const notes = document.querySelector<HTMLElement>("#update-notes");
+  if (notes) notes.textContent = updateStatus.notes?.trim() || "No release notes.";
+  const manual = document.querySelector<HTMLElement>("#update-manual");
+  const install = document.querySelector<HTMLButtonElement>("#update-install");
+  const restart = document.querySelector<HTMLButtonElement>("#update-restart");
+  const open = document.querySelector<HTMLButtonElement>("#update-open");
+  const skip = document.querySelector<HTMLButtonElement>("#update-skip");
+  const ready = updateInstalledVersion !== null && updateInstalledVersion === updateStatus.latest;
+  if (manual) {
+    manual.hidden = updateStatus.canInstall;
+    manual.textContent = updateStatus.canInstall
+      ? ""
+      : "This copy cannot install updates itself. Open the release page and replace it when you are ready. Services and sessions stay where they are.";
+  }
+  if (install) {
+    install.hidden = !updateStatus.canInstall || ready;
+    if (!install.disabled) install.textContent = "Download and install";
+  }
+  if (restart) restart.hidden = !updateStatus.canInstall || !ready;
+  if (open) open.hidden = false;
+  if (skip) skip.hidden = !version;
+  const error = document.querySelector<HTMLElement>("#update-error");
+  if (error && !dialog.open) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+}
+
+function openUpdateDialog(): void {
+  if (updateStatus.state !== "available" || !updateStatus.latest) return;
+  const dialog = document.querySelector<HTMLDialogElement>("#update-dialog");
+  if (!dialog) return;
+  claimCover("update");
+  paintUpdateDialog();
+  const reveal = () => {
+    if (!shellCovers.has("update")) return;
+    paintUpdateDialog();
+    if (!dialog.open) dialog.showModal();
+  };
+  if (suspendedId || !activeId) {
+    reveal();
+    return;
+  }
+  void suspendForCover().then(reveal);
+}
+
+function closeUpdateDialog(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#update-dialog");
+  if (dialog?.open) dialog.close();
+  if (shellCovers.has("update")) void releaseCover("update");
+}
+
+async function checkForUpdates(openWhenFound: boolean): Promise<void> {
+  updateStatus = { ...updateStatus, state: "checking" };
+  paintUpdateChrome();
+  try {
+    const status = await invoke<UpdateStatus>("check_for_updates");
+    applyUpdateStatus(status);
+    if (openWhenFound && status.state === "available") openUpdateDialog();
+  } catch {
+    updateStatus = { ...updateStatus, state: "error" };
+    paintUpdateChrome();
+  }
+}
+
+async function downloadAndInstall(): Promise<void> {
+  const install = document.querySelector<HTMLButtonElement>("#update-install");
+  const error = document.querySelector<HTMLElement>("#update-error");
+  if (!install || install.disabled || install.hidden) return;
+  install.disabled = true;
+  install.textContent = "Downloading…";
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+  try {
+    await invoke("install_update");
+    updateInstalledVersion = updateStatus.latest;
+    install.disabled = false;
+    install.textContent = "Download and install";
+    paintUpdateDialog();
+  } catch (caught) {
+    install.disabled = false;
+    install.textContent = "Download and install";
+    if (error) {
+      error.hidden = false;
+      error.textContent = errorText(caught);
+    }
+  }
+}
+
+function applyUpdateStatus(status: UpdateStatus): void {
+  updateStatus = status;
+  paintUpdateChrome();
+  if (document.querySelector<HTMLDialogElement>("#update-dialog")?.open) paintUpdateDialog();
 }
 
 function wireEvents(): void {
@@ -2628,6 +2821,57 @@ function wireEvents(): void {
       customForm.reset();
       applySnapshot(snapshot);
     });
+  });
+  document.querySelector<HTMLButtonElement>("#update-badge")?.addEventListener("click", () => {
+    openUpdateDialog();
+  });
+  document.querySelector<HTMLButtonElement>("#check-updates")?.addEventListener("click", () => {
+    void checkForUpdates(true);
+  });
+  document.querySelector<HTMLInputElement>("#auto-update")?.addEventListener("change", (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    void invoke<Snapshot>("set_update_auto_check", { enabled: input.checked })
+      .then((snapshot) => applySnapshot(snapshot))
+      .catch(() => {
+        input.checked = updateStatus.autoCheck;
+      });
+  });
+  document.querySelector<HTMLButtonElement>("#update-later")?.addEventListener("click", () => {
+    closeUpdateDialog();
+  });
+  document.querySelector<HTMLButtonElement>("#update-close")?.addEventListener("click", () => {
+    closeUpdateDialog();
+  });
+  document.querySelector<HTMLDialogElement>("#update-dialog")?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeUpdateDialog();
+  });
+  document.querySelector<HTMLButtonElement>("#update-skip")?.addEventListener("click", () => {
+    const version = updateStatus.latest;
+    if (!version) return;
+    void invoke<Snapshot>("skip_update", { version })
+      .then((snapshot) => {
+        closeUpdateDialog();
+        applySnapshot(snapshot);
+      })
+      .catch((caught) => {
+        const error = document.querySelector<HTMLElement>("#update-error");
+        if (error) {
+          error.hidden = false;
+          error.textContent = errorText(caught);
+        }
+      });
+  });
+  document.querySelector<HTMLButtonElement>("#update-open")?.addEventListener("click", () => {
+    const url = updateStatus.url;
+    if (!url) return;
+    void invoke("open_external", { url });
+  });
+  document.querySelector<HTMLButtonElement>("#update-install")?.addEventListener("click", () => {
+    void downloadAndInstall();
+  });
+  document.querySelector<HTMLButtonElement>("#update-restart")?.addEventListener("click", () => {
+    void invoke("relaunch_app");
   });
   must<HTMLInputElement>("#close-tray").addEventListener("change", (event) => {
     const input = event.currentTarget as HTMLInputElement;

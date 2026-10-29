@@ -52,6 +52,18 @@ export interface TestSnapshot {
   trayAvailable: boolean;
   theme: "auto" | "light" | "dark";
   appVersion: string;
+  update: TestUpdate;
+}
+
+export interface TestUpdate {
+  state: "idle" | "checking" | "available" | "upToDate" | "error";
+  current: string;
+  latest: string | null;
+  notes: string | null;
+  url: string | null;
+  canInstall: boolean;
+  autoCheck: boolean;
+  lastCheckedAt: string | null;
 }
 
 export function workspace(name: string, overrides: Partial<TestWorkspace> = {}): TestWorkspace {
@@ -121,6 +133,16 @@ export function snapshot(overrides: Partial<TestSnapshot> = {}): TestSnapshot {
     trayAvailable: true,
     theme: "dark",
     appVersion: "0.5.0",
+    update: {
+      state: "idle",
+      current: "0.5.0",
+      latest: null,
+      notes: null,
+      url: null,
+      canInstall: true,
+      autoCheck: true,
+      lastCheckedAt: null,
+    },
     ...overrides,
   };
 }

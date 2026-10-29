@@ -781,6 +781,70 @@ select:focus-visible {
   display: none;
 }
 
+.update-badge {
+  color: var(--copper);
+}
+
+.update-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--copper);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 28%, transparent);
+}
+
+.dash-tools #check-updates {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  background: var(--soft-panel);
+  color: var(--text);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex: none;
+}
+
+.dash-tools #check-updates:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+#update-dialog {
+  width: min(520px, calc(100vw - var(--space-6) * 2));
+}
+
+#update-form.manager-card {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#update-form .manager-head {
+  padding: var(--space-5) var(--space-5) var(--space-5);
+}
+
+#update-form .dialog-footer {
+  flex-wrap: wrap;
+  flex: none;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.update-notes {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .rail-button.collapse {
   font-size: 22px;
   font-family: Palatino, "Palatino Linotype", Georgia, serif;
@@ -1342,6 +1406,13 @@ input[type="color"] {
 
 .dialog-footer button {
   min-width: 5.5rem;
+}
+
+/* Author `display: inline-flex` on these buttons beats the user-agent
+   `[hidden]` rule, which would leave Restart visible before an install. */
+.dialog-footer button[hidden],
+#update-manual[hidden] {
+  display: none !important;
 }
 
 .paths {

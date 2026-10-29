@@ -17,6 +17,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  updater-manifest:
+    name: Updater manifest
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Generates a sample latest.json and checks its platforms. This publishes
+      # nothing, including on a pull request.
+      - name: Dry-run latest.json
+        run: node scripts/generate-latest-json.mjs --self-test
+
   build:
     name: Build ${{ matrix.platform }}
     if: github.event_name != 'pull_request'
@@ -76,6 +91,12 @@ jobs:
         working-directory: src-tauri
         run: cargo test --locked
 
+      - name: Prepare updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash scripts/prepare-updater-key.sh
+
       - name: Build Windows portable executable
         if: matrix.platform == 'windows-latest'
         run: npm run tauri build -- --target ${{ matrix.target }} --no-bundle
@@ -100,6 +121,13 @@ jobs:
             exit 1
           fi
           cp "$INSTALLER" rustbox-windows-x64-setup.exe
+          SIG=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/nsis" -type f -name '*-setup.exe.sig' -print -quit)
+          if [ -z "$SIG" ]; then
+            echo "NSIS updater signature was not produced"
+            find "src-tauri/target/${{ matrix.target }}/release/bundle/nsis" -type f | head -n 100
+            exit 1
+          fi
+          cp "$SIG" rustbox-windows-x64-setup.exe.sig
 
       - name: Package Linux assets
         if: matrix.platform == 'ubuntu-22.04'
@@ -117,6 +145,13 @@ jobs:
           fi
           cp "$APPIMAGE" rustbox-linux-x64.AppImage
           chmod +x rustbox-linux-x64.AppImage
+          SIG=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/appimage" -type f -name '*.AppImage.sig' | head -n 1)
+          if [ -z "$SIG" ]; then
+            echo "AppImage updater signature was not produced"
+            find "src-tauri/target/${{ matrix.target }}/release/bundle/appimage" -type f | head -n 100
+            exit 1
+          fi
+          cp "$SIG" rustbox-linux-x64.AppImage.sig
 
       - uses: actions/upload-artifact@v4
         if: matrix.platform == 'windows-latest'
@@ -125,6 +160,7 @@ jobs:
           path: |
             rustbox-windows-x64.exe
             rustbox-windows-x64-setup.exe
+            rustbox-windows-x64-setup.exe.sig
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -133,6 +169,7 @@ jobs:
           name: rustbox-linux-x64
           path: |
             rustbox-linux-x64.AppImage
+            rustbox-linux-x64.AppImage.sig
             rustbox-linux-x64.tar.gz
           if-no-files-found: error
 
@@ -169,6 +206,12 @@ jobs:
         working-directory: src-tauri
         run: cargo test --locked
 
+      - name: Prepare updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash scripts/prepare-updater-key.sh
+
       - name: Build macOS app and disk image
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -188,6 +231,7 @@ jobs:
           path: |
             rustbox-macos-universal.dmg
             rustbox-macos-universal.app.tar.gz
+            rustbox-macos-universal.app.tar.gz.sig
           if-no-files-found: error
 
   release:
@@ -216,11 +260,14 @@ jobs:
           if body=$(gh release view "${{ steps.tag.outputs.name }}" --json body --jq '.body' 2>/dev/null); then
             if [ -n "${body//[$' \t\r\n']/}" ]; then
               echo "has_notes=true" >> "$GITHUB_OUTPUT"
+              printf '%s\n' "$body" > release-notes.txt
             else
               echo "has_notes=false" >> "$GITHUB_OUTPUT"
+              printf '%s\n' "Rustbox ${{ steps.tag.outputs.name }} builds." > release-notes.txt
             fi
           else
             echo "has_notes=false" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "Rustbox ${{ steps.tag.outputs.name }} builds." > release-notes.txt
           fi
 
       - uses: actions/download-artifact@v4
@@ -230,6 +277,35 @@ jobs:
 
       - name: List assets
         run: ls -la artifacts
+
+      # latest.json is uploaded only from this job, which needs every platform
+      # build. A pull request never reaches here. A missing signature fails the
+      # job before anything is published.
+      - name: Generate latest.json
+        run: |
+          set -euo pipefail
+          for file in \
+            artifacts/rustbox-windows-x64-setup.exe.sig \
+            artifacts/rustbox-linux-x64.AppImage.sig \
+            artifacts/rustbox-macos-universal.app.tar.gz.sig
+          do
+            if [ ! -s "$file" ]; then
+              echo "refusing to publish latest.json without $file"
+              exit 1
+            fi
+          done
+          VERSION=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json","utf8")).version)')
+          node scripts/generate-latest-json.mjs \
+            --version "$VERSION" \
+            --notes-file release-notes.txt \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --windows-sig artifacts/rustbox-windows-x64-setup.exe.sig \
+            --linux-sig artifacts/rustbox-linux-x64.AppImage.sig \
+            --macos-sig artifacts/rustbox-macos-universal.app.tar.gz.sig \
+            --repo "${{ github.repository }}" \
+            --tag "${{ steps.tag.outputs.name }}" \
+            --out artifacts/latest.json
+          node scripts/generate-latest-json.mjs --check artifacts/latest.json
 
       # Release Please writes the changelog into the GitHub Release before this
       # job runs. Leave those notes in place and only upload the build assets.
@@ -244,10 +320,14 @@ jobs:
           files: |
             artifacts/rustbox-windows-x64.exe
             artifacts/rustbox-windows-x64-setup.exe
+            artifacts/rustbox-windows-x64-setup.exe.sig
             artifacts/rustbox-linux-x64.AppImage
+            artifacts/rustbox-linux-x64.AppImage.sig
             artifacts/rustbox-linux-x64.tar.gz
             artifacts/rustbox-macos-universal.dmg
             artifacts/rustbox-macos-universal.app.tar.gz
+            artifacts/rustbox-macos-universal.app.tar.gz.sig
+            artifacts/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -262,10 +342,14 @@ jobs:
           files: |
             artifacts/rustbox-windows-x64.exe
             artifacts/rustbox-windows-x64-setup.exe
+            artifacts/rustbox-windows-x64-setup.exe.sig
             artifacts/rustbox-linux-x64.AppImage
+            artifacts/rustbox-linux-x64.AppImage.sig
             artifacts/rustbox-linux-x64.tar.gz
             artifacts/rustbox-macos-universal.dmg
             artifacts/rustbox-macos-universal.app.tar.gz
+            artifacts/rustbox-macos-universal.app.tar.gz.sig
+            artifacts/latest.json
           body: |
             Rustbox ${{ steps.tag.outputs.name }} builds.
 

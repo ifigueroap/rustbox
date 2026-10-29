@@ -127,7 +127,7 @@ A number past the end of the list does nothing. Ctrl+0 is left for the service p
 
 ### Tray
 
-While Rustbox is running it keeps one tray icon, drawn from the app's 32×32 icon. A copper dot and a tooltip count appear when there are unread messages (hidden while Do not disturb is on, and always excluding services that a workspace's Do not disturb has silenced). Left-click toggles the same window: show and focus, or hide. The menu has **Show window**, **Hide window**, **Workspaces** with one **Do not disturb** item per workspace, the global **Do not disturb**, **Close window to tray**, and **Quit**. Closing the window hides it when that setting is on, which is the default, and does not destroy service webviews. **Quit** and Ctrl+Q (Command+Q on macOS) are what exit the process. Starting Rustbox again while it is hidden focuses the existing window instead of opening a second copy, so a restart does not add another tray icon. On a Linux desktop whose tray does not send an activate click, use **Show window**. On macOS the icon is in the menu bar. It stays the color mark, not a template image, so it does not take on the menu bar's light or dark style. Left-click still toggles the window and the menu is on right-click. Clicking the Dock icon while the window is hidden shows it again.
+While Rustbox is running it keeps one tray icon, drawn from the app's 32×32 icon. A copper dot and a tooltip count appear when there are unread messages (hidden while Do not disturb is on, and always excluding services that a workspace's Do not disturb has silenced). Left-click toggles the same window: show and focus, or hide. The menu has **Show window**, **Hide window**, **Workspaces** with one **Do not disturb** item per workspace, the global **Do not disturb**, **Close window to tray**, **Check for updates**, and **Quit**. When a newer release is available the update item reads **Update available: vX.Y.Z** and opens the update dialog. Closing the window hides it when that setting is on, which is the default, and does not destroy service webviews. **Quit** and Ctrl+Q (Command+Q on macOS) are what exit the process. Starting Rustbox again while it is hidden focuses the existing window instead of opening a second copy, so a restart does not add another tray icon. On a Linux desktop whose tray does not send an activate click, use **Show window**. On macOS the icon is in the menu bar. It stays the color mark, not a template image, so it does not take on the menu bar's light or dark style. Left-click still toggles the window and the menu is on right-click. Clicking the Dock icon while the window is hidden shows it again.
 
 ### Where data lives
 
@@ -138,7 +138,7 @@ The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`
 | Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` | `~/Library/Application Support/app.rustbox.desktop/config.json` |
 | Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` | `~/Library/Application Support/app.rustbox.desktop/sessions/<id>/` |
 
-`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, per-service sound and notification switches, the workspace list with its names, icons, colors, and Do not disturb switches, which workspace and service were last active, whether the workspace rail is shown, Do not disturb, and whether closing the window hides to the tray. A chosen icon is stored as `local:<id>.<ext>` plus the file under the data directory's `icons` folder, not as a path on disk. On Linux and Windows, cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. On macOS, WKWebView cannot use that directory. Each service gets a website data store id from its service id, which WebKit honors on macOS 14 and later and ignores on older systems by sharing one store. Rustbox still creates the sessions folder. Removing a service deletes that folder and does not call WebKit's data-store removal, so the WebKit store can remain under `~/Library/WebKit/`. The portable Windows `.exe`, a Just me install, an All users install, the Linux AppImage, and the macOS app use these same per-user directories, not a folder next to the program file. Installing or upgrading does not wipe them.
+`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, per-service sound and notification switches, the workspace list with its names, icons, colors, and Do not disturb switches, which workspace and service were last active, whether the workspace rail is shown, Do not disturb, whether closing the window hides to the tray, and an `updates` object (`autoCheck`, `lastCheckedAt`, `skippedVersion`, `notifiedVersion`). The config `version` stays `1`. A file from before updates existed loads unchanged and checks automatically. A chosen icon is stored as `local:<id>.<ext>` plus the file under the data directory's `icons` folder, not as a path on disk. On Linux and Windows, cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. On macOS, WKWebView cannot use that directory. Each service gets a website data store id from its service id, which WebKit honors on macOS 14 and later and ignores on older systems by sharing one store. Rustbox still creates the sessions folder. Removing a service deletes that folder and does not call WebKit's data-store removal, so the WebKit store can remain under `~/Library/WebKit/`. The portable Windows `.exe`, a Just me install, an All users install, the Linux AppImage, and the macOS app use these same per-user directories, not a folder next to the program file. Installing or upgrading does not wipe them.
 
 ### User agent
 
@@ -194,6 +194,34 @@ The layout is written with `schemaVersion: 2` and additive keys only (`workspace
 
 The first published build used the bundle id `com.ifigueroa.rustbox` and stored sessions in `services/<id>`. Rustbox copies that older config forward when the current `config.json` is missing or its service list is empty, and an older file that actually has services exists. That config then goes through the same one-workspace migration. A current config that already lists services is left as it is. The search also checks `config.json.bak` beside either id, the data directory, and on Windows the LocalAppData folder. The older files are not deleted.
 
+## Updates
+
+Rustbox checks GitHub for a newer release and then waits for you. Nothing is downloaded or installed until you choose **Download and install**, and the app does not restart until you choose **Restart to update**.
+
+The only request a check makes is a GET of `latest.json` on this repository's GitHub Releases:
+
+`https://github.com/ifigueroap/rustbox/releases/latest/download/latest.json`
+
+That request carries whatever an ordinary HTTPS client sends (the address you connect from, and a user agent). Rustbox adds no account, no install id, and no other telemetry. The file is the [Tauri updater static manifest](https://v2.tauri.app/plugin/updater/): a version, notes, a date, and one signature plus download URL per platform. `darwin-x86_64` and `darwin-aarch64` both point at the universal `rustbox-macos-universal.app.tar.gz`.
+
+A check runs about 10 seconds after startup and then every 6 hours, while **Check for updates automatically** is on (the default). **Check now** on the desk, and **Check for updates** in the tray, run the same request immediately. A network failure is recorded as an error in that settings row and does not open a dialog or a notification. The app never offers a downgrade. **Skip this version** hides that version from automatic checks only; a manual check still shows it, and a newer version shows up on its own.
+
+When a release is newer, a small badge appears in the sidebar footer. The dialog lists the version and the release notes. **Download and install** uses the updater plugin, which checks the minisign signature before replacing the app bundle. **Open release page** opens the GitHub release in your browser. **Later** dismisses the dialog and leaves the badge. Service webviews are hidden while the dialog is open, the same way the workspace editor is, so the dialog is not painted underneath a service.
+
+These installs can replace themselves:
+
+- Windows NSIS setup (`rustbox-windows-x64-setup.exe`)
+- Linux AppImage (`rustbox-linux-x64.AppImage`)
+- macOS app (`rustbox-macos-universal.app.tar.gz`, from the disk image or the archive once it is the signed updater archive)
+
+The portable Windows executable (`rustbox-windows-x64.exe`) and the Linux tar.gz binary (`rustbox-linux-x64.tar.gz`) are notify-only. Their dialog offers **Open release page** so you can replace the file yourself. An update never deletes services or sessions; those stay in the per-user config and session directories. On Windows, leave the installer's **Delete app data** box unchecked.
+
+The first time a version is found by an automatic check, Rustbox shows one native notification, and not again for that version. Do not disturb suppresses it until a later check runs with Do not disturb off.
+
+Updater artifacts are signed with the minisign key pair whose public half is in `src-tauri/tauri.conf.json`. The private key and its password live only in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (the password is empty). A local `tauri build` that produces bundles needs that private key in the environment or the bundler stops. `tauri dev` does not.
+
+The published macOS build is ad-hoc signed unless Apple signing secrets are configured. Gatekeeper quarantines that download. The first time, right-click Rustbox, choose **Open**, and confirm.
+
 ## Releases
 
 Versions follow [Conventional Commits](https://www.conventionalcommits.org/). `.github/workflows/pull-request.yml` checks the pull request title. Squash-merge so that title becomes the commit on `master`. [Release Please](https://github.com/googleapis/release-please) reads that message.
@@ -211,11 +239,11 @@ On every push to `master`, `.github/workflows/release-please.yml` runs Release P
 
 `release.yml` also runs when a `v*` tag is pushed and on manual `workflow_dispatch`. Those runs build:
 
-- `rustbox-windows-x64-setup.exe` (NSIS installer) and `rustbox-windows-x64.exe` (portable) on `windows-latest`
-- `rustbox-linux-x64.AppImage` and `rustbox-linux-x64.tar.gz` on `ubuntu-22.04`
-- `rustbox-macos-universal.dmg` and `rustbox-macos-universal.app.tar.gz` on `macos-latest` (one universal binary, Apple Silicon and Intel)
+- `rustbox-windows-x64-setup.exe` (NSIS installer) and its `.sig`, plus `rustbox-windows-x64.exe` (portable, notify-only) on `windows-latest`
+- `rustbox-linux-x64.AppImage` and its `.sig`, plus `rustbox-linux-x64.tar.gz` (notify-only) on `ubuntu-22.04`
+- `rustbox-macos-universal.dmg` and `rustbox-macos-universal.app.tar.gz` with its `.sig` on `macos-latest` (one universal binary, Apple Silicon and Intel)
 
-and upload them to the GitHub Release. A pull request runs the macOS job only (tests, the universal disk image, and the app archive) and does not publish. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets.
+and upload them to the GitHub Release, along with `latest.json` once every platform build has succeeded. The macOS archive that is published is the archive Tauri signed, so the signature matches the bytes. A pull request runs the macOS job (tests, the universal disk image, and the signed app archive) and a dry run of the `latest.json` generator, and does not publish. If the repository signing key is missing on that pull request, the macOS job mints an ephemeral key so the bundler can still emit `.sig` files. A tag or manual run refuses to build updater artifacts without `TAURI_SIGNING_PRIVATE_KEY`. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets. Those notes are also copied into `latest.json`.
 
 The Cargo version lines Release Please rewrites are marked with `x-release-please-version`. Keep that comment on the package version in `src-tauri/Cargo.toml` and on the `rustbox` version in `src-tauri/Cargo.lock`. `cargo update` rewrites the lockfile and drops the comment; put it back on the `rustbox` version line before merging. `node scripts/check-release-versions.mjs` checks that the versions match and that both markers are present.
 
@@ -241,4 +269,5 @@ A tag created with `GITHUB_TOKEN` does not start `release.yml` on its own. Relea
 - **Popup OAuth is best-effort.** Redirect sign-in stays inside the webview. A login flow that depends on `window.opener` in a popup can still fail because the popup does not share the service session.
 - **External-link handling is click and `window.open` based.** A script that assigns `location` to another site stays in the webview, so a login redirect is not kicked out to the browser.
 - **Downloads, camera, microphone, and screen sharing** use whatever the system webview allows. They were not exercised in testing.
+- **The updater has not been run against a real GitHub Release.** The check, the dialog, and `latest.json` generation are covered by unit tests. Replacing an installed NSIS app, AppImage, or macOS app, verifying the signature with the repository private key, and the native notification are not. After the next release is published, install the previous version, open it, and use **Check now** (or wait about 10 seconds). The badge should name the new version. **Download and install**, then **Restart to update**, should come back on that version with services and sessions still there. The portable exe and the Linux tar.gz should offer only **Open release page**.
 - **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, loading Telegram Web, and switching between three workspaces with a shared and an all-pinned service were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, signing in to WhatsApp, Slack, or the other presets, or the tray's per-workspace Do not disturb items. The Windows and macOS builds are produced by CI and were not run.

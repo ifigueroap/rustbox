@@ -21,6 +21,7 @@ static LAST_TOGGLE: Mutex<Option<Instant>> = Mutex::new(None);
 struct TrayMenu {
     dnd: CheckMenuItem<Wry>,
     close_to_tray: CheckMenuItem<Wry>,
+    updates: MenuItem<Wry>,
     show: MenuItem<Wry>,
     hide: MenuItem<Wry>,
     /// One check item per workspace, in rail order. Rebuilt when the
@@ -83,6 +84,9 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         .checked(close_on)
         .build(app)
         .map_err(|err| err.to_string())?;
+    let updates = MenuItemBuilder::with_id("tray-updates", "Check for updates")
+        .build(app)
+        .map_err(|err| err.to_string())?;
     let quit = MenuItemBuilder::with_id("tray-quit", "Quit")
         .build(app)
         .map_err(|err| err.to_string())?;
@@ -106,6 +110,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
             &workspace_menu,
             &dnd,
             &close_to_tray,
+            &updates,
             &separator_after,
             &quit,
         ],
@@ -144,6 +149,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 let next = !flag(app, |config| config.close_to_tray);
                 let _ = store_close_to_tray(app, next);
             }
+            "tray-updates" => open_update_from_tray(app),
             "tray-quit" => request_quit(app),
             _ => {}
         }
@@ -167,6 +173,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
     app.manage(TrayMenu {
         dnd,
         close_to_tray,
+        updates,
         show: show_item,
         hide: hide_item,
         workspaces: Mutex::new(workspaces),
@@ -236,6 +243,11 @@ pub fn sync(app: &AppHandle) {
     let _ = menu
         .close_to_tray
         .set_checked(flag(app, |config| config.close_to_tray));
+    let update = crate::updates::current_status();
+    let _ = menu.updates.set_text(crate::updates::tray_menu_label(
+        update.state,
+        update.latest.as_deref(),
+    ));
     let open = window_is_open(app);
     let _ = menu.show.set_enabled(!open);
     let _ = menu.hide.set_enabled(open);
@@ -328,6 +340,26 @@ pub fn hide(app: &AppHandle) -> Result<(), String> {
     window.hide().map_err(|err| err.to_string())?;
     sync(app);
     Ok(())
+}
+
+/// Show the window, then either open the update dialog or run a manual check.
+/// A check that finds a release opens the same dialog.
+fn open_update_from_tray(app: &AppHandle) {
+    let _ = reveal(app);
+    let available =
+        crate::updates::current_status().state == crate::updates::UpdatePhase::Available;
+    if available {
+        let _ = app.emit("open-update-dialog", ());
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let status = crate::run_update_check(&app, crate::updates::CheckKind::Manual).await;
+        if status.state == crate::updates::UpdatePhase::Available {
+            let _ = reveal(&app);
+            let _ = app.emit("open-update-dialog", ());
+        }
+    });
 }
 
 /// The shell and each service share one native window. `get_webview_window`

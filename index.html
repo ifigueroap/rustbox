@@ -78,6 +78,16 @@
         </button>
         <div class="rail-footer">
           <button
+            id="update-badge"
+            class="rail-button update-badge"
+            type="button"
+            title="Update available"
+            aria-label="Update available"
+            hidden
+          >
+            <span class="update-dot" aria-hidden="true"></span>
+          </button>
+          <button
             id="collapse-button"
             class="rail-button collapse"
             type="button"
@@ -135,6 +145,12 @@
                 <input id="close-tray" type="checkbox" checked />
                 <span>Close to tray</span>
               </label>
+              <label class="close-tray" title="Rustbox asks GitHub whether a newer release exists. Nothing is installed until you choose to, and no account or identifier is sent.">
+                <input id="auto-update" type="checkbox" checked />
+                <span>Check for updates automatically</span>
+              </label>
+              <button id="check-updates" type="button">Check now</button>
+              <p id="update-checked" class="version">Last checked: never</p>
               <label class="close-tray" title="Show the workspace rail beside the sidebar.">
                 <input id="rail-toggle" type="checkbox" checked />
                 <span>Workspace rail</span>
@@ -265,6 +281,31 @@
         <div class="dialog-footer">
           <button id="workspace-cancel" type="button">Cancel</button>
           <button id="workspace-save" class="primary" type="submit" disabled>Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="update-dialog">
+      <form id="update-form" class="manager-card" method="dialog">
+        <header class="manager-head">
+          <div>
+            <p class="eyebrow">update</p>
+            <h2 id="update-title">Update available</h2>
+          </div>
+          <button id="update-close" class="text-button" type="button">Close</button>
+        </header>
+        <div class="dialog-body">
+          <p id="update-version"></p>
+          <p id="update-manual" class="field-hint" hidden></p>
+          <div id="update-notes" class="update-notes"></div>
+          <p id="update-error" class="error" hidden></p>
+        </div>
+        <div class="dialog-footer">
+          <button id="update-later" type="button">Later</button>
+          <button id="update-skip" type="button">Skip this version</button>
+          <button id="update-open" type="button">Open release page</button>
+          <button id="update-install" class="primary" type="button">Download and install</button>
+          <button id="update-restart" class="primary" type="button" hidden>Restart to update</button>
         </div>
       </form>
     </dialog>
