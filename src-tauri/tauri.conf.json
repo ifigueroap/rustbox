@@ -41,6 +41,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY1NTZBOEEzQTc4NTgxQUYKUldTdmdZV25vNmhXOWQ2QjErNlVjSTluOVdJNFJrdVl3YTJNdFJRVHlYSXpxTTc2d09uQy9uNngK",
+      "endpoints": [
+        "https://github.com/ifigueroap/rustbox/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

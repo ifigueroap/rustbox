@@ -5,10 +5,13 @@ mod policy;
 mod services;
 mod shortcuts;
 mod tray;
+mod updates;
 
 use config::{NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
 use services::{RuntimeState, Snapshot};
 use tauri::{Manager, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
+use updates::UpdateStatus;
 
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> Snapshot {
@@ -265,6 +268,50 @@ fn reload_service(app: tauri::AppHandle, id: String) -> Result<Snapshot, String>
 }
 
 #[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
+    Ok(run_update_check(&app, updates::CheckKind::Manual).await)
+}
+
+#[tauri::command]
+fn set_update_auto_check(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.updates.auto_check = enabled;
+        Ok(())
+    })?;
+    let mut status = updates::current_status();
+    status.auto_check = enabled;
+    updates::set_status(status);
+    publish_update(&app);
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn skip_update(app: tauri::AppHandle, version: String) -> Result<Snapshot, String> {
+    let version =
+        updates::normalize_version(&version).ok_or_else(|| "invalid version".to_string())?;
+    services::mutate(&app, |config| {
+        config.updates.skipped_version = Some(version.clone());
+        Ok(())
+    })?;
+    let Some(status) = updates::after_skip(&updates::current_status(), &version) else {
+        return Err("invalid version".into());
+    };
+    updates::set_status(status);
+    publish_update(&app);
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    updates::download_and_install(&app).await
+}
+
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
+#[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let url = services::validate_external_url(&url)?;
     policy::open_external_detached(&url);
@@ -314,6 +361,7 @@ pub fn run() {
             });
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = RuntimeState::load(app.handle()).map_err(box_err)?;
             app.manage(state);
@@ -339,6 +387,16 @@ pub fn run() {
             if let Err(err) = tray::install(app.handle()) {
                 eprintln!("rustbox: tray icon was not created: {err}");
             }
+            let can_install = updates::supports_self_update(updates::detect_bundle_kind());
+            let auto_check = services::lock(&app.state::<RuntimeState>().config)
+                .updates
+                .auto_check;
+            updates::set_status(updates::UpdateStatus::idle(
+                env!("CARGO_PKG_VERSION"),
+                can_install,
+                auto_check,
+            ));
+            spawn_update_schedule(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -369,6 +427,11 @@ pub fn run() {
             apply_service_shortcut,
             reload_service,
             open_external,
+            check_for_updates,
+            set_update_auto_check,
+            skip_update,
+            install_update,
+            relaunch_app,
             forward_notification,
             report_workspace_icon,
             import_local_icon,
@@ -394,4 +457,113 @@ pub fn run() {
 
 fn box_err(err: String) -> Box<dyn std::error::Error> {
     Box::new(std::io::Error::other(err))
+}
+
+pub(crate) async fn run_update_check(
+    app: &tauri::AppHandle,
+    kind: updates::CheckKind,
+) -> UpdateStatus {
+    let Some(_guard) = updates::CheckGuard::try_acquire() else {
+        return services::snapshot(app).update;
+    };
+    let (skipped, notified, do_not_disturb, auto_check, last_checked_at) = {
+        let state = app.state::<RuntimeState>();
+        let config = services::lock(&state.config);
+        (
+            config.updates.skipped_version.clone(),
+            config.updates.notified_version.clone(),
+            config.do_not_disturb,
+            config.updates.auto_check,
+            config.updates.last_checked_at.clone(),
+        )
+    };
+    let can_install = updates::supports_self_update(updates::detect_bundle_kind());
+    let mut checking = updates::begin_check(&updates::current_status());
+    checking.current = app.package_info().version.to_string();
+    checking.can_install = can_install;
+    checking.auto_check = auto_check;
+    checking.last_checked_at = last_checked_at.clone();
+    updates::set_status(checking);
+    publish_update(app);
+
+    let probe = updates::probe(app).await;
+    let decision = updates::decide(
+        &updates::CheckContext {
+            current: app.package_info().version.to_string(),
+            kind,
+            skipped_version: skipped,
+            notified_version: notified,
+            do_not_disturb,
+            can_install,
+            auto_check,
+            last_checked_at,
+            now: updates::rfc3339_now(),
+        },
+        probe,
+    );
+    if decision.record_checked_at || decision.persist_notified {
+        let _ = services::mutate(app, |config| {
+            if decision.record_checked_at {
+                config.updates.last_checked_at = decision.status.last_checked_at.clone();
+            }
+            if decision.persist_notified {
+                config.updates.notified_version = decision.notified_version.clone();
+            }
+            Ok(())
+        });
+    }
+    updates::set_status(decision.status.clone());
+    publish_update(app);
+    if decision.notify {
+        notify_update(app, decision.status.latest.as_deref().unwrap_or(""));
+    }
+    tray::sync(app);
+    services::snapshot(app).update
+}
+
+fn publish_update(app: &tauri::AppHandle) {
+    let snapshot = services::snapshot(app);
+    let _ = tauri::Emitter::emit(app, "update-status", &snapshot.update);
+    let _ = tauri::Emitter::emit(app, "app-snapshot", &snapshot);
+}
+
+fn notify_update(app: &tauri::AppHandle, version: &str) {
+    let version = version.trim().trim_start_matches('v');
+    if version.is_empty() {
+        return;
+    }
+    let result = app
+        .notification()
+        .builder()
+        .title("Rustbox update")
+        .body(format!("Version {version} is available."))
+        .show();
+    if result.is_err() {
+        eprintln!("rustbox: could not show the update notification");
+    }
+}
+
+fn spawn_update_schedule(app: tauri::AppHandle) {
+    if let Err(err) = std::thread::Builder::new()
+        .name("rustbox-updates".into())
+        .spawn(move || {
+            let mut iteration = 0u64;
+            loop {
+                std::thread::sleep(updates::schedule_delay(iteration));
+                iteration = iteration.saturating_add(1);
+                let enabled = services::lock(&app.state::<RuntimeState>().config)
+                    .updates
+                    .auto_check;
+                if !enabled {
+                    continue;
+                }
+                tauri::async_runtime::block_on(run_update_check(
+                    &app,
+                    updates::CheckKind::Automatic,
+                ));
+            }
+        })
+    {
+        eprintln!("rustbox: update checks were not scheduled: {err}");
+    }
 }

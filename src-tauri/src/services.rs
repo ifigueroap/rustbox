@@ -17,6 +17,7 @@ use crate::config::{
 };
 use crate::policy::{self, PopupDecision};
 use crate::shortcuts::{self, ShortcutDestination};
+use crate::updates::{self, UpdateStatus};
 
 pub struct RuntimeState {
     pub config_path: PathBuf,
@@ -88,6 +89,7 @@ pub struct Snapshot {
     pub tray_available: bool,
     pub theme: Theme,
     pub app_version: String,
+    pub update: UpdateStatus,
 }
 
 #[derive(Clone, Serialize)]
@@ -201,6 +203,12 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         tray_available: app.tray_by_id("rustbox").is_some(),
         theme: config.theme,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        update: {
+            let mut update = updates::apply_settings(&updates::current_status(), &config.updates);
+            update.current = env!("CARGO_PKG_VERSION").to_string();
+            update.can_install = updates::supports_self_update(updates::detect_bundle_kind());
+            update
+        },
     }
 }
 

@@ -16,4 +16,13 @@ if [ -z "$APP" ]; then
   find "$BUNDLE" | head -n 100
   exit 1
 fi
-COPYFILE_DISABLE=1 tar -C "$BUNDLE/macos" -czf rustbox-macos-universal.app.tar.gz "$(basename "$APP")"
+SIGNED=$(find "$BUNDLE/macos" -maxdepth 1 -type f -name '*.app.tar.gz' ! -name '*.sig' | head -n 1)
+SIG=$(find "$BUNDLE/macos" -maxdepth 1 -type f -name '*.app.tar.gz.sig' | head -n 1)
+if [ -z "$SIGNED" ] || [ -z "$SIG" ]; then
+  echo "signed macOS updater archive was not produced"
+  find "$BUNDLE/macos" -maxdepth 2 | head -n 100
+  exit 1
+fi
+# Publish the archive Tauri signed. Repacking it would invalidate the signature.
+cp "$SIGNED" rustbox-macos-universal.app.tar.gz
+cp "$SIG" rustbox-macos-universal.app.tar.gz.sig

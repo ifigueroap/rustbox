@@ -34,6 +34,11 @@
     "allow-set-workspace-rail-hidden",
     "allow-apply-service-shortcut",
     "allow-reload-service",
-    "allow-open-external"
+    "allow-open-external",
+    "allow-check-for-updates",
+    "allow-set-update-auto-check",
+    "allow-skip-update",
+    "allow-install-update",
+    "allow-relaunch-app"
   ]
 }

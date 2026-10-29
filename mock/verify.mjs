@@ -367,6 +367,62 @@ await settle();
 await shot("shell-overlay-09-footer-expanded-dark", "dark");
 await shot("shell-overlay-10-footer-expanded-light", "light");
 
+// --- Updates: badge, settings, dialog ---------------------------------------
+await page.click("#brand-button");
+await settle();
+await page.evaluate(() => {
+  const mock = window.__rustboxMock;
+  mock.state.update = {
+    state: "available",
+    current: "0.5.0",
+    latest: "0.9.0",
+    notes: "A signed release you install yourself.\nSessions stay on disk.",
+    url: "https://github.com/ifigueroap/rustbox/releases/tag/v0.9.0",
+    canInstall: true,
+    autoCheck: true,
+    lastCheckedAt: "2026-10-29T01:00:00Z",
+  };
+  mock.shell.applyShellSnapshot(mock.snapshot());
+});
+await settle();
+s = await state();
+const updateChrome = await page.evaluate(() => ({
+  badgeHidden: document.querySelector("#update-badge")?.hidden,
+  badgeLabel: document.querySelector("#update-badge")?.getAttribute("aria-label"),
+  autoChecked: document.querySelector("#auto-update")?.checked,
+  checkedText: document.querySelector("#update-checked")?.textContent,
+  bannerHidden: document.querySelector("#app-error")?.hidden,
+}));
+check("updates: sidebar badge names the release", updateChrome.badgeHidden === false && updateChrome.badgeLabel === "Update available: v0.9.0", updateChrome);
+check("updates: automatic checks default on", updateChrome.autoChecked === true, updateChrome.checkedText);
+check("updates: settings name the last check without a banner", updateChrome.bannerHidden === true && updateChrome.checkedText.includes("Last checked"), updateChrome.checkedText);
+await shot("update-01-badge-settings-dark", "dark");
+await shot("update-02-badge-settings-light", "light");
+
+const serviceIdForUpdate = await page.evaluate(() => window.__rustboxMock.state.services[0].id);
+await page.evaluate((id) => {
+  const row = document.querySelector(`#service-list .svc`);
+  row?.click();
+  return id;
+}, serviceIdForUpdate);
+await settle();
+await page.click("#update-badge");
+await settle();
+const updateDialog = await page.evaluate(() => ({
+  open: document.querySelector("#update-dialog")?.open,
+  version: document.querySelector("#update-version")?.textContent,
+  notes: document.querySelector("#update-notes")?.textContent,
+  install: document.querySelector("#update-install")?.textContent,
+  restartDisplay: getComputedStyle(document.querySelector("#update-restart")).display,
+  activeId: window.__rustboxMock.state.activeId,
+  errorHidden: document.querySelector("#app-error")?.hidden,
+}));
+check("updates: dialog opens above a suspended service", updateDialog.open === true && updateDialog.activeId === null, updateDialog);
+check("updates: dialog shows the version and install action", updateDialog.version?.includes("0.9.0") && updateDialog.install === "Download and install" && updateDialog.restartDisplay === "none", updateDialog);
+check("updates: dialog is not the error banner", updateDialog.errorHidden === true && updateDialog.notes?.includes("Sessions stay"));
+await shot("update-03-dialog-dark", "dark");
+await shot("update-04-dialog-light", "light");
+
 console.log("\n--- console messages ---");
 for (const line of logs) console.log(line);
 console.log(`\n${results.length - failures.length}/${results.length} checks passed`);

@@ -71,6 +71,16 @@ const state = {
   trayAvailable: true,
   theme: "auto",
   appVersion: "0.5.0",
+  update: {
+    state: "idle",
+    current: "0.5.0",
+    latest: null,
+    notes: null,
+    url: null,
+    canInstall: true,
+    autoCheck: true,
+    lastCheckedAt: null,
+  },
 };
 
 function recompute() {
@@ -228,7 +238,27 @@ window.__TAURI_INTERNALS__ = {
       case "set_close_to_tray":
       case "set_service_sound":
       case "set_service_notifications":
+      case "relaunch_app":
         return Promise.resolve(snapshot());
+      case "set_update_auto_check":
+        state.update.autoCheck = args.enabled;
+        return Promise.resolve(snapshot());
+      case "check_for_updates":
+        state.update = {
+          ...state.update,
+          state: "available",
+          latest: "0.9.0",
+          notes: "A quieter tray and a signed update.",
+          url: "https://github.com/ifigueroap/rustbox/releases/tag/v0.9.0",
+          canInstall: true,
+          lastCheckedAt: "2026-10-29T01:00:00Z",
+        };
+        return Promise.resolve(state.update);
+      case "skip_update":
+        state.update = { ...state.update, state: "idle", notes: null, url: null };
+        return Promise.resolve(snapshot());
+      case "install_update":
+        return Promise.resolve(null);
       case "apply_service_shortcut":
         return Promise.resolve(snapshot());
       default:
