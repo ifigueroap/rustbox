@@ -34,6 +34,26 @@ pub fn hide_instead_of_quit(close_to_tray: bool, tray_ready: bool, quitting: boo
     close_to_tray && tray_ready && !quitting
 }
 
+/// What the close button does after the hide attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseResolution {
+    /// The window was hidden. Call `prevent_close` and keep the process running.
+    Hide,
+    /// Let the close finish so the window is destroyed and the app exits.
+    Exit,
+}
+
+/// Cancel the close only when the app meant to hide and the hide succeeded.
+/// A failed hide resolves to [`CloseResolution::Exit`], so the window cannot
+/// stay open after `prevent_close` with nothing else happening.
+pub fn resolve_close(intent_hide: bool, hide_succeeded: bool) -> CloseResolution {
+    if intent_hide && hide_succeeded {
+        CloseResolution::Hide
+    } else {
+        CloseResolution::Exit
+    }
+}
+
 pub fn tooltip(unread: u32) -> String {
     match unread {
         0 => "Rustbox".to_string(),
@@ -306,9 +326,7 @@ pub fn store_workspace_dnd(
 }
 
 pub fn reveal(app: &AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+    let window = main_window(app)?;
     window.unminimize().map_err(|err| err.to_string())?;
     window.show().map_err(|err| err.to_string())?;
     window.set_focus().map_err(|err| err.to_string())?;
@@ -318,9 +336,7 @@ pub fn reveal(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn hide(app: &AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+    let window = main_window(app)?;
     window.hide().map_err(|err| err.to_string())?;
     sync(app);
     Ok(())
@@ -344,6 +360,15 @@ fn open_update_from_tray(app: &AppHandle) {
             let _ = app.emit("open-update-dialog", ());
         }
     });
+}
+
+/// The shell and each service share one native window. `get_webview_window`
+/// only resolves a window whose webviews all use that window's label, so it
+/// becomes `None` once a child service webview exists. Hide, show, and focus
+/// have to go through the window itself.
+fn main_window(app: &AppHandle) -> Result<tauri::Window, String> {
+    app.get_window("main")
+        .ok_or_else(|| "main window is not available".to_string())
 }
 
 pub fn should_hide_on_close(app: &AppHandle) -> bool {
@@ -389,7 +414,7 @@ fn toggle(app: &AppHandle) {
 }
 
 fn window_is_open(app: &AppHandle) -> bool {
-    app.get_webview_window("main").is_some_and(|window| {
+    main_window(app).is_ok_and(|window| {
         window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false)
     })
 }
@@ -465,6 +490,38 @@ mod tests {
         assert!(!hide_instead_of_quit(false, true, false));
         assert!(!hide_instead_of_quit(true, false, false));
         assert!(!hide_instead_of_quit(true, true, true));
+    }
+
+    #[test]
+    fn close_decision_hides_only_when_the_tray_can_take_the_window() {
+        assert_eq!(
+            resolve_close(hide_instead_of_quit(true, true, false), true),
+            CloseResolution::Hide
+        );
+        assert_eq!(
+            resolve_close(hide_instead_of_quit(false, true, false), true),
+            CloseResolution::Exit
+        );
+        assert_eq!(
+            resolve_close(hide_instead_of_quit(true, false, false), true),
+            CloseResolution::Exit
+        );
+        assert_eq!(
+            resolve_close(hide_instead_of_quit(true, true, true), true),
+            CloseResolution::Exit
+        );
+    }
+
+    #[test]
+    fn failed_hide_does_not_swallow_the_close() {
+        let intent_hide = hide_instead_of_quit(true, true, false);
+        assert!(intent_hide);
+        assert_eq!(
+            resolve_close(intent_hide, false),
+            CloseResolution::Exit,
+            "a failed hide must let the window close and the app exit"
+        );
+        assert_eq!(resolve_close(false, false), CloseResolution::Exit);
     }
 
     #[test]
