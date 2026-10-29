@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/ifigueroap/rustbox/compare/v0.6.0...v0.7.0) (2026-10-29)
+
+
+### Features
+
+* check for updates and let the user install ([#23](https://github.com/ifigueroap/rustbox/issues/23)) ([4ba3963](https://github.com/ifigueroap/rustbox/commit/4ba3963795365e1e509b64239098466e89a791ea))
+
+
+### Bug Fixes
+
+* close the window when hiding to the tray fails ([#22](https://github.com/ifigueroap/rustbox/issues/22)) ([b25b2d4](https://github.com/ifigueroap/rustbox/commit/b25b2d451804e2f5505da80d1bd9eb1ae3d243ec))
+
 ## [0.6.0](https://github.com/ifigueroap/rustbox/compare/v0.5.1...v0.6.0) (2026-10-28)
 
 
