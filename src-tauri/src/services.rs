@@ -1095,7 +1095,7 @@ fn main_window(app: &AppHandle) -> Result<tauri::Window, String> {
 }
 
 fn set_window_title(app: &AppHandle, service_name: Option<&str>) {
-    let Some(window) = app.get_webview_window("main") else {
+    let Ok(window) = main_window(app) else {
         return;
     };
     let title = match service_name {

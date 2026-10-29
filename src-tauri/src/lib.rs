@@ -318,16 +318,27 @@ pub fn run() {
             let state = RuntimeState::load(app.handle()).map_err(box_err)?;
             app.manage(state);
             let handle = app.handle().clone();
-            #[cfg(target_os = "linux")]
             if let Some(window) = app.get_window("main") {
+                #[cfg(target_os = "linux")]
                 linux_host::install(&window);
-            }
-            if let Some(window) = app.get_webview_window("main") {
                 window.on_window_event(move |event| match event {
                     WindowEvent::CloseRequested { api, .. } => {
-                        if tray::should_hide_on_close(&handle) {
+                        let intent_hide = tray::should_hide_on_close(&handle);
+                        let hide_succeeded = if intent_hide {
+                            match tray::hide(&handle) {
+                                Ok(()) => true,
+                                Err(err) => {
+                                    eprintln!("rustbox: could not hide the window on close: {err}");
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        };
+                        if tray::resolve_close(intent_hide, hide_succeeded)
+                            == tray::CloseResolution::Hide
+                        {
                             api.prevent_close();
-                            let _ = tray::hide(&handle);
                         }
                     }
                     WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
@@ -335,6 +346,8 @@ pub fn run() {
                     }
                     _ => {}
                 });
+            } else {
+                eprintln!("rustbox: main window is missing; the close button cannot be handled");
             }
             if let Err(err) = tray::install(app.handle()) {
                 eprintln!("rustbox: tray icon was not created: {err}");
