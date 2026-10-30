@@ -837,6 +837,55 @@ select:focus-visible {
   padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
+/* The confirm dialog fills the viewport so a backdrop click lands on the
+   dialog element itself (WebKit does not retarget ::backdrop clicks). The
+   card in the middle is the visible prompt. */
+#confirm-dialog {
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  background: transparent;
+}
+
+#confirm-dialog[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+#confirm-form.manager-card {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  width: min(480px, 100%);
+  max-height: calc(100vh - var(--space-6) * 2);
+}
+
+#confirm-form .manager-head {
+  padding: var(--space-5) var(--space-5) 0;
+}
+
+#confirm-form .dialog-body {
+  padding-top: var(--space-4);
+}
+
+#confirm-form .dialog-footer {
+  flex: none;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+#confirm-message {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
 .update-notes {
   margin: 0;
   white-space: pre-wrap;
@@ -1062,6 +1111,15 @@ select:focus-visible {
 #server-url-add:hover:not(:disabled),
 #custom-add:hover:not(:disabled) {
   background: var(--copper-hover);
+}
+
+.dialog-footer .primary.danger {
+  background: var(--danger);
+  color: #fff8ee;
+}
+
+.dialog-footer .primary.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 86%, white);
 }
 
 .card-actions button:hover:not(:disabled):not(.open),

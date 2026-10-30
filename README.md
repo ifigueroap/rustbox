@@ -106,7 +106,7 @@ Right-click a service in the sidebar to turn that service's sound or its badges 
 
 - Presets: WhatsApp Web, Slack, Discord, Zulip, Telegram Web, Grok, ChatGPT, and Claude. Each preset uses a brand icon bundled with the app, so the sidebar still shows it offline. Slack and Zulip use their custom workspace or organization icon when available. Zulip asks for your server URL, for example `https://your-org.zulipchat.com`.
 - A custom service is a name, an `http` or `https` URL, an optional icon, an accent color, and a user-agent setting. The icon can be an image URL, a short emoji, or a PNG, SVG, ICO, JPG, or WebP file. A chosen file is copied into the app data `icons` folder; Rustbox does not keep the original path. **Use preset or favicon** clears a custom icon. **Accent color** is the sidebar highlight and the letter fallback, with a hex field and **Use brand default**. A full-color icon keeps its own picture. With no icon of its own, Rustbox tries that site's favicon and falls back to a letter.
-- Drag icons in the sidebar to reorder. Remove deletes that service's saved session.
+- Drag icons in the sidebar to reorder. **Remove** asks in a Rustbox dialog, then deletes that service's saved session.
 
 Adding the same preset twice creates a second isolated account (`WhatsApp` and `WhatsApp 2`).
 
@@ -172,7 +172,7 @@ The rail is a 48px strip. It hides itself while you have only one workspace, and
 
 While the rail is collapsed, the top of the sidebar shows the active workspace as a compact chip: its initial or icon, its name, and a caret. Click it for a popup listing every workspace with its unread badge and Do not disturb mark, plus **New workspace**. The list is drawn by the shell, so Rustbox hides the open service webview while it is up — a child webview would paint over it — and puts that service back when the list closes (click outside, Escape, or a choice). Click a row to switch; right-click one for the same menu the rail icons offer. **Ctrl/Cmd+Alt+1..9** keeps switching by position whether the rail is showing or not.
 
-Rename, icon and color, new workspace, include services, and delete confirmation use the same hide-and-restore step, including when they are opened from the rail or the chip while a service is showing. The service comes back when the dialog closes. The rail's **+** is **New workspace**; the sidebar's **+** is **Add a service**.
+Rename, icon and color, new workspace, include services, and delete confirmation use the same hide-and-restore step, including when they are opened from the rail or the chip while a service is showing. The service comes back when the dialog closes. **Delete workspace** and **Remove** use that same dialog. The title is the question (**Delete workspace?** or **Remove service?**), **Cancel** is focused, and the confirming button is **Delete** or **Remove** in the danger color. Escape, Cancel, Close, or a click on the dimmed backdrop leaves the workspace and its services in place. Enter confirms. The rail's **+** is **New workspace**; the sidebar's **+** is **Add a service**.
 
 ### Starting a workspace from existing services
 

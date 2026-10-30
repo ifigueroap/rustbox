@@ -434,6 +434,7 @@ export function mountShell(): void {
   suspendedId = null;
   workspaceSwitcherOpen = false;
   shellChain = Promise.resolve();
+  abandonConfirmDialog();
   wireEvents();
 }
 
@@ -498,6 +499,160 @@ function releaseCover(key: string): Promise<void> {
   });
 }
 
+interface ConfirmDialogOptions {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+}
+
+interface ConfirmNodes {
+  dialog: HTMLDialogElement;
+  form: HTMLFormElement;
+  title: HTMLElement;
+  message: HTMLElement;
+  accept: HTMLButtonElement;
+  cancel: HTMLButtonElement;
+}
+
+let confirmChain: Promise<unknown> = Promise.resolve();
+let confirmPending: ((accepted: boolean) => void) | null = null;
+let confirmGeneration = 0;
+
+function confirmNodes(): ConfirmNodes | null {
+  const dialog = document.querySelector<HTMLDialogElement>("#confirm-dialog");
+  const form = document.querySelector<HTMLFormElement>("#confirm-form");
+  const title = document.querySelector<HTMLElement>("#confirm-title");
+  const message = document.querySelector<HTMLElement>("#confirm-message");
+  const accept = document.querySelector<HTMLButtonElement>("#confirm-accept");
+  const cancel = document.querySelector<HTMLButtonElement>("#confirm-cancel");
+  if (!dialog || !form || !title || !message || !accept || !cancel) return null;
+  return { dialog, form, title, message, accept, cancel };
+}
+
+/** Drop a prompt left open by a previous document. Resolves it as cancel. */
+function abandonConfirmDialog(): void {
+  confirmGeneration += 1;
+  const pending = confirmPending;
+  confirmPending = null;
+  confirmChain = Promise.resolve();
+  const dialog = document.querySelector<HTMLDialogElement>("#confirm-dialog");
+  if (dialog?.open) dialog.close();
+  pending?.(false);
+}
+
+function settleConfirm(accepted: boolean): void {
+  const resolve = confirmPending;
+  if (!resolve) return;
+  confirmPending = null;
+  const dialog = document.querySelector<HTMLDialogElement>("#confirm-dialog");
+  if (dialog?.open) dialog.close();
+  resolve(accepted);
+}
+
+function openConfirmDialog(options: ConfirmDialogOptions, generation: number): Promise<boolean> {
+  const nodes = confirmNodes();
+  if (!nodes || generation !== confirmGeneration) return Promise.resolve(false);
+  nodes.title.textContent = options.title;
+  nodes.message.textContent = options.message;
+  nodes.accept.textContent = options.confirmLabel ?? "Confirm";
+  nodes.cancel.textContent = options.cancelLabel ?? "Cancel";
+  nodes.accept.classList.toggle("danger", options.danger === true);
+  const focusCancel = options.danger === true;
+  nodes.cancel.toggleAttribute("autofocus", focusCancel);
+  nodes.accept.toggleAttribute("autofocus", !focusCancel);
+  return new Promise((resolve) => {
+    if (generation !== confirmGeneration) {
+      resolve(false);
+      return;
+    }
+    confirmPending = resolve;
+    if (!nodes.dialog.open) nodes.dialog.showModal();
+    (focusCancel ? nodes.cancel : nodes.accept).focus();
+  });
+}
+
+/**
+ * In-app replacement for `window.confirm`. A child service webview paints
+ * above this HTML, so the prompt suspends the active service and the caller's
+ * cover (claimed before this await) keeps it hidden until the follow-up
+ * action finishes. Escape, Close, Cancel, and a backdrop click resolve false.
+ * Enter resolves true even when Cancel has focus, which it does for `danger`.
+ */
+function confirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
+  const generation = confirmGeneration;
+  const epoch = shellEpoch;
+  const result = confirmChain.then(() => {
+    if (generation !== confirmGeneration || epoch !== shellEpoch) return false;
+    return presentConfirm(options, generation);
+  });
+  confirmChain = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function presentConfirm(options: ConfirmDialogOptions, generation: number): Promise<boolean> {
+  if (generation !== confirmGeneration || !confirmNodes()) return false;
+  claimCover("confirm");
+  try {
+    await suspendForCover();
+    if (generation !== confirmGeneration) return false;
+    return await openConfirmDialog(options, generation);
+  } finally {
+    await releaseCover("confirm");
+  }
+}
+
+function wireConfirmDialog(): void {
+  const nodes = confirmNodes();
+  if (!nodes) return;
+  nodes.form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    settleConfirm(true);
+  });
+  nodes.accept.addEventListener("click", () => settleConfirm(true));
+  nodes.cancel.addEventListener("click", () => settleConfirm(false));
+  document.querySelector<HTMLButtonElement>("#confirm-close")?.addEventListener("click", () => {
+    settleConfirm(false);
+  });
+  nodes.dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    settleConfirm(false);
+  });
+  nodes.dialog.addEventListener("click", (event) => {
+    if (event.target === nodes.dialog) settleConfirm(false);
+  });
+  nodes.dialog.addEventListener(
+    "keydown",
+    (event) => {
+      if (!confirmPending) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        settleConfirm(false);
+        return;
+      }
+      if (
+        event.key === "Enter" &&
+        !event.repeat &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        !event.isComposing
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        settleConfirm(true);
+      }
+    },
+    true,
+  );
+}
+
 /** Native menu actions run while the menu is still tearing down. Opening a
  * dialog in that same turn is dropped on WebView2, so wait one task. */
 function deferMenuAction(action: () => void): void {
@@ -535,6 +690,7 @@ export {
   saveIncludeServices,
   openUpdateDialog,
   closeUpdateDialog,
+  confirmDialog,
 };
 
 function applySnapshot(snapshot: Snapshot): void {
@@ -1691,14 +1847,18 @@ function closeEditor(): void {
 }
 
 async function confirmRemoveService(service: Service): Promise<void> {
+  // Held until after the delete so the service webview does not return in the
+  // gap between the dialog closing and the session being removed.
   claimCover("confirm-service");
-  await suspendForCover();
-  const accepted = window.confirm(`Remove ${service.name}? Its saved session will be deleted.`);
-  if (!accepted) {
-    await releaseCover("confirm-service");
-    return;
-  }
   try {
+    const accepted = await confirmDialog({
+      title: "Remove service?",
+      message: `Remove ${service.name}? Its saved session will be deleted.`,
+      confirmLabel: "Remove",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!accepted) return;
     await run(async () => {
       clearError();
       if (editingId === service.id) closeEditor();
@@ -2380,18 +2540,24 @@ async function removeWorkspace(workspace: Workspace): Promise<void> {
     showError("Keep at least one workspace.");
     return;
   }
+  const fallback =
+    workspaces.find((item) => item.id !== workspace.id)?.name ?? "the first workspace";
   const message =
     `Delete the ${workspace.name} workspace?\n\n` +
     "No service or session is deleted. Services that are only in this workspace " +
-    `move to ${workspaces.find((item) => item.id !== workspace.id)?.name ?? "the first workspace"}.`;
+    `move to ${fallback}.`;
+  // Held across the dialog and the delete. confirmDialog suspends the service
+  // webview; releasing this cover afterward puts it back, including on cancel.
   claimCover("confirm-workspace");
-  await suspendForCover();
-  const accepted = window.confirm(message);
-  if (!accepted) {
-    await releaseCover("confirm-workspace");
-    return;
-  }
   try {
+    const accepted = await confirmDialog({
+      title: "Delete workspace?",
+      message,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!accepted) return;
     const snapshot = await run(() => invoke<Snapshot>("remove_workspace", { id: workspace.id }));
     if (snapshot) applySnapshot(snapshot);
   } finally {
@@ -2805,6 +2971,7 @@ function wireEvents(): void {
     event.preventDefault();
     closeIncludeServices();
   });
+  wireConfirmDialog();
   customForm = mountServiceForm(must("#custom-fields"));
   customForm.reset();
   editorForm = mountServiceForm(must("#editor-fields"));
