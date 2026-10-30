@@ -94,6 +94,7 @@ describe("update dialog", () => {
     expect(dialog().open).toBe(true);
     expect(document.querySelector("#update-version")?.textContent).toContain("Version 0.7.0");
     expect(document.querySelector("#update-notes")?.textContent).toContain("signed release");
+    expect(document.querySelector("#update-notes")?.classList.contains("is-empty")).toBe(false);
     expect(calls.some((call) => call.command === "set_active_service" && call.args.id === null)).toBe(
       true,
     );
@@ -122,6 +123,56 @@ describe("update dialog", () => {
     document.querySelector<HTMLButtonElement>("#update-restart")?.click();
     await Promise.resolve();
     expect(calls.some((call) => call.command === "relaunch_app")).toBe(true);
+  });
+
+  it("renders changelog markdown and opens note links in the browser", () => {
+    applyShellSnapshot(
+      snapshot({
+        update: available({
+          notes: [
+            "## [0.8.0](https://github.com/ifigueroap/rustbox/compare/v0.7.0...v0.8.0) (2026-10-30)",
+            "",
+            "* See [#26](https://github.com/ifigueroap/rustbox/issues/26) ([abc1234](https://github.com/ifigueroap/rustbox/commit/abc1234deadbeef))",
+            "* [skip](javascript:alert(1))",
+          ].join("\n"),
+        }),
+        appVersion: "0.6.0",
+      }),
+    );
+    openUpdateDialog();
+    const notes = document.querySelector<HTMLElement>("#update-notes");
+    expect(notes?.querySelector("h2")?.textContent).toContain("0.8.0");
+    expect(notes?.querySelector("time.release-date")?.textContent).toBe("Oct 30, 2026");
+    expect(notes?.textContent).not.toContain("abc1234");
+    expect(notes?.querySelector("a[href^='javascript:']")).toBeNull();
+
+    backend = (command) => {
+      if (command === "open_external") return null;
+      throw new Error(`unexpected ${command}`);
+    };
+    const link = notes?.querySelector<HTMLAnchorElement>("a[href*='issues/26']");
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link?.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(calls[0]).toMatchObject({
+      command: "open_external",
+      args: { url: "https://github.com/ifigueroap/rustbox/issues/26" },
+    });
+  });
+
+  it("uses the Spanish empty-notes string", () => {
+    applyShellSnapshot(
+      snapshot({
+        language: "es",
+        osLocale: "en",
+        update: available({ notes: "   " }),
+        appVersion: "0.6.0",
+      }),
+    );
+    openUpdateDialog();
+    const notes = document.querySelector("#update-notes");
+    expect(notes?.textContent).toBe("No hay notas de la versión.");
+    expect(notes?.classList.contains("is-empty")).toBe(true);
   });
 
   it("offers only the release page when the install cannot replace itself", () => {
