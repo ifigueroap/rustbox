@@ -213,7 +213,7 @@ That request carries whatever an ordinary HTTPS client sends (the address you co
 
 A check runs about 10 seconds after startup and then every 6 hours, while **Check for updates automatically** is on (the default). **Check now** in Settings, and **Check for updates** in the tray, run the same request immediately. A network failure is recorded as an error in that settings row and does not open a dialog or a notification. The app never offers a downgrade. **Skip this version** hides that version from automatic checks only; a manual check still shows it, and a newer version shows up on its own.
 
-When a release is newer, a small badge appears in the sidebar footer. The dialog lists the version and the release notes. **Download and install** uses the updater plugin, which checks the minisign signature before replacing the app bundle. **Open release page** opens the GitHub release in your browser. **Later** dismisses the dialog and leaves the badge. Service webviews are hidden while the dialog is open, the same way the workspace editor is, so the dialog is not painted underneath a service.
+When a release is newer, a small badge appears in the sidebar footer. The dialog lists the version and the release notes, formatted from the changelog. Links in those notes open in the browser. **Download and install** uses the updater plugin, which checks the minisign signature before replacing the app bundle. **Open release page** opens the GitHub release in your browser. **Later** dismisses the dialog and leaves the badge. Service webviews are hidden while the dialog is open, the same way the workspace editor is, so the dialog is not painted underneath a service.
 
 These installs can replace themselves:
 

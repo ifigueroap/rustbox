@@ -14,6 +14,7 @@ import {
   type MessageKey,
 } from "./i18n";
 import { invoke } from "./ipc";
+import { httpUrl, renderReleaseNotes } from "./release-notes";
 
 /** Public releases index. Opened with the system browser, never inside a service webview. */
 const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
@@ -2845,7 +2846,7 @@ function paintUpdateDialog(): void {
       : "";
   }
   const notes = document.querySelector<HTMLElement>("#update-notes");
-  if (notes) notes.textContent = updateStatus.notes?.trim() || t("updates.noNotes");
+  if (notes) paintReleaseNotes(notes);
   const manual = document.querySelector<HTMLElement>("#update-manual");
   const install = document.querySelector<HTMLButtonElement>("#update-install");
   const restart = document.querySelector<HTMLButtonElement>("#update-restart");
@@ -2925,6 +2926,44 @@ function closeSettings(): void {
   const dialog = document.querySelector<HTMLDialogElement>("#settings");
   if (dialog?.open) dialog.close();
   if (shellCovers.has("settings")) void releaseCover("settings");
+}
+
+function paintReleaseNotes(notes: HTMLElement): void {
+  const source = updateStatus.notes?.trim() ?? "";
+  if (!source) {
+    notes.classList.add("is-empty");
+    notes.textContent = t("updates.noNotes");
+    return;
+  }
+  notes.classList.remove("is-empty");
+  // Markup is limited to headings, lists, emphasis, code, and http(s) links.
+  notes.innerHTML = renderReleaseNotes(source);
+}
+
+function notesAnchor(event: Event): HTMLAnchorElement | null {
+  const notes = event.currentTarget;
+  if (!(notes instanceof HTMLElement)) return null;
+  const target = event.target;
+  if (!(target instanceof Node) || !notes.contains(target)) return null;
+  const element = target instanceof Element ? target : target.parentElement;
+  const anchor = element?.closest("a");
+  if (!(anchor instanceof HTMLAnchorElement) || !notes.contains(anchor)) return null;
+  return anchor;
+}
+
+function openNotesLink(event: MouseEvent): void {
+  const anchor = notesAnchor(event);
+  if (!anchor) return;
+  event.preventDefault();
+  const href = httpUrl(anchor.getAttribute("href"));
+  if (!href) return;
+  void invoke("open_external", { url: href });
+}
+
+function blockNotesNavigation(event: MouseEvent): void {
+  const anchor = notesAnchor(event);
+  if (!anchor) return;
+  event.preventDefault();
 }
 
 function openUpdateDialog(): void {
@@ -3252,6 +3291,9 @@ function wireEvents(): void {
     if (!url) return;
     void invoke("open_external", { url });
   });
+  const updateNotes = document.querySelector<HTMLElement>("#update-notes");
+  updateNotes?.addEventListener("click", openNotesLink);
+  updateNotes?.addEventListener("auxclick", blockNotesNavigation);
   document.querySelector<HTMLButtonElement>("#update-install")?.addEventListener("click", () => {
     void downloadAndInstall();
   });
