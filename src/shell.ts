@@ -2,6 +2,17 @@ import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 
+import {
+  applyDomTranslations,
+  getLocale,
+  intlTag,
+  resolveLocale,
+  setLocale,
+  t,
+  type LanguagePreference,
+  type Locale,
+  type MessageKey,
+} from "./i18n";
 import { invoke } from "./ipc";
 
 interface Service {
@@ -59,6 +70,8 @@ interface Snapshot {
   closeToTray: boolean;
   trayAvailable: boolean;
   theme: ThemePreference;
+  language?: LanguagePreference;
+  osLocale?: Locale;
   appVersion: string;
   update: UpdateStatus;
 }
@@ -124,6 +137,10 @@ let doNotDisturb = false;
 let closeToTray = true;
 let trayAvailable = false;
 let themePreference: ThemePreference = "auto";
+let languagePreference: LanguagePreference = "system";
+let osLocale: Locale = "en";
+/** Locale last sent to the tray. Null until the shell has reported one. */
+let reportedLocale: Locale | null = null;
 let appVersion = "";
 let updateStatus: UpdateStatus = idleUpdate("");
 /** Set once Download and install has finished for this version. */
@@ -202,18 +219,43 @@ function displayVersion(version: string | null | undefined): string {
 }
 
 function lastCheckedText(status: UpdateStatus): string {
-  if (status.state === "checking") return "Checking for updates…";
-  if (status.state === "error") return "Couldn't check for updates.";
+  if (status.state === "checking") return t("updates.checking");
+  if (status.state === "error") return t("updates.failed");
   const when = formatChecked(status.lastCheckedAt);
-  if (status.state === "upToDate") return `${when} · Up to date`;
+  if (status.state === "upToDate") return `${when} · ${t("updates.upToDate")}`;
   return when;
 }
 
 function formatChecked(iso: string | null): string {
-  if (!iso) return "Last checked: never";
+  if (!iso) return t("updates.lastNever");
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "Last checked: never";
-  return `Last checked: ${date.toLocaleString()}`;
+  if (Number.isNaN(date.getTime())) return t("updates.lastNever");
+  const when = new Intl.DateTimeFormat(intlTag(getLocale()), {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+  return t("updates.lastChecked", { when });
+}
+
+function asLanguage(value: string | undefined): LanguagePreference {
+  if (value === "en" || value === "es" || value === "system") return value;
+  return "system";
+}
+
+function applyLanguage(report: boolean): void {
+  const locale = resolveLocale(languagePreference, navigator.language, osLocale);
+  setLocale(locale);
+  document.documentElement.lang = locale;
+  const select = document.querySelector<HTMLSelectElement>("#language-select");
+  if (select) select.value = languagePreference;
+  // The tray starts from the OS locale. Report the webview's resolution once,
+  // and again whenever it changes, so the two stay together.
+  if (report && reportedLocale !== locale && "__TAURI_INTERNALS__" in window) {
+    reportedLocale = locale;
+    void invoke("set_ui_locale", { locale }).catch(() => {
+      reportedLocale = null;
+    });
+  }
 }
 
 function isServiceShortcut(event: KeyboardEvent): boolean {
@@ -246,11 +288,9 @@ function visibleServices(): Service[] {
 }
 
 function workspaceTitle(workspace: Workspace): string {
-  const count = workspace.serviceCount;
-  const noun = count === 1 ? "service" : "services";
-  const parts = [`${workspace.name} — ${count} ${noun}`];
-  if (workspace.dnd) parts.push("Do not disturb");
-  if (workspace.unread > 0) parts.push(`${workspace.unread} unread`);
+  const parts = [t("count.workspaceSummary", { name: workspace.name, count: workspace.serviceCount })];
+  if (workspace.dnd) parts.push(t("dnd.label"));
+  if (workspace.unread > 0) parts.push(unreadLabel(workspace.unread));
   return parts.join(". ");
 }
 
@@ -293,7 +333,7 @@ function must<T extends Element>(selector: string): T {
 function errorText(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
-  return "Something went wrong";
+  return t("common.somethingWrong");
 }
 
 function initial(name: string): string {
@@ -426,6 +466,11 @@ function paintAvatar(node: HTMLElement, target: IconTarget): void {
 export function mountShell(): void {
   const shell = document.querySelector<HTMLElement>("#shell");
   if (!shell || shell.dataset.wired === "true") return;
+  languagePreference = "system";
+  osLocale = "en";
+  reportedLocale = null;
+  setLocale(resolveLocale("system", navigator.language, "en"));
+  document.documentElement.lang = getLocale();
   shell.dataset.wired = "true";
   // Tests swap the document. Drop covers from the previous document so a
   // restore cannot paint into the new one.
@@ -551,6 +596,9 @@ function applySnapshot(snapshot: Snapshot): void {
   closeToTray = snapshot.closeToTray;
   trayAvailable = snapshot.trayAvailable;
   themePreference = snapshot.theme;
+  languagePreference = asLanguage(snapshot.language);
+  osLocale = snapshot.osLocale === "es" ? "es" : "en";
+  applyLanguage(true);
   appVersion = snapshot.appVersion;
   updateStatus = snapshot.update ?? idleUpdate(snapshot.appVersion);
   if (updateInstalledVersion && updateInstalledVersion !== updateStatus.latest) {
@@ -560,18 +608,20 @@ function applySnapshot(snapshot: Snapshot): void {
   if (closeTray) {
     closeTray.checked = closeToTray;
     closeTray.disabled = !trayAvailable;
-    closeTray.title = trayAvailable
-      ? "Closing the window hides Rustbox and keeps its services running."
-      : "The tray icon is not available, so closing the window quits Rustbox.";
+    const closeTitle = trayAvailable ? t("settings.closeToTrayOn") : t("settings.closeToTrayOff");
+    closeTray.title = closeTitle;
+    const closeLabel = closeTray.closest("label");
+    if (closeLabel) closeLabel.title = closeTitle;
   }
   const railToggle = document.querySelector<HTMLInputElement>("#rail-toggle");
   if (railToggle) {
     railToggle.checked = !workspaceRailHidden;
     railToggle.disabled = workspaces.length < 2;
-    railToggle.title =
-      workspaces.length < 2
-        ? "The workspace rail appears once there is a second workspace."
-        : "Show the workspace rail beside the sidebar.";
+    const railTitle =
+      workspaces.length < 2 ? t("settings.workspaceRailNeedsSecond") : t("settings.workspaceRailHint");
+    railToggle.title = railTitle;
+    const railLabel = railToggle.closest("label");
+    if (railLabel) railLabel.title = railTitle;
   }
   if (editingId && !services.some((service) => service.id === editingId)) closeEditor();
   const active = services.find((service) => service.id === activeId);
@@ -729,12 +779,13 @@ function renderStageSafely(name: string, stage: () => void): string | null {
 let renderFailure: string | null = null;
 
 function render(): void {
+  applyDomTranslations();
   const failures = [
-    renderStageSafely("workspace rail", renderWorkspaceRail),
-    renderStageSafely("workspace switcher", renderWorkspaceSwitcher),
-    renderStageSafely("sidebar", renderSidebar),
-    renderStageSafely("desk", renderStage),
-    renderStageSafely("service dialog", () => {
+    renderStageSafely(t("render.workspaceRail"), renderWorkspaceRail),
+    renderStageSafely(t("render.workspaceSwitcher"), renderWorkspaceSwitcher),
+    renderStageSafely(t("render.sidebar"), renderSidebar),
+    renderStageSafely(t("render.desk"), renderStage),
+    renderStageSafely(t("render.serviceDialog"), () => {
       if (must<HTMLDialogElement>("#manager").open) renderManager();
     }),
   ].filter((message): message is string => message !== null);
@@ -745,6 +796,42 @@ function render(): void {
     renderFailure = null;
     clearError();
   }
+  refreshOpenCopy();
+}
+
+function workspaceEditorTitle(workspace: Workspace | null): string {
+  if (!workspace || !workspaceDraft || workspaceDraft.mode === "create") return t("workspace.new");
+  if (workspaceDraft.mode === "appearance") return t("workspace.editTitle", { name: workspace.name });
+  return t("workspace.renameTitle", { name: workspace.name });
+}
+
+function includeHint(): string {
+  const pinned = services.filter((service) => service.allWorkspaces).length;
+  if (pinned > 0) return t("count.alreadyEverywhere", { count: pinned });
+  return t("include.hint");
+}
+
+/** Dialogs stay open across a language change, so their dynamic copy is painted again. */
+function refreshOpenCopy(): void {
+  syncEditorSave();
+  const workspaceDialog = document.querySelector<HTMLDialogElement>("#workspace-editor");
+  if (workspaceDialog?.open && workspaceDraft) {
+    const nodes = workspaceEditorNodes();
+    const workspace = workspaces.find((item) => item.id === workspaceDraft?.id) ?? null;
+    nodes.title.textContent = workspaceEditorTitle(workspace);
+    syncWorkspaceSave();
+  }
+  const includeDialog = document.querySelector<HTMLDialogElement>("#include-services");
+  if (includeDialog?.open && includeTargetWorkspaceId) {
+    const workspace = workspaces.find((item) => item.id === includeTargetWorkspaceId);
+    if (workspace) {
+      const nodes = includeNodes();
+      nodes.title.textContent = t("include.titleNamed", { name: workspace.name });
+      nodes.hint.textContent = includeHint();
+    }
+    syncIncludeSave();
+  }
+  if (document.querySelector<HTMLDialogElement>("#update-dialog")?.open) paintUpdateDialog();
 }
 
 /** The static children of the rail (`#workspace-list`, `#workspace-add`) live
@@ -764,7 +851,7 @@ function renderWorkspaceRail(): void {
   const add = rail.querySelector<HTMLButtonElement>("#workspace-add");
   if (add) {
     add.hidden = workspaces.length >= MAX_WORKSPACES;
-    const label = "New workspace";
+    const label = t("settings.newWorkspace");
     add.title = label;
     add.setAttribute("aria-label", label);
   }
@@ -802,7 +889,7 @@ function renderWorkspaceRail(): void {
     if (workspace.dnd) {
       const flag = document.createElement("span");
       flag.className = "ws-dnd";
-      flag.title = "Do not disturb";
+      flag.title = t("dnd.label");
       flag.setAttribute("aria-hidden", "true");
       flag.innerHTML =
         '<svg viewBox="0 0 24 24" width="10" height="10"><path fill="currentColor" d="M21 12.8A8.5 8.5 0 0 1 11.2 3a8.5 8.5 0 1 0 9.8 9.8z"/></svg>';
@@ -867,12 +954,12 @@ function renderWorkspaceSwitcher(): void {
   }
 
   const active = activeWorkspace();
-  const label = active?.name ?? "Workspaces";
+  const label = active?.name ?? t("nav.workspaces");
   mark.replaceChildren();
   if (active) paintWorkspaceMark(mark, active);
   mark.classList.toggle("dnd", Boolean(active?.dnd));
   name.textContent = label;
-  button.title = `Switch workspace — ${label}`;
+  button.title = t("nav.switchWorkspace", { name: label });
   button.setAttribute("aria-label", button.title);
   button.setAttribute("aria-expanded", workspaceSwitcherOpen ? "true" : "false");
   button.dataset.workspaceId = active?.id ?? "";
@@ -909,7 +996,7 @@ function renderWorkspaceSwitcher(): void {
     if (workspace.dnd) {
       const flag = document.createElement("span");
       flag.className = "ws-dnd";
-      flag.title = "Do not disturb";
+      flag.title = t("dnd.label");
       flag.setAttribute("aria-hidden", "true");
       flag.innerHTML =
         '<svg viewBox="0 0 24 24" width="10" height="10"><path fill="currentColor" d="M21 12.8A8.5 8.5 0 0 1 11.2 3a8.5 8.5 0 1 0 9.8 9.8z"/></svg>';
@@ -942,7 +1029,7 @@ function renderWorkspaceSwitcher(): void {
   const add = document.createElement("button");
   add.type = "button";
   add.className = "ws-popup-row ws-popup-add";
-  add.textContent = "New workspace";
+  add.textContent = t("settings.newWorkspace");
   add.disabled = workspaces.length >= MAX_WORKSPACES;
   add.addEventListener("click", () => {
     // Claim the editor before the popup releases, or the service webview
@@ -1062,10 +1149,10 @@ function paintWorkspaceMark(node: HTMLElement, workspace: Workspace): void {
 function renderSidebar(): void {
   const brand = must<HTMLButtonElement>("#brand-button");
   brand.classList.toggle("current", activeId === null);
-  brand.title = `rustbox — ${workspaceName()}`;
+  brand.title = t("brand.title", { name: workspaceName() });
 
   const collapse = must<HTMLButtonElement>("#collapse-button");
-  const collapseLabel = sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
+  const collapseLabel = sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse");
   collapse.title = collapseLabel;
   collapse.setAttribute("aria-label", collapseLabel);
   collapse.setAttribute("aria-pressed", sidebarCollapsed ? "true" : "false");
@@ -1074,16 +1161,14 @@ function renderSidebar(): void {
 
   const dnd = must<HTMLButtonElement>("#dnd-button");
   dnd.setAttribute("aria-pressed", doNotDisturb ? "true" : "false");
-  dnd.title = doNotDisturb
-    ? "Do not disturb is on. Click to turn it off."
-    : "Pause sounds and notifications for every service.";
+  dnd.title = doNotDisturb ? t("dnd.on") : t("dnd.off");
   dnd.setAttribute("aria-label", dnd.title);
 
   paintUpdateChrome();
 
   const manage = document.querySelector<HTMLButtonElement>("#manage-button");
   if (manage) {
-    const label = "Add a service";
+    const label = t("sidebar.addService");
     manage.title = label;
     manage.setAttribute("aria-label", label);
   }
@@ -1094,10 +1179,8 @@ function renderSidebar(): void {
     railToggle.hidden = !available;
     railToggle.disabled = !available;
     railToggle.setAttribute("aria-pressed", workspaceRailVisible() ? "true" : "false");
-    const label = workspaceRailVisible() ? "Hide workspace rail" : "Show workspace rail";
-    railToggle.title = available
-      ? label
-      : "The workspace rail appears once there is a second workspace.";
+    const label = workspaceRailVisible() ? t("sidebar.hideRail") : t("sidebar.showRail");
+    railToggle.title = available ? label : t("settings.workspaceRailNeedsSecond");
     railToggle.setAttribute("aria-label", railToggle.title);
   }
 
@@ -1179,7 +1262,7 @@ function renderStage(): void {
   if (!active) renderDashboard();
   if (active) {
     status.hidden = false;
-    status.textContent = `Opening ${active.name}`;
+    status.textContent = t("sidebar.opening", { name: active.name });
   } else {
     status.hidden = true;
     status.textContent = "";
@@ -1190,15 +1273,15 @@ function renderDashboard(): void {
   must<HTMLElement>("#app-version").textContent = appVersion ? `v${appVersion}` : "";
   paintUpdateChrome();
   const workspace = activeWorkspace();
-  must<HTMLElement>("#dash-eyebrow").textContent = workspace ? "workspace" : "desk";
+  must<HTMLElement>("#dash-eyebrow").textContent = workspace ? t("desk.workspaceEyebrow") : t("desk.eyebrow");
   must<HTMLElement>("#dash-title").textContent = workspace ? workspace.name : "rustbox";
   const lede = workspace
     ? workspace.serviceCount === 0
-      ? "No services in this workspace yet."
-      : workspace.serviceCount === 1
-        ? "1 service in this workspace, each with its own session."
-        : `${workspace.serviceCount} services in this workspace, each with its own session.`
-    : "Every service in this window, with its own session.";
+      ? t("desk.emptyShort")
+      : t("desk.ledeCount", {
+          services: t("count.servicesInWorkspace", { count: workspace.serviceCount }),
+        })
+    : t("desk.ledeAll");
   must<HTMLElement>("#dash-lede").textContent = lede;
 
   const toggle = must<HTMLButtonElement>("#dash-scope");
@@ -1207,10 +1290,9 @@ function renderDashboard(): void {
   const showToggle = workspace !== undefined && services.length !== scoped.length;
   scopeRow.hidden = !showToggle;
   toggle.hidden = !showToggle;
-  toggle.textContent = deskShowAll ? `Only ${workspace?.name ?? "this workspace"}` : "All services";
-  toggle.title = deskShowAll
-    ? "Show only the services in this workspace."
-    : "Show every service, from every workspace.";
+  const scopeName = workspace?.name ?? t("desk.thisWorkspace");
+  toggle.textContent = deskShowAll ? t("desk.scopeOnly", { name: scopeName }) : t("desk.scopeAll");
+  toggle.title = deskShowAll ? t("desk.scopeOnlyHint") : t("desk.scopeAllHint");
 
   const empty = must<HTMLElement>("#dash-empty");
   const grid = must<HTMLElement>("#dash-grid");
@@ -1227,14 +1309,14 @@ function renderDashboard(): void {
   const include = document.querySelector<HTMLButtonElement>("#dash-empty-include");
   const all = document.querySelector<HTMLButtonElement>("#dash-empty-all");
   if (workspace) {
-    emptyText.textContent = `No services in ${workspace.name} yet. Add one here, include services from another workspace, or see every service at once.`;
+    emptyText.textContent = t("desk.emptyNamed", { name: workspace.name });
     if (include) include.hidden = false;
     if (all) {
       all.hidden = services.length === 0;
-      all.textContent = deskShowAll ? `Only ${workspace.name}` : "Show all services";
+      all.textContent = deskShowAll ? t("desk.scopeOnly", { name: workspace.name }) : t("desk.showAll");
     }
   } else {
-    emptyText.textContent = "No services yet. Add one to get started.";
+    emptyText.textContent = t("desk.emptyPlain");
     if (include) include.hidden = true;
     if (all) all.hidden = true;
   }
@@ -1248,7 +1330,7 @@ function serviceCard(service: Service): HTMLElement {
   const main = document.createElement("button");
   main.type = "button";
   main.className = "card-main";
-  main.title = `Open ${service.name}`;
+  main.title = t("card.openNamed", { name: service.name });
   const avatar = document.createElement("span");
   avatar.className = "avatar";
   paintAvatar(avatar, service);
@@ -1275,13 +1357,13 @@ function serviceCard(service: Service): HTMLElement {
   const actions = document.createElement("div");
   actions.className = "card-actions";
   actions.append(
-    actionButton("Open", "open", () => {
+    actionButton(t("card.open"), "open", () => {
       void activate(service.id);
     }),
-    actionButton("Edit", "", () => {
+    actionButton(t("card.edit"), "", () => {
       void openEditor(service);
     }),
-    actionButton("Remove", "danger", () => {
+    actionButton(t("card.remove"), "danger", () => {
       void confirmRemoveService(service);
     }),
   );
@@ -1297,7 +1379,7 @@ function membershipChips(service: Service): HTMLElement | null {
   if (service.allWorkspaces) {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = "All workspaces";
+    chip.textContent = t("card.allWorkspaces");
     row.append(chip);
     return row;
   }
@@ -1313,9 +1395,9 @@ function membershipChips(service: Service): HTMLElement | null {
 }
 
 function unreadLabel(count: number): string {
-  if (count <= 0) return "No unread";
-  if (count === 1) return "1 unread";
-  return `${count > 99 ? "99+" : count} unread`;
+  if (count <= 0) return t("unread.none");
+  const shown = count > 99 ? "99+" : String(count);
+  return t("count.unread", { count, shown });
 }
 
 function actionButton(text: string, className: string, onClick: () => void): HTMLButtonElement {
@@ -1353,13 +1435,13 @@ function fileExtension(name: string): string {
 
 function mountServiceForm(container: HTMLElement): ServiceForm {
   container.replaceChildren();
-  const name = field("Name", "");
+  const name = field("service.name", "");
   name.input.maxLength = 80;
-  const url = field("URL", "");
+  const url = field("service.url", "");
   url.input.placeholder = "https://example.com";
   const iconLabel = document.createElement("label");
   iconLabel.className = "wide";
-  iconLabel.append("Icon");
+  iconLabel.append(caption("service.icon"));
   const iconRow = document.createElement("div");
   iconRow.className = "icon-row";
   const preview = document.createElement("span");
@@ -1371,45 +1453,52 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   const choose = document.createElement("button");
   choose.type = "button";
   choose.className = "file-button";
-  choose.textContent = "Choose image";
+  choose.dataset.i18n = "service.chooseImage";
+  choose.textContent = t("service.chooseImage");
   const iconText = document.createElement("input");
   iconText.type = "text";
-  iconText.placeholder = "URL or emoji";
+  iconText.dataset.i18nPlaceholder = "service.iconPlaceholder";
+  iconText.placeholder = t("service.iconPlaceholder");
   iconText.spellcheck = false;
   const resetIcon = document.createElement("button");
   resetIcon.type = "button";
   resetIcon.className = "text-action";
-  resetIcon.textContent = "Use preset or favicon";
+  resetIcon.dataset.i18n = "service.usePreset";
+  resetIcon.textContent = t("service.usePreset");
   iconRow.append(preview, choose, file, iconText, resetIcon);
   const iconHint = document.createElement("p");
   iconHint.className = "field-hint";
-  iconHint.textContent = "PNG, SVG, ICO, JPG, or WebP. Rustbox copies the image into its own data folder.";
+  iconHint.dataset.i18n = "service.iconHint";
+  iconHint.textContent = t("service.iconHint");
   iconLabel.append(iconRow, iconHint);
 
   const accent = document.createElement("label");
   accent.className = "wide";
-  accent.append("Accent color");
+  accent.append(caption("service.accent"));
   const accentRow = document.createElement("div");
   accentRow.className = "accent-row";
   const swatch = document.createElement("input");
   swatch.type = "color";
   swatch.value = DEFAULT_SERVICE_COLOR;
-  swatch.setAttribute("aria-label", "Accent color");
+  swatch.dataset.i18nAria = "service.accentAria";
+  swatch.setAttribute("aria-label", t("service.accentAria"));
   const hex = document.createElement("input");
   hex.type = "text";
   hex.className = "hex-input";
   hex.spellcheck = false;
   hex.value = DEFAULT_SERVICE_COLOR;
-  hex.setAttribute("aria-label", "Accent color hex");
+  hex.dataset.i18nAria = "service.accentHex";
+  hex.setAttribute("aria-label", t("service.accentHex"));
   const brandButton = document.createElement("button");
   brandButton.type = "button";
   brandButton.className = "text-action";
-  brandButton.textContent = "Use brand default";
+  brandButton.dataset.i18n = "service.brandDefault";
+  brandButton.textContent = t("service.brandDefault");
   accentRow.append(swatch, hex, brandButton);
   const accentHint = document.createElement("p");
   accentHint.className = "field-hint";
-  accentHint.textContent =
-    "Used for the sidebar highlight and the letter fallback. A full-color icon keeps its own colors.";
+  accentHint.dataset.i18n = "service.accentHint";
+  accentHint.textContent = t("service.accentHint");
   accent.append(accentRow, accentHint);
 
   const chrome = document.createElement("label");
@@ -1417,31 +1506,33 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   const chromeInput = document.createElement("input");
   chromeInput.type = "checkbox";
   chromeInput.checked = true;
-  chrome.append(chromeInput, document.createTextNode("Use a Chrome user agent"));
-  const agent = field("Custom user agent", "");
+  chrome.append(chromeInput, caption("service.chromeUa"));
+  const agent = field("service.customUa", "");
   agent.label.classList.add("wide");
-  agent.input.placeholder = "Leave blank for the built-in Chrome string";
+  agent.input.dataset.i18nPlaceholder = "service.customUaPlaceholder";
+  agent.input.placeholder = t("service.customUaPlaceholder");
 
   const membership = document.createElement("fieldset");
   membership.className = "membership wide";
   const legend = document.createElement("legend");
-  legend.textContent = "Workspaces";
+  legend.dataset.i18n = "service.workspaces";
+  legend.textContent = t("service.workspaces");
   const membershipHint = document.createElement("p");
   membershipHint.className = "field-hint";
-  membershipHint.textContent =
-    "Pick every workspace this service appears in. It stays one service with one session.";
+  membershipHint.dataset.i18n = "service.membershipHint";
+  membershipHint.textContent = t("service.membershipHint");
   const allRow = document.createElement("label");
   allRow.className = "check";
   const allInput = document.createElement("input");
   allInput.type = "checkbox";
-  allRow.append(allInput, document.createTextNode("All workspaces"));
+  allRow.append(allInput, caption("service.allWorkspaces"));
   const options = document.createElement("div");
   options.className = "membership-options";
   const membershipError = document.createElement("p");
   membershipError.className = "error";
   membershipError.hidden = true;
-  membershipError.textContent =
-    "Pick at least one workspace, or tick All workspaces, so this service is not hidden.";
+  membershipError.dataset.i18n = "service.membershipError";
+  membershipError.textContent = t("service.membershipError");
   membership.append(legend, membershipHint, allRow, options, membershipError);
 
   container.append(
@@ -1595,7 +1686,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
     file.value = "";
     if (!picked) return;
     if (picked.size > MAX_ICON_BYTES) {
-      showError("Icon file must be under 1.5 MB.");
+      showError(t("service.iconTooBig"));
       return;
     }
     const extension = fileExtension(picked.name);
@@ -1693,7 +1784,7 @@ function closeEditor(): void {
 async function confirmRemoveService(service: Service): Promise<void> {
   claimCover("confirm-service");
   await suspendForCover();
-  const accepted = window.confirm(`Remove ${service.name}? Its saved session will be deleted.`);
+  const accepted = window.confirm(t("service.removeConfirm", { name: service.name }));
   if (!accepted) {
     await releaseCover("confirm-service");
     return;
@@ -1746,7 +1837,7 @@ let editorSavePending = false;
 function syncEditorSave(): void {
   const save = document.querySelector<HTMLButtonElement>("#editor-save");
   if (!save) return;
-  save.textContent = editorSavePending ? "Saving…" : "Save";
+  save.textContent = editorSavePending ? t("common.saving") : t("common.save");
 }
 
 async function saveEditor(serviceId: string): Promise<void> {
@@ -1785,9 +1876,12 @@ async function saveEditor(serviceId: string): Promise<void> {
 
 function renderManager(): void {
   renderPresets();
-  must<HTMLElement>("#config-path").textContent = `Config: ${configPath}`;
-  must<HTMLElement>("#sessions-path").textContent = `Sessions: ${sessionsDir}`;
-  must<HTMLElement>("#ua-hint").textContent = `Built-in Chrome user agent: ${chromeUserAgent}`;
+  if (pendingPreset) {
+    must<HTMLElement>("#server-url-label").textContent = t("manager.serverUrl", { name: pendingPreset.name });
+  }
+  must<HTMLElement>("#config-path").textContent = t("manager.config", { path: configPath });
+  must<HTMLElement>("#sessions-path").textContent = t("manager.sessions", { path: sessionsDir });
+  must<HTMLElement>("#ua-hint").textContent = t("manager.uaHint", { agent: chromeUserAgent });
 }
 
 function renderPresets(): void {
@@ -1812,7 +1906,7 @@ function renderPresets(): void {
         pendingPreset = preset;
         const row = must<HTMLElement>("#server-url-row");
         row.hidden = false;
-        must<HTMLElement>("#server-url-label").textContent = `${preset.name} server URL`;
+        must<HTMLElement>("#server-url-label").textContent = t("manager.serverUrl", { name: preset.name });
         const input = must<HTMLInputElement>("#server-url");
         input.placeholder = preset.urlHint;
         input.focus();
@@ -1827,14 +1921,20 @@ function renderPresets(): void {
   }
 }
 
-function field(labelText: string, value: string): { label: HTMLLabelElement; input: HTMLInputElement } {
+function caption(key: MessageKey): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.dataset.i18n = key;
+  span.textContent = t(key);
+  return span;
+}
+
+function field(key: MessageKey, value: string): { label: HTMLLabelElement; input: HTMLInputElement } {
   const label = document.createElement("label");
-  label.textContent = labelText;
   const input = document.createElement("input");
   input.type = "text";
   input.value = value;
   input.spellcheck = false;
-  label.append(input);
+  label.append(caption(key), input);
   return { label, input };
 }
 
@@ -1872,7 +1972,7 @@ function workspaceEditorNodes() {
 function paintWorkspacePreview(): void {
   if (!workspaceDraft) return;
   const nodes = workspaceEditorNodes();
-  const name = nodes.name.value.trim() || "Workspace";
+  const name = nodes.name.value.trim() || t("workspace.fallbackPreview");
   const color = nodes.color.value || DEFAULT_SERVICE_COLOR;
   if (workspaceDraft.pendingFile) {
     nodes.preview.classList.add("tile");
@@ -1906,7 +2006,7 @@ function setWorkspaceColor(value: string): void {
 function syncWorkspaceSave(): void {
   const nodes = workspaceEditorNodes();
   nodes.save.disabled = workspaceSavePending || nodes.name.value.trim() === "";
-  nodes.save.textContent = workspaceSavePending ? "Saving…" : "Save";
+  nodes.save.textContent = workspaceSavePending ? t("common.saving") : t("common.save");
 }
 
 /** Tick which existing services the new workspace should also contain. Only
@@ -1969,11 +2069,7 @@ function openWorkspaceEditor(workspace: Workspace | null, mode: WorkspaceEditorM
     pendingFile: null,
   };
   workspaceSavePending = false;
-  nodes.title.textContent = workspace
-    ? workspaceDraft.mode === "appearance"
-      ? `Edit ${workspace.name}`
-      : `Rename ${workspace.name}`
-    : "New workspace";
+  nodes.title.textContent = workspaceEditorTitle(workspace);
   nodes.name.value = workspace?.name ?? "";
   nodes.icon.value = workspaceDraft.icon;
   nodes.file.value = "";
@@ -2136,31 +2232,27 @@ function readIncludeSelection(): string[] {
 function syncIncludeSave(): void {
   const nodes = includeNodes();
   nodes.save.disabled = includeServicesPending || readIncludeSelection().length === 0;
-  nodes.save.textContent = includeServicesPending ? "Adding…" : "Add to workspace";
+  nodes.save.textContent = includeServicesPending ? t("include.adding") : t("include.add");
 }
 
 function openIncludeServices(workspaceId: string | null = activeWorkspaceId): void {
   const workspace = workspaces.find((item) => item.id === workspaceId);
   if (!workspaceId || !workspace) {
-    showError("Pick a workspace first.");
+    showError(t("include.pickFirst"));
     return;
   }
   const candidates = includableServices(workspaceId);
   if (candidates.length === 0) {
-    showError(`Every service is already in ${workspace.name}.`);
+    showError(t("include.alreadyIn", { name: workspace.name }));
     return;
   }
   const nodes = includeNodes();
   includeTargetWorkspaceId = workspaceId;
   includeServicesPending = false;
-  nodes.title.textContent = `Include services in ${workspace.name}`;
+  nodes.title.textContent = t("include.titleNamed", { name: workspace.name });
   nodes.error.hidden = true;
   nodes.error.textContent = "";
-  const pinned = services.filter((service) => service.allWorkspaces).length;
-  nodes.hint.textContent =
-    pinned > 0
-      ? `${pinned} service${pinned === 1 ? " already appears" : "s already appear"} in every workspace and ${pinned === 1 ? "is" : "are"} not listed here.`
-      : "Ticked services also appear in this workspace. They keep their session and stay in every workspace they are already in.";
+  nodes.hint.textContent = includeHint();
   renderIncludeOptions(workspaceId, new Set());
   claimCover("include");
   const reveal = (): void => {
@@ -2252,9 +2344,9 @@ function refreshUnread(serviceId: string, count: number): void {
   service.unread = count;
   recomputeWorkspaceUnread();
   const failures = [
-    renderStageSafely("workspace rail", renderWorkspaceRail),
-    renderStageSafely("workspace switcher", renderWorkspaceSwitcher),
-    renderStageSafely("sidebar", renderSidebar),
+    renderStageSafely(t("render.workspaceRail"), renderWorkspaceRail),
+    renderStageSafely(t("render.workspaceSwitcher"), renderWorkspaceSwitcher),
+    renderStageSafely(t("render.sidebar"), renderSidebar),
   ].filter((message): message is string => message !== null);
   if (failures.length > 0) showError(failures.join(" — "));
   document.querySelectorAll<HTMLElement>(`[data-unread-for="${CSS.escape(serviceId)}"]`).forEach((node) => {
@@ -2270,11 +2362,11 @@ function soundOff(service: Service): boolean {
 
 function serviceTitle(service: Service): string {
   const parts = [service.unread > 0 ? `${service.name} (${service.unread})` : service.name];
-  if (!doNotDisturb && !service.workspaceSilenced && !service.soundEnabled) parts.push("Sound off");
+  if (!doNotDisturb && !service.workspaceSilenced && !service.soundEnabled) parts.push(t("service.soundOff"));
   if (!doNotDisturb && !service.workspaceSilenced && !service.notificationsEnabled) {
-    parts.push("Notifications off");
+    parts.push(t("service.notificationsOff"));
   }
-  if (service.workspaceSilenced) parts.push("Silenced by workspace Do not disturb");
+  if (service.workspaceSilenced) parts.push(t("service.silenced"));
   return parts.join(". ");
 }
 
@@ -2303,25 +2395,25 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
     add(await MenuItem.new({ text: service.name, enabled: false }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await CheckMenuItem.new({
-      text: "Sound",
+      text: t("service.menuSound"),
       checked: service.soundEnabled,
       action: () => void setServiceFlag(service.id, "sound", !service.soundEnabled),
     }));
     add(await CheckMenuItem.new({
-      text: "Notifications",
+      text: t("service.menuNotifications"),
       checked: service.notificationsEnabled,
       action: () => void setServiceFlag(service.id, "notifications", !service.notificationsEnabled),
     }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
-      text: "Reload",
+      text: t("service.menuReload"),
       action: () => void run(async () => {
         applySnapshot(await invoke<Snapshot>("reload_service", { id: service.id }));
       }),
     }));
-    add(await MenuItem.new({ text: "Copy URL", action: () => void copyText(service.url) }));
+    add(await MenuItem.new({ text: t("service.menuCopyUrl"), action: () => void copyText(service.url) }));
     add(await MenuItem.new({
-      text: "Open in browser",
+      text: t("service.menuOpenBrowser"),
       action: () => void run(() => invoke("open_external", { url: service.url })),
     }));
 
@@ -2377,13 +2469,12 @@ async function moveWorkspace(id: string, delta: number): Promise<void> {
 
 async function removeWorkspace(workspace: Workspace): Promise<void> {
   if (workspaces.length <= 1) {
-    showError("Keep at least one workspace.");
+    showError(t("workspace.keepOne"));
     return;
   }
-  const message =
-    `Delete the ${workspace.name} workspace?\n\n` +
-    "No service or session is deleted. Services that are only in this workspace " +
-    `move to ${workspaces.find((item) => item.id !== workspace.id)?.name ?? "the first workspace"}.`;
+  const fallback =
+    workspaces.find((item) => item.id !== workspace.id)?.name ?? t("workspace.first");
+  const message = t("workspace.deleteConfirm", { name: workspace.name, fallback });
   claimCover("confirm-workspace");
   await suspendForCover();
   const accepted = window.confirm(message);
@@ -2425,31 +2516,31 @@ async function openWorkspaceMenu(workspaceId: string, x: number, y: number): Pro
     add(await MenuItem.new({ text: workspace.name, enabled: false }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
-      text: "Rename…",
+      text: t("workspace.menuRename"),
       action: () => deferMenuAction(() => openWorkspaceEditor(workspace, "rename")),
     }));
     add(await MenuItem.new({
-      text: "Edit icon and color…",
+      text: t("workspace.menuEdit"),
       action: () => deferMenuAction(() => openWorkspaceEditor(workspace, "appearance")),
     }));
     add(await MenuItem.new({
-      text: workspace.dnd ? "Turn off Do not disturb" : "Do not disturb",
+      text: workspace.dnd ? t("workspace.menuDndOff") : t("dnd.label"),
       action: () => void setWorkspaceDnd(workspace.id, !workspace.dnd),
     }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
-      text: "Move up",
+      text: t("workspace.menuMoveUp"),
       enabled: index > 0,
       action: () => void moveWorkspace(workspace.id, -1),
     }));
     add(await MenuItem.new({
-      text: "Move down",
+      text: t("workspace.menuMoveDown"),
       enabled: index < workspaces.length - 1,
       action: () => void moveWorkspace(workspace.id, 1),
     }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
-      text: "Delete workspace…",
+      text: t("workspace.menuDelete"),
       enabled: workspaces.length > 1,
       action: () => deferMenuAction(() => void removeWorkspace(workspace)),
     }));
@@ -2459,6 +2550,24 @@ async function openWorkspaceMenu(workspaceId: string, x: number, y: number): Pro
   } catch (error) {
     await closeWorkspaceMenu();
     showError(errorText(error));
+  }
+}
+
+async function setLanguage(next: LanguagePreference): Promise<void> {
+  const previousPreference = languagePreference;
+  const previousLocale = getLocale();
+  languagePreference = next;
+  const locale = resolveLocale(next, navigator.language, osLocale);
+  setLocale(locale);
+  document.documentElement.lang = locale;
+  render();
+  const snapshot = await run(() => invoke<Snapshot>("set_language", { language: next, locale }));
+  if (snapshot) applySnapshot(snapshot);
+  else {
+    languagePreference = previousPreference;
+    setLocale(previousLocale);
+    document.documentElement.lang = previousLocale;
+    render();
   }
 }
 
@@ -2476,7 +2585,7 @@ async function setTheme(next: ThemePreference): Promise<void> {
 
 async function boot(): Promise<void> {
   if (!("__TAURI_INTERNALS__" in window)) {
-    showError("Open this window from the Rustbox app. The Vite page alone cannot host service webviews.");
+    showError(t("boot.viteOnly"));
     return;
   }
   await renderShell();
@@ -2517,7 +2626,7 @@ function paintUpdateChrome(): void {
     const version = displayVersion(updateStatus.latest);
     const available = updateStatus.state === "available" && version.length > 0;
     badge.hidden = !available;
-    const label = available ? `Update available: v${version}` : "Check for updates";
+    const label = available ? t("updates.availableVersion", { version }) : t("updates.checkForUpdates");
     badge.title = label;
     badge.setAttribute("aria-label", label);
   }
@@ -2528,7 +2637,7 @@ function paintUpdateChrome(): void {
   const check = document.querySelector<HTMLButtonElement>("#check-updates");
   if (check) {
     check.disabled = updateStatus.state === "checking";
-    check.textContent = updateStatus.state === "checking" ? "Checking…" : "Check now";
+    check.textContent = updateStatus.state === "checking" ? t("updates.checkingShort") : t("updates.checkNow");
   }
 }
 
@@ -2540,11 +2649,11 @@ function paintUpdateDialog(): void {
   const versionLine = document.querySelector<HTMLElement>("#update-version");
   if (versionLine) {
     versionLine.textContent = version
-      ? `Version ${version} is available. You are on ${current}.`
+      ? t("updates.versionLine", { version, current })
       : "";
   }
   const notes = document.querySelector<HTMLElement>("#update-notes");
-  if (notes) notes.textContent = updateStatus.notes?.trim() || "No release notes.";
+  if (notes) notes.textContent = updateStatus.notes?.trim() || t("updates.noNotes");
   const manual = document.querySelector<HTMLElement>("#update-manual");
   const install = document.querySelector<HTMLButtonElement>("#update-install");
   const restart = document.querySelector<HTMLButtonElement>("#update-restart");
@@ -2553,13 +2662,11 @@ function paintUpdateDialog(): void {
   const ready = updateInstalledVersion !== null && updateInstalledVersion === updateStatus.latest;
   if (manual) {
     manual.hidden = updateStatus.canInstall;
-    manual.textContent = updateStatus.canInstall
-      ? ""
-      : "This copy cannot install updates itself. Open the release page and replace it when you are ready. Services and sessions stay where they are.";
+    manual.textContent = updateStatus.canInstall ? "" : t("updates.manual");
   }
   if (install) {
     install.hidden = !updateStatus.canInstall || ready;
-    if (!install.disabled) install.textContent = "Download and install";
+    if (!install.disabled) install.textContent = t("updates.download");
   }
   if (restart) restart.hidden = !updateStatus.canInstall || !ready;
   if (open) open.hidden = false;
@@ -2613,7 +2720,7 @@ async function downloadAndInstall(): Promise<void> {
   const error = document.querySelector<HTMLElement>("#update-error");
   if (!install || install.disabled || install.hidden) return;
   install.disabled = true;
-  install.textContent = "Downloading…";
+  install.textContent = t("updates.downloading");
   if (error) {
     error.hidden = true;
     error.textContent = "";
@@ -2622,11 +2729,11 @@ async function downloadAndInstall(): Promise<void> {
     await invoke("install_update");
     updateInstalledVersion = updateStatus.latest;
     install.disabled = false;
-    install.textContent = "Download and install";
+    install.textContent = t("updates.download");
     paintUpdateDialog();
   } catch (caught) {
     install.disabled = false;
-    install.textContent = "Download and install";
+    install.textContent = t("updates.download");
     if (error) {
       error.hidden = false;
       error.textContent = errorText(caught);
@@ -2654,6 +2761,12 @@ function wireEvents(): void {
     const select = event.currentTarget as HTMLSelectElement;
     if (select.value === "auto" || select.value === "light" || select.value === "dark") {
       void setTheme(select.value);
+    }
+  });
+  must<HTMLSelectElement>("#language-select").addEventListener("change", (event) => {
+    const select = event.currentTarget as HTMLSelectElement;
+    if (select.value === "system" || select.value === "en" || select.value === "es") {
+      void setLanguage(select.value);
     }
   });
   must<HTMLButtonElement>("#manage-button").addEventListener("click", () => {
@@ -2722,7 +2835,7 @@ function wireEvents(): void {
     workspaceNodes.file.value = "";
     if (!picked || !workspaceDraft) return;
     if (picked.size > MAX_ICON_BYTES) {
-      showError("Icon file must be under 1.5 MB.");
+      showError(t("service.iconTooBig"));
       return;
     }
     const extension = fileExtension(picked.name);

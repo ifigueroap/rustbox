@@ -23,6 +23,8 @@
     "allow-import-local-icon",
     "allow-read-local-icon",
     "allow-set-theme",
+    "allow-set-language",
+    "allow-set-ui-locale",
     "allow-add-workspace",
     "allow-update-workspace",
     "allow-include-services",

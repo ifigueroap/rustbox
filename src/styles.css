@@ -919,6 +919,13 @@ select:focus-visible {
   min-width: 0;
 }
 
+.settings-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+}
+
 .appearance-control {
   display: grid;
   gap: var(--space-1);

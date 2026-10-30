@@ -174,14 +174,18 @@ pub fn release_page_url(version: &str) -> Option<String> {
     Some(format!("{RELEASE_PAGE_PREFIX}{version}"))
 }
 
-pub fn tray_menu_label(state: UpdatePhase, latest: Option<&str>) -> String {
+pub fn tray_menu_label(
+    state: UpdatePhase,
+    latest: Option<&str>,
+    locale: crate::i18n::Locale,
+) -> String {
     if state == UpdatePhase::Available {
         if let Some(version) = latest.and_then(normalize_version) {
-            return format!("Update available: v{version}");
+            return crate::i18n::tray_update_available_version(locale, &version);
         }
-        return "Update available".to_string();
+        return crate::i18n::tray_update_available(locale).to_string();
     }
-    "Check for updates".to_string()
+    crate::i18n::tray_check_updates(locale).to_string()
 }
 
 pub fn begin_check(previous: &UpdateStatus) -> UpdateStatus {
@@ -653,20 +657,36 @@ mod tests {
     #[test]
     fn tray_label_names_the_available_version() {
         assert_eq!(
-            tray_menu_label(UpdatePhase::Idle, None),
+            tray_menu_label(UpdatePhase::Idle, None, crate::i18n::Locale::En),
             "Check for updates"
         );
         assert_eq!(
-            tray_menu_label(UpdatePhase::UpToDate, None),
+            tray_menu_label(UpdatePhase::UpToDate, None, crate::i18n::Locale::En),
             "Check for updates"
         );
         assert_eq!(
-            tray_menu_label(UpdatePhase::Error, None),
+            tray_menu_label(UpdatePhase::Error, None, crate::i18n::Locale::En),
             "Check for updates"
         );
         assert_eq!(
-            tray_menu_label(UpdatePhase::Available, Some("v0.7.0")),
+            tray_menu_label(
+                UpdatePhase::Available,
+                Some("v0.7.0"),
+                crate::i18n::Locale::En
+            ),
             "Update available: v0.7.0"
+        );
+        assert_eq!(
+            tray_menu_label(
+                UpdatePhase::Available,
+                Some("v0.7.0"),
+                crate::i18n::Locale::Es
+            ),
+            "Actualización disponible: v0.7.0"
+        );
+        assert_eq!(
+            tray_menu_label(UpdatePhase::Idle, None, crate::i18n::Locale::Es),
+            "Buscar actualizaciones"
         );
     }
 
