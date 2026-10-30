@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/ifigueroap/rustbox/compare/v0.7.0...v0.8.0) (2026-10-30)
+
+
+### Features
+
+* add English and Spanish localization ([#26](https://github.com/ifigueroap/rustbox/issues/26)) ([de472f0](https://github.com/ifigueroap/rustbox/commit/de472f0705673e5f57a52f0cc59c557f6869d5a1))
+
+
+### Bug Fixes
+
+* replace native confirms with an in-app dialog ([#25](https://github.com/ifigueroap/rustbox/issues/25)) ([9f1c918](https://github.com/ifigueroap/rustbox/commit/9f1c91826f966b1af38f245a56d3f0685b3ec7d1))
+
 ## [0.7.0](https://github.com/ifigueroap/rustbox/compare/v0.6.0...v0.7.0) (2026-10-29)
 
 
