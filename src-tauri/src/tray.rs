@@ -22,6 +22,7 @@ struct TrayMenu {
     dnd: CheckMenuItem<Wry>,
     close_to_tray: CheckMenuItem<Wry>,
     updates: MenuItem<Wry>,
+    settings: MenuItem<Wry>,
     show: MenuItem<Wry>,
     hide: MenuItem<Wry>,
     quit: MenuItem<Wry>,
@@ -86,6 +87,9 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
     let updates = MenuItemBuilder::with_id("tray-updates", crate::i18n::tray_check_updates(locale))
         .build(app)
         .map_err(|err| err.to_string())?;
+    let settings = MenuItemBuilder::with_id("tray-settings", crate::i18n::tray_settings(locale))
+        .build(app)
+        .map_err(|err| err.to_string())?;
     let quit = MenuItemBuilder::with_id("tray-quit", crate::i18n::tray_quit(locale))
         .build(app)
         .map_err(|err| err.to_string())?;
@@ -110,6 +114,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
             &workspace_menu,
             &dnd,
             &close_to_tray,
+            &settings,
             &updates,
             &separator_after,
             &quit,
@@ -149,6 +154,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 let next = !flag(app, |config| config.close_to_tray);
                 let _ = store_close_to_tray(app, next);
             }
+            "tray-settings" => open_settings_from_tray(app),
             "tray-updates" => open_update_from_tray(app),
             "tray-quit" => request_quit(app),
             _ => {}
@@ -174,6 +180,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         dnd,
         close_to_tray,
         updates,
+        settings,
         show: show_item,
         hide: hide_item,
         quit,
@@ -306,6 +313,7 @@ fn relabel(menu: &TrayMenu, locale: crate::i18n::Locale) {
     let _ = menu.hide.set_text(crate::i18n::tray_hide(locale));
     let _ = menu.dnd.set_text(crate::i18n::tray_dnd(locale));
     let _ = menu.close_to_tray.set_text(crate::i18n::tray_close(locale));
+    let _ = menu.settings.set_text(crate::i18n::tray_settings(locale));
     let _ = menu.quit.set_text(crate::i18n::tray_quit(locale));
     if let Some(submenu) = services::lock(&menu.workspace_menu).as_ref() {
         let _ = submenu.set_text(crate::i18n::tray_workspaces(locale));
@@ -355,6 +363,12 @@ pub fn hide(app: &AppHandle) -> Result<(), String> {
     window.hide().map_err(|err| err.to_string())?;
     sync(app);
     Ok(())
+}
+
+/// Show the window, then ask the shell to open Settings above any service webview.
+fn open_settings_from_tray(app: &AppHandle) {
+    let _ = reveal(app);
+    let _ = app.emit("open-settings", ());
 }
 
 /// Show the window, then either open the update dialog or run a manual check.

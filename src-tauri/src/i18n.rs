@@ -96,6 +96,13 @@ pub fn tray_workspace_dnd(locale: Locale, name: &str) -> String {
     }
 }
 
+pub fn tray_settings(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Settings…",
+        Locale::Es => "Configuración…",
+    }
+}
+
 pub fn tray_check_updates(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Check for updates",
@@ -163,6 +170,8 @@ mod tests {
         assert_eq!(tray_quit(Locale::Es), "Salir");
         assert_eq!(tray_dnd(Locale::Es), "No molestar");
         assert_eq!(tray_check_updates(Locale::Es), "Buscar actualizaciones");
+        assert_eq!(tray_settings(Locale::En), "Settings…");
+        assert_eq!(tray_settings(Locale::Es), "Configuración…");
         assert_eq!(
             tray_workspace_dnd(Locale::Es, "Trabajo"),
             "Trabajo — No molestar"

@@ -57,6 +57,11 @@ pub fn parse_service_shortcut(
     Some(ServiceShortcut::OpenIndex((digit as u8 - b'1') as usize))
 }
 
+/// Ctrl/Cmd+, opens Settings. The shell and a service webview both report it.
+pub fn is_settings_shortcut(key: &str, ctrl_or_meta: bool, shift: bool, alt: bool) -> bool {
+    ctrl_or_meta && !shift && !alt && key == ","
+}
+
 /// Ctrl/Cmd+Alt+1 … 9 selects a workspace by rail position.
 pub fn parse_workspace_shortcut(
     key: &str,
@@ -209,5 +214,14 @@ mod tests {
             None,
             "a workspace chord must not also open a service"
         );
+    }
+
+    #[test]
+    fn comma_with_ctrl_or_cmd_opens_settings() {
+        assert!(is_settings_shortcut(",", true, false, false));
+        assert!(!is_settings_shortcut(",", false, false, false));
+        assert!(!is_settings_shortcut(",", true, true, false));
+        assert!(!is_settings_shortcut(",", true, false, true));
+        assert!(!is_settings_shortcut(".", true, false, false));
     }
 }

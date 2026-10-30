@@ -16,6 +16,9 @@ import {
 import { invoke } from "./ipc";
 import { httpUrl, renderReleaseNotes } from "./release-notes";
 
+/** Public releases index. Opened with the system browser, never inside a service webview. */
+const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
+
 interface Service {
   id: string;
   name: string;
@@ -219,23 +222,40 @@ function displayVersion(version: string | null | undefined): string {
   return (version ?? "").trim().replace(/^v/, "");
 }
 
-function lastCheckedText(status: UpdateStatus): string {
-  if (status.state === "checking") return t("updates.checking");
-  if (status.state === "error") return t("updates.failed");
-  const when = formatChecked(status.lastCheckedAt);
-  if (status.state === "upToDate") return `${when} · ${t("updates.upToDate")}`;
-  return when;
+/** Time of day when the check was today; otherwise a medium date plus the time. */
+function checkedPhrase(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const when = new Intl.DateTimeFormat(
+    intlTag(getLocale()),
+    sameDay ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" },
+  ).format(date);
+  return t(sameDay ? "settings.checkedTime" : "settings.checkedDate", { when });
 }
 
-function formatChecked(iso: string | null): string {
-  if (!iso) return t("updates.lastNever");
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return t("updates.lastNever");
-  const when = new Intl.DateTimeFormat(intlTag(getLocale()), {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-  return t("updates.lastChecked", { when });
+/** "Version 0.8.0 · Up to date · checked 11:47 AM", in the active locale. */
+function settingsUpdateLine(status: UpdateStatus): string {
+  const version = displayVersion(status.current) || displayVersion(appVersion);
+  const versionPart = t("settings.versionStatus", { version });
+  if (status.state === "checking") return `${versionPart} · ${t("updates.checking")}`;
+  if (status.state === "error") return `${versionPart} · ${t("updates.failed")}`;
+  if (status.state === "available") {
+    const latest = displayVersion(status.latest);
+    if (latest) return `${versionPart} · ${t("updates.availableVersion", { version: latest })}`;
+  }
+  const checked = checkedPhrase(status.lastCheckedAt);
+  if (status.state === "upToDate") {
+    return checked
+      ? `${versionPart} · ${t("updates.upToDate")} · ${checked}`
+      : `${versionPart} · ${t("updates.upToDate")}`;
+  }
+  return checked ? `${versionPart} · ${checked}` : `${versionPart} · ${t("updates.lastNever")}`;
 }
 
 function asLanguage(value: string | undefined): LanguagePreference {
@@ -269,6 +289,11 @@ function isServiceShortcut(event: KeyboardEvent): boolean {
 function isWorkspaceShortcut(event: KeyboardEvent): boolean {
   if (event.repeat || !event.altKey || !(event.ctrlKey || event.metaKey)) return false;
   return !event.shiftKey && /^[1-9]$/.test(event.key);
+}
+
+function isSettingsShortcut(event: KeyboardEvent): boolean {
+  if (event.repeat || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) return false;
+  return event.key === ",";
 }
 
 function activeWorkspace(): Workspace | undefined {
@@ -743,6 +768,8 @@ export {
   saveIncludeServices,
   openUpdateDialog,
   closeUpdateDialog,
+  openSettings,
+  closeSettings,
   confirmDialog,
 };
 
@@ -767,25 +794,6 @@ function applySnapshot(snapshot: Snapshot): void {
   updateStatus = snapshot.update ?? idleUpdate(snapshot.appVersion);
   if (updateInstalledVersion && updateInstalledVersion !== updateStatus.latest) {
     updateInstalledVersion = null;
-  }
-  const closeTray = document.querySelector<HTMLInputElement>("#close-tray");
-  if (closeTray) {
-    closeTray.checked = closeToTray;
-    closeTray.disabled = !trayAvailable;
-    const closeTitle = trayAvailable ? t("settings.closeToTrayOn") : t("settings.closeToTrayOff");
-    closeTray.title = closeTitle;
-    const closeLabel = closeTray.closest("label");
-    if (closeLabel) closeLabel.title = closeTitle;
-  }
-  const railToggle = document.querySelector<HTMLInputElement>("#rail-toggle");
-  if (railToggle) {
-    railToggle.checked = !workspaceRailHidden;
-    railToggle.disabled = workspaces.length < 2;
-    const railTitle =
-      workspaces.length < 2 ? t("settings.workspaceRailNeedsSecond") : t("settings.workspaceRailHint");
-    railToggle.title = railTitle;
-    const railLabel = railToggle.closest("label");
-    if (railLabel) railLabel.title = railTitle;
   }
   if (editingId && !services.some((service) => service.id === editingId)) closeEditor();
   const active = services.find((service) => service.id === activeId);
@@ -827,8 +835,11 @@ async function hydrateLocalIcons(): Promise<boolean> {
 
 function applyTheme(): void {
   document.documentElement.dataset.theme = themePreference;
-  const select = document.querySelector<HTMLSelectElement>("#theme-select");
-  if (select) select.value = themePreference;
+  const group = document.querySelector<HTMLElement>("#theme-select");
+  group?.querySelectorAll<HTMLButtonElement>("[data-value]").forEach((button) => {
+    const selected = button.dataset.value === themePreference;
+    button.setAttribute("aria-checked", selected ? "true" : "false");
+  });
 }
 
 async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
@@ -960,6 +971,7 @@ function render(): void {
     renderFailure = null;
     clearError();
   }
+  paintSettingsControls();
   refreshOpenCopy();
 }
 
@@ -1337,6 +1349,13 @@ function renderSidebar(): void {
     manage.setAttribute("aria-label", label);
   }
 
+  const settingsButton = document.querySelector<HTMLButtonElement>("#settings-button");
+  if (settingsButton) {
+    const label = t("settings.title");
+    settingsButton.title = label;
+    settingsButton.setAttribute("aria-label", label);
+  }
+
   const railToggle = document.querySelector<HTMLButtonElement>("#rail-toggle-button");
   if (railToggle) {
     const available = workspaces.length > 1;
@@ -1434,7 +1453,6 @@ function renderStage(): void {
 }
 
 function renderDashboard(): void {
-  must<HTMLElement>("#app-version").textContent = appVersion ? `v${appVersion}` : "";
   paintUpdateChrome();
   const workspace = activeWorkspace();
   must<HTMLElement>("#dash-eyebrow").textContent = workspace ? t("desk.workspaceEyebrow") : t("desk.eyebrow");
@@ -2779,6 +2797,9 @@ export async function renderShell(): Promise<void> {
   await listen("open-update-dialog", () => {
     deferMenuAction(() => openUpdateDialog());
   });
+  await listen("open-settings", () => {
+    deferMenuAction(() => openSettings());
+  });
 
   presets = await invoke<Preset[]>("list_presets");
   const snapshot = await invoke<Snapshot>("get_state");
@@ -2805,7 +2826,7 @@ function paintUpdateChrome(): void {
   const toggle = document.querySelector<HTMLInputElement>("#auto-update");
   if (toggle) toggle.checked = updateStatus.autoCheck;
   const checked = document.querySelector<HTMLElement>("#update-checked");
-  if (checked) checked.textContent = lastCheckedText(updateStatus);
+  if (checked) checked.textContent = settingsUpdateLine(updateStatus);
   const check = document.querySelector<HTMLButtonElement>("#check-updates");
   if (check) {
     check.disabled = updateStatus.state === "checking";
@@ -2848,6 +2869,63 @@ function paintUpdateDialog(): void {
     error.hidden = true;
     error.textContent = "";
   }
+}
+
+function paintSettingsControls(): void {
+  applyTheme();
+  const language = document.querySelector<HTMLSelectElement>("#language-select");
+  if (language) language.value = languagePreference;
+
+  const closeTray = document.querySelector<HTMLInputElement>("#close-tray");
+  const closeHint = document.querySelector<HTMLElement>("#close-tray-hint");
+  if (closeTray) {
+    closeTray.checked = closeToTray;
+    closeTray.disabled = !trayAvailable;
+  }
+  if (closeHint) {
+    closeHint.textContent = trayAvailable ? t("settings.closeToTrayHint") : t("settings.closeToTrayOff");
+  }
+
+  const railToggle = document.querySelector<HTMLInputElement>("#rail-toggle");
+  const railHint = document.querySelector<HTMLElement>("#rail-toggle-hint");
+  const railNeedsSecond = workspaces.length < 2;
+  if (railToggle) {
+    railToggle.checked = !workspaceRailHidden;
+    railToggle.disabled = railNeedsSecond;
+  }
+  if (railHint) {
+    railHint.textContent = railNeedsSecond
+      ? t("settings.workspaceRailNeedsSecond")
+      : t("settings.workspaceRailHint");
+  }
+
+  const version = document.querySelector<HTMLElement>("#app-version");
+  if (version) version.textContent = displayVersion(appVersion);
+  paintUpdateChrome();
+}
+
+function openSettings(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#settings");
+  if (!dialog || dialog.open) return;
+  if (document.querySelector("dialog[open]")) return;
+  claimCover("settings");
+  if (workspaceSwitcherOpen || shellCovers.has("switcher")) closeWorkspaceSwitcher();
+  const reveal = () => {
+    if (!shellCovers.has("settings")) return;
+    paintSettingsControls();
+    if (!dialog.open) dialog.showModal();
+  };
+  if (suspendedId || !activeId) {
+    reveal();
+    return;
+  }
+  void suspendForCover().then(reveal);
+}
+
+function closeSettings(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#settings");
+  if (dialog?.open) dialog.close();
+  if (shellCovers.has("settings")) void releaseCover("settings");
 }
 
 function paintReleaseNotes(notes: HTMLElement): void {
@@ -2967,11 +3045,30 @@ function wireEvents(): void {
   must<HTMLButtonElement>("#dnd-button").addEventListener("click", () => {
     void setDoNotDisturb(!doNotDisturb);
   });
-  must<HTMLSelectElement>("#theme-select").addEventListener("change", (event) => {
-    const select = event.currentTarget as HTMLSelectElement;
-    if (select.value === "auto" || select.value === "light" || select.value === "dark") {
-      void setTheme(select.value);
-    }
+  document.querySelector<HTMLElement>("#theme-select")?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-value]") : null;
+    const value = button?.dataset.value;
+    if (value === "auto" || value === "light" || value === "dark") void setTheme(value);
+  });
+  document.querySelector<HTMLButtonElement>("#settings-button")?.addEventListener("click", () => {
+    openSettings();
+  });
+  document.querySelector<HTMLButtonElement>("#settings-close")?.addEventListener("click", () => {
+    closeSettings();
+  });
+  document.querySelector<HTMLFormElement>("#settings-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+  const settingsDialog = document.querySelector<HTMLDialogElement>("#settings");
+  settingsDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSettings();
+  });
+  settingsDialog?.addEventListener("close", () => {
+    if (shellCovers.has("settings")) void releaseCover("settings");
+  });
+  document.querySelector<HTMLButtonElement>("#settings-releases")?.addEventListener("click", () => {
+    void invoke("open_external", { url: RELEASES_PAGE });
   });
   must<HTMLSelectElement>("#language-select").addEventListener("change", (event) => {
     const select = event.currentTarget as HTMLSelectElement;
@@ -3012,6 +3109,9 @@ function wireEvents(): void {
     // A click that opens another shell surface takes over. Restoring the
     // service here would cover that dialog, or fight the click's own activate.
     const target = event.target instanceof Element ? event.target : null;
+    // Claim before the switcher releases, or the service webview returns and
+    // covers the dialog the click is about to open.
+    if (target?.closest("#settings-button")) claimCover("settings");
     if (target?.closest("#service-list .svc, #brand-button, #manage-button, #dash-add, #dash-workspace-add, #workspace-add, #empty-add-service, #empty-include-services, #dash-empty-add, #dash-empty-include")) {
       suspendedId = null;
     }
@@ -3222,6 +3322,12 @@ function wireEvents(): void {
   window.addEventListener(
     "keydown",
     (event) => {
+      if (isSettingsShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        openSettings();
+        return;
+      }
       if (event.key === "Escape" && (workspaceSwitcherOpen || shellCovers.has("switcher"))) {
         if (!document.querySelector("dialog[open]")) {
           event.preventDefault();

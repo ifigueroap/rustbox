@@ -751,15 +751,15 @@ select:focus-visible {
 
 .rail-footer {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-1);
   width: 100%;
   justify-content: space-between;
   align-items: center;
 }
 
 .rail-button {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -793,7 +793,7 @@ select:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 28%, transparent);
 }
 
-.dash-tools #check-updates {
+.settings-action {
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -813,7 +813,7 @@ select:focus-visible {
   flex: none;
 }
 
-.dash-tools #check-updates:hover:not(:disabled) {
+.settings-action:hover:not(:disabled) {
   background: var(--hover);
 }
 
@@ -835,6 +835,198 @@ select:focus-visible {
   flex-wrap: wrap;
   flex: none;
   padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+#settings {
+  width: min(560px, calc(100vw - var(--space-6) * 2));
+}
+
+#settings-form.manager-card {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#settings-form .manager-head {
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+#settings-form .dialog-body {
+  gap: 0;
+  padding-top: 0;
+  padding-bottom: var(--space-5);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) 0;
+}
+
+.settings-section + .settings-section {
+  border-top: 1px solid var(--line);
+}
+
+.settings-section h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 18px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: var(--space-2) 0;
+}
+
+.settings-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-label {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.settings-copy .field-hint {
+  max-width: 46ch;
+}
+
+.settings-value,
+.settings-status {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.settings-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.settings-status {
+  margin: var(--space-1) 0 0;
+}
+
+.settings-select {
+  flex: none;
+  min-width: 9.5rem;
+  max-width: 100%;
+  height: var(--control-height);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--input);
+  color: var(--text);
+  padding: 0 var(--space-2);
+}
+
+.segmented {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input);
+  gap: 2px;
+}
+
+.segmented button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.segmented button[aria-checked="true"] {
+  background: var(--copper);
+  color: var(--brand-ink);
+}
+
+.segmented button:hover:not([aria-checked="true"]) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+input.switch {
+  appearance: none;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input);
+  position: relative;
+  cursor: pointer;
+}
+
+input.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 120ms ease;
+}
+
+input.switch:checked {
+  background: var(--copper);
+  border-color: var(--copper);
+}
+
+input.switch:checked::after {
+  transform: translateX(18px);
+  background: var(--brand-ink);
+}
+
+input.switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--copper);
+  padding: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.settings-link:hover {
+  color: var(--copper-hover);
+}
+
+@container dialog (max-width: 460px) {
+  .settings-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .segmented,
+  .settings-select,
+  input.switch,
+  .settings-action {
+    margin-left: auto;
+  }
 }
 
 /* The confirm dialog fills the viewport so a backdrop click lands on the
@@ -1053,72 +1245,32 @@ select:focus-visible {
 }
 
 .dash-head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: var(--space-5);
   margin-bottom: var(--space-5);
 }
 
-.dash-head > div:first-child {
+.dash-titles {
   min-width: 0;
 }
 
-.dash-tools {
+.dash-title-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+}
+
+.dash-title-row h1 {
   min-width: 0;
 }
 
-.settings-pair {
+.dash-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
-  gap: var(--space-3);
-}
-
-.appearance-control {
-  display: grid;
-  gap: var(--space-1);
-  color: var(--muted);
-  font-size: 11px;
-  min-width: 0;
-}
-
-.appearance-control select {
-  min-width: 0;
-  width: 100%;
-  height: var(--control-height);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--input);
-  color: var(--text);
-  padding: 0 var(--space-2);
-}
-
-.version {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  letter-spacing: 0.04em;
-}
-
-.close-tray {
-  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.close-tray input {
-  accent-color: var(--copper);
-  width: 16px;
-  height: 16px;
-  margin: 0;
+  margin-left: auto;
 }
 
 .dash-grid {
@@ -1698,7 +1850,7 @@ input[type="color"] {
   grid-column: 1 / -1;
 }
 
-.dash-tools #dash-workspace-add {
+.dash-actions #dash-workspace-add {
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -1718,7 +1870,7 @@ input[type="color"] {
   flex: none;
 }
 
-.dash-tools #dash-workspace-add:hover:not(:disabled) {
+.dash-actions #dash-workspace-add:hover:not(:disabled) {
   background: var(--hover);
 }
 
@@ -1912,7 +2064,6 @@ button:disabled,
   }
 
   .dash-head {
-    align-items: stretch;
     margin-bottom: var(--space-4);
   }
 }
