@@ -70,6 +70,8 @@ const state = {
   closeToTray: true,
   trayAvailable: true,
   theme: "auto",
+  language: "system",
+  osLocale: "en",
   appVersion: "0.5.0",
   update: {
     state: "idle",
@@ -235,10 +237,16 @@ window.__TAURI_INTERNALS__ = {
       case "reload_service":
       case "open_external":
       case "quit_app":
-      case "set_close_to_tray":
       case "set_service_sound":
       case "set_service_notifications":
       case "relaunch_app":
+      case "set_ui_locale":
+        return Promise.resolve(snapshot());
+      case "set_close_to_tray":
+        state.closeToTray = Boolean(args.enabled);
+        return Promise.resolve(snapshot());
+      case "set_language":
+        state.language = args.language;
         return Promise.resolve(snapshot());
       case "set_update_auto_check":
         state.update.autoCheck = args.enabled;

@@ -187,7 +187,9 @@ describe("update dialog", () => {
       }),
     );
     expect(document.querySelector<HTMLButtonElement>("#update-badge")?.hidden).toBe(true);
-    expect(document.querySelector("#update-checked")?.textContent).toBe("Couldn't check for updates.");
+    expect(document.querySelector("#update-checked")?.textContent).toBe(
+      "Version 0.6.0 · Couldn't check for updates.",
+    );
     expect(document.querySelector("#app-error")?.hasAttribute("hidden")).toBe(true);
     expect(dialog().open).toBe(false);
   });
@@ -203,8 +205,9 @@ describe("update settings and tray", () => {
     );
     const toggle = document.querySelector<HTMLInputElement>("#auto-update");
     expect(toggle?.checked).toBe(true);
-    expect(document.querySelector("#update-checked")?.textContent).toContain("Last checked:");
+    expect(document.querySelector("#update-checked")?.textContent).toContain("Version 0.6.0");
     expect(document.querySelector("#update-checked")?.textContent).toContain("Up to date");
+    expect(document.querySelector("#update-checked")?.textContent).toContain("checked ");
 
     backend = (command, args) => {
       if (command !== "set_update_auto_check") throw new Error(`unexpected ${command}`);

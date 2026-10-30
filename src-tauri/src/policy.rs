@@ -410,5 +410,9 @@ mod tests {
             script.contains("apply_service_shortcut"),
             "inject.js must forward service shortcuts"
         );
+        assert!(
+            script.contains("isSettingsShortcut"),
+            "inject.js must forward the settings shortcut"
+        );
     }
 }

@@ -367,6 +367,10 @@ pub fn apply_shortcut(
     shift: bool,
     alt: bool,
 ) -> Result<bool, String> {
+    if shortcuts::is_settings_shortcut(key, ctrl_or_meta, shift, alt) {
+        let _ = app.emit("open-settings", ());
+        return Ok(false);
+    }
     if let Some(workspace) = shortcuts::parse_workspace_shortcut(key, ctrl_or_meta, shift, alt) {
         let shortcuts::WorkspaceShortcut::OpenIndex(index) = workspace;
         let target = {

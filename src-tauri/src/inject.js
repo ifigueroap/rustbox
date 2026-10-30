@@ -239,6 +239,12 @@
     return !event.altKey && event.shiftKey && String(event.key).toLowerCase() === "d";
   }
 
+  // Ctrl/Cmd+, opens Settings. The shell decides; a child webview only forwards the chord.
+  function isSettingsShortcut(event) {
+    if (event.repeat || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) return false;
+    return event.key === ",";
+  }
+
   // Ctrl/Cmd+Alt+1..9 jumps to a workspace. The shell decides the meaning.
   function isWorkspaceShortcut(event) {
     if (event.repeat || !event.altKey || !(event.ctrlKey || event.metaKey)) return false;
@@ -252,6 +258,18 @@
         event.preventDefault();
         event.stopPropagation();
         invoke("quit_app");
+        return;
+      }
+      if (isSettingsShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        invoke("apply_service_shortcut", {
+          key: event.key,
+          ctrl: event.ctrlKey,
+          meta: event.metaKey,
+          shift: event.shiftKey,
+          alt: event.altKey,
+        });
         return;
       }
       if (!isServiceShortcut(event) && !isWorkspaceShortcut(event)) return;

@@ -91,6 +91,22 @@
             <span class="update-dot" aria-hidden="true"></span>
           </button>
           <button
+            id="settings-button"
+            class="rail-button settings"
+            type="button"
+            title="Settings"
+            aria-label="Settings"
+            data-i18n-title="settings.title"
+            data-i18n-aria="settings.title"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.22-1.13.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.4.31.6.22l2.39-.96c.5.41 1.05.72 1.63.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.58-.22 1.13-.53 1.63-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"
+              />
+            </svg>
+          </button>
+          <button
             id="collapse-button"
             class="rail-button collapse"
             type="button"
@@ -129,47 +145,16 @@
       <section id="stage">
         <div id="dashboard">
           <header class="dash-head">
-            <div>
+            <div class="dash-titles">
               <p id="dash-eyebrow" class="eyebrow">desk</p>
-              <h1 id="dash-title">rustbox</h1>
-              <p id="dash-lede" class="lede">Every service in this window, with its own session.</p>
-            </div>
-            <div class="dash-tools">
-              <div class="settings-pair">
-                <label class="appearance-control" for="theme-select">
-                  <span data-i18n="settings.appearance">Appearance</span>
-                  <select id="theme-select">
-                    <option value="auto" data-i18n="settings.themeAuto">Auto</option>
-                    <option value="light" data-i18n="settings.themeLight">Light</option>
-                    <option value="dark" data-i18n="settings.themeDark">Dark</option>
-                  </select>
-                </label>
-                <label class="appearance-control" for="language-select">
-                  <span data-i18n="settings.language">Language</span>
-                  <select id="language-select">
-                    <option value="system" data-i18n="settings.languageSystem">System</option>
-                    <option value="en" data-i18n="settings.languageEn">English</option>
-                    <option value="es" data-i18n="settings.languageEs">Español</option>
-                  </select>
-                </label>
+              <div class="dash-title-row">
+                <h1 id="dash-title">rustbox</h1>
+                <div class="dash-actions">
+                  <button id="dash-workspace-add" type="button" data-i18n="settings.newWorkspace">New workspace</button>
+                  <button id="dash-add" type="button" data-i18n="settings.addService">Add service</button>
+                </div>
               </div>
-              <p id="app-version" class="version"></p>
-              <label class="close-tray" title="Closing the window hides Rustbox and keeps its services running. Quit from the tray menu, or press Ctrl+Q, to exit.">
-                <input id="close-tray" type="checkbox" checked />
-                <span data-i18n="settings.closeToTray">Close to tray</span>
-              </label>
-              <label class="close-tray" data-i18n-title="settings.autoUpdateHint" title="Rustbox asks GitHub whether a newer release exists. Nothing is installed until you choose to, and no account or identifier is sent.">
-                <input id="auto-update" type="checkbox" checked />
-                <span data-i18n="settings.autoUpdate">Check for updates automatically</span>
-              </label>
-              <button id="check-updates" type="button">Check now</button>
-              <p id="update-checked" class="version">Last checked: never</p>
-              <label class="close-tray" title="Show the workspace rail beside the sidebar.">
-                <input id="rail-toggle" type="checkbox" checked />
-                <span data-i18n="settings.workspaceRail">Workspace rail</span>
-              </label>
-              <button id="dash-workspace-add" type="button" data-i18n="settings.newWorkspace">New workspace</button>
-              <button id="dash-add" type="button" data-i18n="settings.addService">Add service</button>
+              <p id="dash-lede" class="lede">Every service in this window, with its own session.</p>
             </div>
           </header>
           <div id="dash-scope-row" class="dash-scope-row" hidden>
@@ -342,6 +327,95 @@
         <div class="dialog-footer">
           <button id="include-cancel" type="button" data-i18n="common.cancel">Cancel</button>
           <button id="include-save" class="primary" type="submit" disabled>Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings" aria-labelledby="settings-title">
+      <form id="settings-form" class="manager-card" method="dialog">
+        <header class="manager-head">
+          <div>
+            <p class="eyebrow" data-i18n="settings.eyebrow">settings</p>
+            <h2 id="settings-title" data-i18n="settings.title">Settings</h2>
+          </div>
+          <button id="settings-close" class="text-button" type="button" data-i18n="common.close">Close</button>
+        </header>
+        <div class="dialog-body">
+          <section class="settings-section">
+            <h3 data-i18n="settings.appearance">Appearance</h3>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <span id="theme-label" class="settings-label" data-i18n="settings.theme">Theme</span>
+              </div>
+              <div id="theme-select" class="segmented" role="radiogroup" aria-labelledby="theme-label">
+                <button type="button" role="radio" data-value="auto" aria-checked="true" data-i18n="settings.themeAuto">Auto</button>
+                <button type="button" role="radio" data-value="light" aria-checked="false" data-i18n="settings.themeLight">Light</button>
+                <button type="button" role="radio" data-value="dark" aria-checked="false" data-i18n="settings.themeDark">Dark</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <label class="settings-label" for="language-select" data-i18n="settings.language">Language</label>
+              </div>
+              <select id="language-select" class="settings-select">
+                <option value="system" data-i18n="settings.languageSystem">System</option>
+                <option value="en" data-i18n="settings.languageEn">English</option>
+                <option value="es" data-i18n="settings.languageEs">Español</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <label class="settings-label" for="rail-toggle" data-i18n="settings.showWorkspaceRail">Show workspace rail</label>
+                <p id="rail-toggle-hint" class="field-hint">Show the workspace rail beside the sidebar.</p>
+              </div>
+              <input id="rail-toggle" class="switch" type="checkbox" role="switch" checked aria-describedby="rail-toggle-hint" />
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3 data-i18n="settings.window">Window</h3>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <label class="settings-label" for="close-tray" data-i18n="settings.closeToTray">Close to tray</label>
+                <p id="close-tray-hint" class="field-hint">Closing the window keeps Rustbox running in the tray.</p>
+              </div>
+              <input id="close-tray" class="switch" type="checkbox" role="switch" checked aria-describedby="close-tray-hint" />
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3 data-i18n="settings.updates">Updates</h3>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <label class="settings-label" for="auto-update" data-i18n="settings.autoUpdate">Check for updates automatically</label>
+                <p class="field-hint" data-i18n="settings.autoUpdateHint">Rustbox asks GitHub whether a newer release exists. Nothing is installed until you choose to, and no account or identifier is sent.</p>
+              </div>
+              <input id="auto-update" class="switch" type="checkbox" role="switch" checked />
+            </div>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <span class="settings-label" data-i18n="updates.checkForUpdates">Check for updates</span>
+              </div>
+              <button id="check-updates" class="settings-action" type="button">Check now</button>
+            </div>
+            <p id="update-checked" class="settings-status">Version · Last checked: never</p>
+          </section>
+
+          <section class="settings-section">
+            <h3 data-i18n="settings.about">About</h3>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <span class="settings-label" data-i18n="settings.aboutVersion">Version</span>
+              </div>
+              <span id="app-version" class="settings-value"></span>
+            </div>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <span class="settings-label" data-i18n="settings.releases">Releases</span>
+              </div>
+              <button id="settings-releases" class="settings-link" type="button" data-i18n="settings.openReleases">Open releases page</button>
+            </div>
+          </section>
         </div>
       </form>
     </dialog>
