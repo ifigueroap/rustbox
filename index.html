@@ -346,5 +346,23 @@
       </form>
     </dialog>
 
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <form id="confirm-form" class="manager-card" method="dialog">
+        <header class="manager-head">
+          <div>
+            <h2 id="confirm-title"></h2>
+          </div>
+          <button id="confirm-close" class="text-button" type="button" data-i18n="common.close">Close</button>
+        </header>
+        <div class="dialog-body">
+          <p id="confirm-message"></p>
+        </div>
+        <div class="dialog-footer">
+          <button id="confirm-cancel" type="button">Cancel</button>
+          <button id="confirm-accept" class="primary" type="button">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
   </body>
 </html>

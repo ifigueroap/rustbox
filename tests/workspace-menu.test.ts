@@ -240,15 +240,20 @@ describe("include services and delete", () => {
     expect(calls.at(-1)).toMatchObject({ command: "set_active_service", args: { id: slack.id } });
   });
 
+  function confirmDialog(): HTMLDialogElement {
+    const node = document.querySelector<HTMLDialogElement>("#confirm-dialog");
+    if (!node) throw new Error("no confirm dialog");
+    return node;
+  }
+
   it("hides the service webview before the delete confirmation and restores on cancel", async () => {
     const main = workspace("Main", { order: 0 });
     const spotmind = workspace("Spotmind", { order: 1 });
     const slack = service("Slack", [main.id], { preset: "slack" });
-    const order: string[] = [];
-    vi.spyOn(window, "confirm").mockImplementation(() => {
-      order.push("confirm");
-      return false;
+    const nativeConfirm = vi.spyOn(window, "confirm").mockImplementation(() => {
+      throw new Error("native confirm");
     });
+    const openDuringSuspend: boolean[] = [];
     const view = (activeId: string | null) =>
       snapshot({
         workspaces: [main, spotmind],
@@ -258,7 +263,7 @@ describe("include services and delete", () => {
       });
     backend = (command, args) => {
       if (command !== "set_active_service") throw new Error(`unexpected ${command}`);
-      order.push(`active:${String(args.id)}`);
+      openDuringSuspend.push(confirmDialog().open);
       return view((args.id as string | null) ?? null);
     };
 
@@ -267,15 +272,33 @@ describe("include services and delete", () => {
     menuItem(menu, "Delete workspace…").action?.();
     await flush();
 
-    expect(order).toEqual(["active:null", "confirm", `active:${slack.id}`]);
+    expect(confirmDialog().open).toBe(true);
+    expect(document.querySelector("#confirm-title")?.textContent).toBe("Delete workspace?");
+    expect(document.querySelector("#confirm-message")?.textContent).toContain("Delete the Spotmind workspace?");
+    expect(document.querySelector("#confirm-message")?.textContent).toContain(
+      "No service or session is deleted. Services that are only in this workspace move to Main.",
+    );
+    expect(document.querySelector("#confirm-accept")?.textContent).toBe("Delete");
+    expect(document.querySelector("#confirm-cancel")?.textContent).toBe("Cancel");
+    expect(document.querySelector("#confirm-accept")?.classList.contains("danger")).toBe(true);
+    expect(document.activeElement).toBe(document.querySelector("#confirm-cancel"));
+    expect(calls).toEqual([{ command: "set_active_service", args: { id: null } }]);
+    expect(openDuringSuspend).toEqual([false]);
+    expect(nativeConfirm).not.toHaveBeenCalled();
+
+    document.querySelector<HTMLButtonElement>("#confirm-cancel")?.click();
+    await flush();
+
+    expect(confirmDialog().open).toBe(false);
     expect(calls.some((call) => call.command === "remove_workspace")).toBe(false);
+    expect(openDuringSuspend).toEqual([false, false]);
+    expect(calls.at(-1)).toMatchObject({ command: "set_active_service", args: { id: slack.id } });
   });
 
   it("deletes after confirm and restores a service that is still in the workspace", async () => {
     const main = workspace("Main", { order: 0 });
     const spotmind = workspace("Spotmind", { order: 1 });
     const slack = service("Slack", [main.id], { preset: "slack" });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     backend = (command, args) => {
       if (command === "set_active_service") {
         return snapshot({
@@ -306,6 +329,8 @@ describe("include services and delete", () => {
     );
     const menu = await openRailMenu(spotmind.id);
     menuItem(menu, "Delete workspace…").action?.();
+    await flush();
+    document.querySelector<HTMLButtonElement>("#confirm-accept")?.click();
     await flush();
 
     expect(calls.map((call) => call.command)).toEqual([
