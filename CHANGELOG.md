@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/ifigueroap/rustbox/compare/v0.8.0...v0.9.0) (2026-10-30)
+
+
+### Features
+
+* move workspace controls into Settings ([#29](https://github.com/ifigueroap/rustbox/issues/29)) ([716b21b](https://github.com/ifigueroap/rustbox/commit/716b21bfda5585895a3d6cd45a250020fd78c571))
+
+
+### Bug Fixes
+
+* render update notes as sanitized markdown ([#28](https://github.com/ifigueroap/rustbox/issues/28)) ([c56e404](https://github.com/ifigueroap/rustbox/commit/c56e404c7d9bd2b951f23e4de9da915bd81b9f09))
+
 ## [0.8.0](https://github.com/ifigueroap/rustbox/compare/v0.7.0...v0.8.0) (2026-10-30)
 
 
