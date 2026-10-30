@@ -16,6 +16,8 @@ fn main() {
             "set_close_to_tray",
             "quit_app",
             "set_theme",
+            "set_language",
+            "set_ui_locale",
             "add_workspace",
             "update_workspace",
             "include_services",

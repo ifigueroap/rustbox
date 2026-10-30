@@ -11,22 +11,24 @@
     <div id="shell">
       <div id="app-error" class="app-error" role="alert" hidden>
         <span id="app-error-text"></span>
-        <button id="app-error-dismiss" class="text-button" type="button">Dismiss</button>
+        <button id="app-error-dismiss" class="text-button" type="button" data-i18n="common.dismiss">Dismiss</button>
       </div>
-      <nav id="workspace-rail" aria-label="Workspaces" hidden>
-        <div id="workspace-list" role="listbox" aria-label="Workspaces"></div>
+      <nav id="workspace-rail" data-i18n-aria="nav.workspaces" aria-label="Workspaces" hidden>
+        <div id="workspace-list" role="listbox" data-i18n-aria="nav.workspaces" aria-label="Workspaces"></div>
         <button
           id="workspace-add"
           class="ws-add"
           type="button"
           title="New workspace"
           aria-label="New workspace"
+          data-i18n-title="settings.newWorkspace"
+          data-i18n-aria="settings.newWorkspace"
         >
           +
         </button>
       </nav>
       <aside id="sidebar">
-        <button id="brand-button" class="brand" type="button" title="rustbox" aria-label="Show the rustbox dashboard">
+        <button id="brand-button" class="brand" type="button" title="rustbox" data-i18n-aria="brand.showDashboard" aria-label="Show the rustbox dashboard">
           <span class="brand-mark">rb</span>
           <span class="brand-name">rustbox</span>
         </button>
@@ -47,16 +49,17 @@
             id="workspace-switcher-popup"
             class="ws-popup"
             role="listbox"
+            data-i18n-aria="nav.workspaces"
             aria-label="Workspaces"
             hidden
           ></div>
         </div>
         <div class="sidebar-services">
-          <div id="service-list" role="listbox" aria-label="Services"></div>
+          <div id="service-list" role="listbox" data-i18n-aria="nav.services" aria-label="Services"></div>
           <div id="service-empty" class="service-empty" hidden>
-            <p>No services in this workspace yet.</p>
-            <button id="empty-add-service" type="button">Add service</button>
-            <button id="empty-include-services" type="button">Include existing services…</button>
+            <p data-i18n="desk.emptyShort">No services in this workspace yet.</p>
+            <button id="empty-add-service" type="button" data-i18n="settings.addService">Add service</button>
+            <button id="empty-include-services" type="button" data-i18n="include.open">Include existing services…</button>
           </div>
         </div>
         <button
@@ -74,7 +77,7 @@
             />
             <path class="dnd-off-mark" d="m4 4 16 16" />
           </svg>
-          <span class="dnd-label">Do not disturb</span>
+          <span class="dnd-label" data-i18n="dnd.label">Do not disturb</span>
         </button>
         <div class="rail-footer">
           <button
@@ -132,31 +135,41 @@
               <p id="dash-lede" class="lede">Every service in this window, with its own session.</p>
             </div>
             <div class="dash-tools">
-              <label class="appearance-control" for="theme-select">
-                <span>Appearance</span>
-                <select id="theme-select">
-                  <option value="auto">Auto</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </label>
+              <div class="settings-pair">
+                <label class="appearance-control" for="theme-select">
+                  <span data-i18n="settings.appearance">Appearance</span>
+                  <select id="theme-select">
+                    <option value="auto" data-i18n="settings.themeAuto">Auto</option>
+                    <option value="light" data-i18n="settings.themeLight">Light</option>
+                    <option value="dark" data-i18n="settings.themeDark">Dark</option>
+                  </select>
+                </label>
+                <label class="appearance-control" for="language-select">
+                  <span data-i18n="settings.language">Language</span>
+                  <select id="language-select">
+                    <option value="system" data-i18n="settings.languageSystem">System</option>
+                    <option value="en" data-i18n="settings.languageEn">English</option>
+                    <option value="es" data-i18n="settings.languageEs">Español</option>
+                  </select>
+                </label>
+              </div>
               <p id="app-version" class="version"></p>
               <label class="close-tray" title="Closing the window hides Rustbox and keeps its services running. Quit from the tray menu, or press Ctrl+Q, to exit.">
                 <input id="close-tray" type="checkbox" checked />
-                <span>Close to tray</span>
+                <span data-i18n="settings.closeToTray">Close to tray</span>
               </label>
-              <label class="close-tray" title="Rustbox asks GitHub whether a newer release exists. Nothing is installed until you choose to, and no account or identifier is sent.">
+              <label class="close-tray" data-i18n-title="settings.autoUpdateHint" title="Rustbox asks GitHub whether a newer release exists. Nothing is installed until you choose to, and no account or identifier is sent.">
                 <input id="auto-update" type="checkbox" checked />
-                <span>Check for updates automatically</span>
+                <span data-i18n="settings.autoUpdate">Check for updates automatically</span>
               </label>
               <button id="check-updates" type="button">Check now</button>
               <p id="update-checked" class="version">Last checked: never</p>
               <label class="close-tray" title="Show the workspace rail beside the sidebar.">
                 <input id="rail-toggle" type="checkbox" checked />
-                <span>Workspace rail</span>
+                <span data-i18n="settings.workspaceRail">Workspace rail</span>
               </label>
-              <button id="dash-workspace-add" type="button">New workspace</button>
-              <button id="dash-add" type="button">Add service</button>
+              <button id="dash-workspace-add" type="button" data-i18n="settings.newWorkspace">New workspace</button>
+              <button id="dash-add" type="button" data-i18n="settings.addService">Add service</button>
             </div>
           </header>
           <div id="dash-scope-row" class="dash-scope-row" hidden>
@@ -166,8 +179,8 @@
           <div id="dash-empty" class="empty-desk" hidden>
             <p id="dash-empty-text">No services in this workspace yet.</p>
             <div class="empty-actions">
-              <button id="dash-empty-add" type="button">Add service</button>
-              <button id="dash-empty-include" type="button">Include existing services…</button>
+              <button id="dash-empty-add" type="button" data-i18n="settings.addService">Add service</button>
+              <button id="dash-empty-include" type="button" data-i18n="include.open">Include existing services…</button>
               <button id="dash-empty-all" class="text-action" type="button" hidden>Show all services</button>
             </div>
           </div>
@@ -180,29 +193,29 @@
       <div class="manager-card">
         <header class="manager-head">
           <div>
-            <p class="eyebrow">services</p>
-            <h2>Add a service</h2>
+            <p class="eyebrow" data-i18n="manager.eyebrow">services</p>
+            <h2 data-i18n="manager.title">Add a service</h2>
           </div>
-          <button id="manager-close" class="text-button" type="button">Close</button>
+          <button id="manager-close" class="text-button" type="button" data-i18n="common.close">Close</button>
         </header>
         <p id="manager-error" class="error" hidden></p>
 
         <section class="dialog-section">
-          <h3>Presets</h3>
+          <h3 data-i18n="manager.presets">Presets</h3>
           <div id="preset-list" class="preset-grid"></div>
           <div id="server-url-row" class="server-row" hidden>
-            <label id="server-url-label" for="server-url">Server URL</label>
+            <label id="server-url-label" for="server-url" data-i18n="manager.serverUrlLabel">Server URL</label>
             <input id="server-url" type="text" autocomplete="off" spellcheck="false" />
-            <button id="server-url-add" type="button">Add</button>
+            <button id="server-url-add" type="button" data-i18n="common.add">Add</button>
           </div>
         </section>
 
         <section class="dialog-section">
-          <h3>Custom service</h3>
+          <h3 data-i18n="manager.custom">Custom service</h3>
           <div id="custom-fields" class="custom-grid"></div>
           <p id="custom-error" class="error" hidden></p>
           <div class="dialog-footer">
-            <button id="custom-add" class="primary" type="button" disabled>Add custom service</button>
+            <button id="custom-add" class="primary" type="button" disabled data-i18n="manager.addCustom">Add custom service</button>
           </div>
         </section>
 
@@ -218,17 +231,17 @@
       <form id="editor-form" class="manager-card" method="dialog">
         <header class="manager-head">
           <div>
-            <p class="eyebrow">service</p>
-            <h2>Edit service</h2>
+            <p class="eyebrow" data-i18n="editor.eyebrow">service</p>
+            <h2 data-i18n="editor.title">Edit service</h2>
           </div>
-          <button id="editor-close" class="text-button" type="button">Close</button>
+          <button id="editor-close" class="text-button" type="button" data-i18n="common.close">Close</button>
         </header>
         <div class="dialog-body">
           <p id="editor-error" class="error" hidden></p>
           <div id="editor-fields" class="custom-grid"></div>
         </div>
         <div class="dialog-footer">
-          <button id="editor-cancel" type="button">Cancel</button>
+          <button id="editor-cancel" type="button" data-i18n="common.cancel">Cancel</button>
           <button id="editor-save" class="primary" type="submit" disabled>Save</button>
         </div>
       </form>
@@ -238,40 +251,40 @@
       <form id="workspace-form" class="manager-card" method="dialog">
         <header class="manager-head">
           <div>
-            <p class="eyebrow">workspace</p>
+            <p class="eyebrow" data-i18n="workspace.eyebrow">workspace</p>
             <h2 id="workspace-editor-title">New workspace</h2>
           </div>
-          <button id="workspace-close" class="text-button" type="button">Close</button>
+          <button id="workspace-close" class="text-button" type="button" data-i18n="common.close">Close</button>
         </header>
         <div class="dialog-body">
           <p id="workspace-error" class="error" hidden></p>
           <div class="custom-grid">
             <label class="wide">
-              Name
+              <span data-i18n="common.name">Name</span>
               <input id="workspace-name" type="text" maxlength="80" autocomplete="off" spellcheck="false" />
             </label>
             <label class="wide">
-              Icon
+              <span data-i18n="workspace.icon">Icon</span>
               <div class="icon-row">
                 <span id="workspace-preview" class="avatar icon-preview"></span>
-                <button id="workspace-choose" class="file-button" type="button">Choose image</button>
+                <button id="workspace-choose" class="file-button" type="button" data-i18n="workspace.chooseImage">Choose image</button>
                 <input id="workspace-file" type="file" accept=".png,.svg,.ico,.jpg,.jpeg,.webp,image/png,image/svg+xml,image/jpeg,image/webp,image/x-icon" hidden />
-                <input id="workspace-icon" type="text" placeholder="Emoji, URL, or leave blank for the initial" spellcheck="false" />
-                <button id="workspace-icon-reset" class="text-action" type="button">Use initial</button>
+                <input id="workspace-icon" type="text" data-i18n-placeholder="workspace.iconPlaceholder" placeholder="Emoji, URL, or leave blank for the initial" spellcheck="false" />
+                <button id="workspace-icon-reset" class="text-action" type="button" data-i18n="workspace.useInitial">Use initial</button>
               </div>
-              <p class="field-hint">An emoji like 💼, an image URL, or a file copied into Rustbox's data folder.</p>
+              <p class="field-hint" data-i18n="workspace.iconHint">An emoji like 💼, an image URL, or a file copied into Rustbox's data folder.</p>
             </label>
             <label class="wide">
-              Accent color
+              <span data-i18n="workspace.accent">Accent color</span>
               <div class="accent-row">
-                <input id="workspace-color" type="color" value="#8d8478" aria-label="Workspace accent color" />
-                <input id="workspace-hex" type="text" class="hex-input" value="#8d8478" spellcheck="false" aria-label="Workspace accent color hex" />
+                <input id="workspace-color" type="color" value="#8d8478" data-i18n-aria="workspace.accentAria" aria-label="Workspace accent color" />
+                <input id="workspace-hex" type="text" class="hex-input" value="#8d8478" spellcheck="false" data-i18n-aria="workspace.accentHex" aria-label="Workspace accent color hex" />
               </div>
-              <p class="field-hint">Used for the rail highlight and the letter fallback.</p>
+              <p class="field-hint" data-i18n="workspace.accentHint">Used for the rail highlight and the letter fallback.</p>
             </label>
             <fieldset id="workspace-include-field" class="membership wide">
-              <legend>Include existing services <span class="field-hint-inline">(optional)</span></legend>
-              <p class="field-hint">
+              <legend><span data-i18n="workspace.includeLegend">Include existing services</span> <span class="field-hint-inline" data-i18n="workspace.includeOptional">(optional)</span></legend>
+              <p class="field-hint" data-i18n="workspace.includeHint">
                 Ticked services are added to this workspace too. Nothing is removed from the workspaces they are already in.
               </p>
               <div id="workspace-include-options" class="membership-options"></div>
@@ -279,7 +292,7 @@
           </div>
         </div>
         <div class="dialog-footer">
-          <button id="workspace-cancel" type="button">Cancel</button>
+          <button id="workspace-cancel" type="button" data-i18n="common.cancel">Cancel</button>
           <button id="workspace-save" class="primary" type="submit" disabled>Save</button>
         </div>
       </form>
@@ -289,10 +302,10 @@
       <form id="update-form" class="manager-card" method="dialog">
         <header class="manager-head">
           <div>
-            <p class="eyebrow">update</p>
-            <h2 id="update-title">Update available</h2>
+            <p class="eyebrow" data-i18n="updates.eyebrow">update</p>
+            <h2 id="update-title" data-i18n="updates.available">Update available</h2>
           </div>
-          <button id="update-close" class="text-button" type="button">Close</button>
+          <button id="update-close" class="text-button" type="button" data-i18n="common.close">Close</button>
         </header>
         <div class="dialog-body">
           <p id="update-version"></p>
@@ -301,11 +314,11 @@
           <p id="update-error" class="error" hidden></p>
         </div>
         <div class="dialog-footer">
-          <button id="update-later" type="button">Later</button>
-          <button id="update-skip" type="button">Skip this version</button>
-          <button id="update-open" type="button">Open release page</button>
+          <button id="update-later" type="button" data-i18n="updates.later">Later</button>
+          <button id="update-skip" type="button" data-i18n="updates.skip">Skip this version</button>
+          <button id="update-open" type="button" data-i18n="updates.openRelease">Open release page</button>
           <button id="update-install" class="primary" type="button">Download and install</button>
-          <button id="update-restart" class="primary" type="button" hidden>Restart to update</button>
+          <button id="update-restart" class="primary" type="button" hidden data-i18n="updates.restart">Restart to update</button>
         </div>
       </form>
     </dialog>
@@ -314,10 +327,10 @@
       <form id="include-form" class="manager-card" method="dialog">
         <header class="manager-head">
           <div>
-            <p class="eyebrow">workspace</p>
+            <p class="eyebrow" data-i18n="workspace.eyebrow">workspace</p>
             <h2 id="include-title">Include existing services</h2>
           </div>
-          <button id="include-close" class="text-button" type="button">Close</button>
+          <button id="include-close" class="text-button" type="button" data-i18n="common.close">Close</button>
         </header>
         <div class="dialog-body">
           <p id="include-error" class="error" hidden></p>
@@ -327,7 +340,7 @@
           <div id="include-options" class="membership-options"></div>
         </div>
         <div class="dialog-footer">
-          <button id="include-cancel" type="button">Cancel</button>
+          <button id="include-cancel" type="button" data-i18n="common.cancel">Cancel</button>
           <button id="include-save" class="primary" type="submit" disabled>Save</button>
         </div>
       </form>
@@ -339,7 +352,7 @@
           <div>
             <h2 id="confirm-title"></h2>
           </div>
-          <button id="confirm-close" class="text-button" type="button">Close</button>
+          <button id="confirm-close" class="text-button" type="button" data-i18n="common.close">Close</button>
         </header>
         <div class="dialog-body">
           <p id="confirm-message"></p>

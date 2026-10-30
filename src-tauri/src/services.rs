@@ -88,6 +88,10 @@ pub struct Snapshot {
     pub close_to_tray: bool,
     pub tray_available: bool,
     pub theme: Theme,
+    pub language: crate::config::LanguagePreference,
+    /// OS locale already mapped to `en` or `es`, used when language is `system`
+    /// and the webview has no `navigator.language`.
+    pub os_locale: crate::i18n::Locale,
     pub app_version: String,
     pub update: UpdateStatus,
 }
@@ -202,6 +206,8 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         close_to_tray: config.close_to_tray,
         tray_available: app.tray_by_id("rustbox").is_some(),
         theme: config.theme,
+        language: config.language,
+        os_locale: crate::i18n::system_locale(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         update: {
             let mut update = updates::apply_settings(&updates::current_status(), &config.updates);

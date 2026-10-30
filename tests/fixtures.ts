@@ -51,6 +51,8 @@ export interface TestSnapshot {
   closeToTray: boolean;
   trayAvailable: boolean;
   theme: "auto" | "light" | "dark";
+  language?: "system" | "en" | "es";
+  osLocale?: "en" | "es";
   appVersion: string;
   update: TestUpdate;
 }
@@ -132,6 +134,8 @@ export function snapshot(overrides: Partial<TestSnapshot> = {}): TestSnapshot {
     closeToTray: true,
     trayAvailable: true,
     theme: "dark",
+    language: "system",
+    osLocale: "en",
     appVersion: "0.5.0",
     update: {
       state: "idle",

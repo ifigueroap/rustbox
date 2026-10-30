@@ -1,4 +1,5 @@
 mod config;
+mod i18n;
 #[cfg(target_os = "linux")]
 mod linux_host;
 mod policy;
@@ -7,7 +8,8 @@ mod shortcuts;
 mod tray;
 mod updates;
 
-use config::{NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
+use config::{LanguagePreference, NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
+use i18n::Locale;
 use services::{RuntimeState, Snapshot};
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
@@ -158,6 +160,29 @@ fn set_theme(app: tauri::AppHandle, theme: Theme) -> Result<Snapshot, String> {
         Ok(())
     })?;
     Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_language(
+    app: tauri::AppHandle,
+    language: LanguagePreference,
+    locale: Option<Locale>,
+) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        config.language = language;
+        Ok(())
+    })?;
+    i18n::set_ui_locale(locale.unwrap_or_else(|| i18n::resolve_preference(language)));
+    tray::sync(&app);
+    Ok(services::snapshot(&app))
+}
+
+/// The shell resolved `system` with `navigator.language`. Relabel native UI
+/// without writing the config again.
+#[tauri::command]
+fn set_ui_locale(app: tauri::AppHandle, locale: Locale) {
+    i18n::set_ui_locale(locale);
+    tray::sync(&app);
 }
 
 #[tauri::command]
@@ -397,6 +422,8 @@ pub fn run() {
             } else {
                 eprintln!("rustbox: main window is missing; the close button cannot be handled");
             }
+            let language = services::lock(&app.state::<RuntimeState>().config).language;
+            i18n::set_ui_locale(i18n::resolve_preference(language));
             if let Err(err) = tray::install(app.handle()) {
                 eprintln!("rustbox: tray icon was not created: {err}");
             }
@@ -428,6 +455,8 @@ pub fn run() {
             set_close_to_tray,
             quit_app,
             set_theme,
+            set_language,
+            set_ui_locale,
             add_workspace,
             update_workspace,
             include_services,
@@ -545,11 +574,12 @@ fn notify_update(app: &tauri::AppHandle, version: &str) {
     if version.is_empty() {
         return;
     }
+    let locale = i18n::ui_locale();
     let result = app
         .notification()
         .builder()
-        .title("Rustbox update")
-        .body(format!("Version {version} is available."))
+        .title(i18n::update_notification_title(locale))
+        .body(i18n::update_notification_body(locale, version))
         .show();
     if result.is_err() {
         eprintln!("rustbox: could not show the update notification");

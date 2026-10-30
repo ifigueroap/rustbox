@@ -39,6 +39,16 @@ pub enum Theme {
     Dark,
 }
 
+/// `system` follows the OS locale. `en` and `es` are explicit.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguagePreference {
+    #[default]
+    System,
+    En,
+    Es,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Preset {
     pub id: &'static str,
@@ -251,6 +261,9 @@ pub struct Config {
     pub workspace_rail_hidden: bool,
     #[serde(default)]
     pub theme: Theme,
+    /// `system` (the default), `en`, or `es`. Missing on older files.
+    #[serde(default)]
+    pub language: LanguagePreference,
     /// Background update checks. Missing on older files, which means on.
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -272,6 +285,7 @@ impl Default for Config {
             close_to_tray: true,
             workspace_rail_hidden: false,
             theme: Theme::Auto,
+            language: LanguagePreference::System,
             updates: UpdateSettings::default(),
         }
     }
@@ -1534,6 +1548,7 @@ mod tests {
         assert!(loaded.sidebar_collapsed);
         assert!(loaded.do_not_disturb);
         assert_eq!(loaded.theme, Theme::Dark);
+        assert_eq!(loaded.language, LanguagePreference::System);
         assert!(loaded.updates.auto_check);
         assert!(loaded.updates.last_checked_at.is_none());
         assert!(loaded.updates.skipped_version.is_none());
@@ -1550,6 +1565,26 @@ mod tests {
         assert_eq!(reloaded, loaded);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn language_defaults_to_system_and_round_trips_without_dropping_services() {
+        let bare: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
+        assert_eq!(bare.language, LanguagePreference::System);
+        let spanish: Config =
+            serde_json::from_str(r#"{"version":1,"language":"es","services":[]}"#).unwrap();
+        assert_eq!(spanish.language, LanguagePreference::Es);
+        let english: Config = serde_json::from_str(
+            r#"{"version":1,"language":"en","services":[{"id":"a","name":"Slack","url":"https://app.slack.com/"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(english.language, LanguagePreference::En);
+        assert_eq!(english.services.len(), 1);
+        assert_eq!(english.services[0].name, "Slack");
+        let written = serde_json::to_string(&english).unwrap();
+        let reloaded: Config = serde_json::from_str(&written).unwrap();
+        assert_eq!(reloaded.language, LanguagePreference::En);
+        assert_eq!(reloaded.services.len(), 1);
     }
 
     #[test]

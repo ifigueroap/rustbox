@@ -24,6 +24,7 @@ struct TrayMenu {
     updates: MenuItem<Wry>,
     show: MenuItem<Wry>,
     hide: MenuItem<Wry>,
+    quit: MenuItem<Wry>,
     /// One check item per workspace, in rail order. Rebuilt when the
     /// workspace list changes because native menus are not dynamic.
     workspaces: Mutex<Vec<(String, CheckMenuItem<Wry>)>>,
@@ -55,11 +56,7 @@ pub fn resolve_close(intent_hide: bool, hide_succeeded: bool) -> CloseResolution
 }
 
 pub fn tooltip(unread: u32) -> String {
-    match unread {
-        0 => "Rustbox".to_string(),
-        1 => "Rustbox — 1 unread".to_string(),
-        count => format!("Rustbox — {count} unread"),
-    }
+    crate::i18n::tooltip(crate::i18n::ui_locale(), unread)
 }
 
 pub fn request_quit(app: &AppHandle) {
@@ -68,35 +65,38 @@ pub fn request_quit(app: &AppHandle) {
 }
 
 pub fn install(app: &AppHandle) -> Result<(), String> {
+    let locale = crate::i18n::ui_locale();
     let dnd_on = services::lock(&app.state::<RuntimeState>().config).do_not_disturb;
     let close_on = services::lock(&app.state::<RuntimeState>().config).close_to_tray;
-    let show_item = MenuItemBuilder::with_id("tray-show", "Show window")
+    let show_item = MenuItemBuilder::with_id("tray-show", crate::i18n::tray_show(locale))
         .build(app)
         .map_err(|err| err.to_string())?;
-    let hide_item = MenuItemBuilder::with_id("tray-hide", "Hide window")
+    let hide_item = MenuItemBuilder::with_id("tray-hide", crate::i18n::tray_hide(locale))
         .build(app)
         .map_err(|err| err.to_string())?;
-    let dnd = CheckMenuItemBuilder::with_id("tray-dnd", "Do not disturb")
+    let dnd = CheckMenuItemBuilder::with_id("tray-dnd", crate::i18n::tray_dnd(locale))
         .checked(dnd_on)
         .build(app)
         .map_err(|err| err.to_string())?;
-    let close_to_tray = CheckMenuItemBuilder::with_id("tray-close", "Close window to tray")
-        .checked(close_on)
+    let close_to_tray =
+        CheckMenuItemBuilder::with_id("tray-close", crate::i18n::tray_close(locale))
+            .checked(close_on)
+            .build(app)
+            .map_err(|err| err.to_string())?;
+    let updates = MenuItemBuilder::with_id("tray-updates", crate::i18n::tray_check_updates(locale))
         .build(app)
         .map_err(|err| err.to_string())?;
-    let updates = MenuItemBuilder::with_id("tray-updates", "Check for updates")
-        .build(app)
-        .map_err(|err| err.to_string())?;
-    let quit = MenuItemBuilder::with_id("tray-quit", "Quit")
+    let quit = MenuItemBuilder::with_id("tray-quit", crate::i18n::tray_quit(locale))
         .build(app)
         .map_err(|err| err.to_string())?;
     let separator = PredefinedMenuItem::separator(app).map_err(|err| err.to_string())?;
     let separator_after = PredefinedMenuItem::separator(app).map_err(|err| err.to_string())?;
 
     let workspaces = build_workspace_items(app)?;
-    let workspace_menu = SubmenuBuilder::with_id(app, "tray-workspaces", "Workspaces")
-        .build()
-        .map_err(|err| err.to_string())?;
+    let workspace_menu =
+        SubmenuBuilder::with_id(app, "tray-workspaces", crate::i18n::tray_workspaces(locale))
+            .build()
+            .map_err(|err| err.to_string())?;
     for (_, item) in &workspaces {
         workspace_menu.append(item).map_err(|err| err.to_string())?;
     }
@@ -176,6 +176,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
         updates,
         show: show_item,
         hide: hide_item,
+        quit,
         workspaces: Mutex::new(workspaces),
         workspace_menu: Mutex::new(Some(workspace_menu)),
     });
@@ -199,7 +200,7 @@ fn build_workspace_items(app: &AppHandle) -> Result<Vec<(String, CheckMenuItem<W
     for (id, name, dnd) in workspaces {
         let item = CheckMenuItemBuilder::with_id(
             format!("tray-workspace-dnd:{id}"),
-            format!("{name} — Do not disturb"),
+            crate::i18n::tray_workspace_dnd(crate::i18n::ui_locale(), &name),
         )
         .checked(dnd)
         .build(app)
@@ -237,6 +238,8 @@ pub fn sync(app: &AppHandle) {
         return;
     };
     let unread = services::visible_unread_total(app);
+    let locale = crate::i18n::ui_locale();
+    relabel(&menu, locale);
     let _ = menu
         .dnd
         .set_checked(flag(app, |config| config.do_not_disturb));
@@ -247,6 +250,7 @@ pub fn sync(app: &AppHandle) {
     let _ = menu.updates.set_text(crate::updates::tray_menu_label(
         update.state,
         update.latest.as_deref(),
+        locale,
     ));
     let open = window_is_open(app);
     let _ = menu.show.set_enabled(!open);
@@ -297,8 +301,19 @@ fn sync_workspace_items(app: &AppHandle, menu: &TrayMenu) {
     }
 }
 
+fn relabel(menu: &TrayMenu, locale: crate::i18n::Locale) {
+    let _ = menu.show.set_text(crate::i18n::tray_show(locale));
+    let _ = menu.hide.set_text(crate::i18n::tray_hide(locale));
+    let _ = menu.dnd.set_text(crate::i18n::tray_dnd(locale));
+    let _ = menu.close_to_tray.set_text(crate::i18n::tray_close(locale));
+    let _ = menu.quit.set_text(crate::i18n::tray_quit(locale));
+    if let Some(submenu) = services::lock(&menu.workspace_menu).as_ref() {
+        let _ = submenu.set_text(crate::i18n::tray_workspaces(locale));
+    }
+}
+
 fn tray_dnd_label(name: &str) -> String {
-    format!("{name} — Do not disturb")
+    crate::i18n::tray_workspace_dnd(crate::i18n::ui_locale(), name)
 }
 
 fn workspace_flag(app: &AppHandle, workspace_id: &str) -> bool {
@@ -526,9 +541,13 @@ mod tests {
 
     #[test]
     fn tooltip_counts_visible_unread() {
+        crate::i18n::set_ui_locale(crate::i18n::Locale::En);
         assert_eq!(tooltip(0), "Rustbox");
         assert_eq!(tooltip(1), "Rustbox — 1 unread");
         assert_eq!(tooltip(4), "Rustbox — 4 unread");
+        crate::i18n::set_ui_locale(crate::i18n::Locale::Es);
+        assert_eq!(tooltip(1), "Rustbox — 1 sin leer");
+        crate::i18n::set_ui_locale(crate::i18n::Locale::En);
     }
 
     #[test]

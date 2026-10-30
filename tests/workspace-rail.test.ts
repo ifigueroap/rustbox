@@ -227,6 +227,7 @@ describe("render", () => {
       "#rail-toggle",
       "#close-tray",
       "#theme-select",
+      "#language-select",
       "#manager",
       "#editor",
       "#workspace-editor",
