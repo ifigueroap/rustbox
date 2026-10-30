@@ -578,7 +578,8 @@ function openConfirmDialog(options: ConfirmDialogOptions, generation: number): P
  * above this HTML, so the prompt suspends the active service and the caller's
  * cover (claimed before this await) keeps it hidden until the follow-up
  * action finishes. Escape, Close, Cancel, and a backdrop click resolve false.
- * Enter resolves true even when Cancel has focus, which it does for `danger`.
+ * Enter activates the focused button: Cancel on a danger prompt, otherwise
+ * the confirm button.
  */
 function confirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
   const generation = confirmGeneration;
@@ -610,8 +611,9 @@ function wireConfirmDialog(): void {
   const nodes = confirmNodes();
   if (!nodes) return;
   nodes.form.addEventListener("submit", (event) => {
+    // Buttons are type="button". A submit must not confirm a danger prompt
+    // whose Cancel button is the one with focus.
     event.preventDefault();
-    settleConfirm(true);
   });
   nodes.accept.addEventListener("click", () => settleConfirm(true));
   nodes.cancel.addEventListener("click", () => settleConfirm(false));
@@ -635,19 +637,24 @@ function wireConfirmDialog(): void {
         settleConfirm(false);
         return;
       }
+      // Enter activates the focused button. jsdom does not synthesize that
+      // click, and a danger prompt focuses Cancel, so this must not confirm.
       if (
-        event.key === "Enter" &&
-        !event.repeat &&
-        !event.altKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.shiftKey &&
-        !event.isComposing
+        event.key !== "Enter" ||
+        event.repeat ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.isComposing
       ) {
-        event.preventDefault();
-        event.stopPropagation();
-        settleConfirm(true);
+        return;
       }
+      const focused = document.activeElement;
+      if (!(focused instanceof HTMLButtonElement) || !nodes.dialog.contains(focused)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      focused.click();
     },
     true,
   );

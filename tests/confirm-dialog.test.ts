@@ -86,7 +86,7 @@ describe("confirmDialog", () => {
     await expect(safe).resolves.toBe(true);
   });
 
-  it("confirms on Enter while Cancel is focused, and cancels on Escape or the backdrop", async () => {
+  it("lets Enter activate the focused button, and cancels on Escape or the backdrop", async () => {
     const pending = confirmDialog({
       title: "Delete workspace?",
       message: "Nothing is removed.",
@@ -95,8 +95,37 @@ describe("confirmDialog", () => {
       danger: true,
     });
     await flush();
+    expect(document.activeElement).toBe(cancelButton());
+    (document.activeElement as HTMLElement).blur();
+    dialog().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await flush();
+    expect(dialog().open).toBe(true);
+    cancelButton().focus();
     cancelButton().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    await expect(pending).resolves.toBe(true);
+    await expect(pending).resolves.toBe(false);
+
+    const confirmed = confirmDialog({
+      title: "Delete workspace?",
+      message: "Nothing is removed.",
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    await flush();
+    acceptButton().focus();
+    acceptButton().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await expect(confirmed).resolves.toBe(true);
+
+    const safe = confirmDialog({
+      title: "Leave?",
+      message: "You can come back.",
+      confirmLabel: "Leave",
+      cancelLabel: "Stay",
+    });
+    await flush();
+    expect(document.activeElement).toBe(acceptButton());
+    acceptButton().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await expect(safe).resolves.toBe(true);
 
     const escaped = confirmDialog({
       title: "Delete workspace?",
@@ -161,10 +190,11 @@ describe("remove service confirmation", () => {
       "Remove Slack? Its saved session will be deleted.",
     );
     expect(acceptButton().textContent).toBe("Remove");
+    expect(document.activeElement).toBe(cancelButton());
     expect(calls.some((call) => call.command === "remove_service")).toBe(false);
     expect(nativeConfirm).not.toHaveBeenCalled();
 
-    cancelButton().click();
+    cancelButton().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await flush();
     expect(dialog().open).toBe(false);
     expect(calls.some((call) => call.command === "remove_service")).toBe(false);
