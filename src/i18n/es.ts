@@ -218,6 +218,9 @@ export const es = {
   "updates.noNotes": "No hay notas de la versión.",
   "updates.manual":
     "Esta copia no puede instalar actualizaciones por sí misma. Abre la página de la versión y reemplázala cuando quieras. Los servicios y las sesiones se quedan donde están.",
+  "updates.package":
+    "Esta copia la instaló el gestor de paquetes del sistema, así que Rustbox no reemplaza sus propios archivos. Actualízala con el comando de abajo o abre la página de la versión. Los servicios y las sesiones se quedan donde están.",
+  "updates.packageCommand": "Comando de actualización",
   "updates.download": "Descargar e instalar",
   "updates.downloading": "Descargando…",
   "updates.restart": "Reiniciar para actualizar",

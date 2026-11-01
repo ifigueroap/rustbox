@@ -6,12 +6,13 @@ The shell is [Tauri](https://v2.tauri.app/) 2 on the system webview: WebView2 on
 
 ## Run it from a release
 
-Published builds include a Windows installer and portable executable, a Linux AppImage and binary, and a universal macOS disk image and app archive.
+Published builds include a Windows installer and portable executable, a Linux AppImage and binary, a universal macOS disk image and app archive, and an Arch Linux package recipe.
 
 - **Windows installer:** download `rustbox-windows-x64-setup.exe`. It offers **Just me** and **All users**. On an administrator account Windows asks for approval first, then shows the choice. Just me installs under the current account; when an older per-user copy is already installed, that choice upgrades it in place. All users installs to Program Files. A standard account does not see All users and installs for the current user only. Either choice uses the same app id `app.rustbox.desktop` as the portable executable, so each person's config and sessions stay in their own `%APPDATA%\app.rustbox.desktop`. A machine-wide install does not move or share that folder. Choosing All users when a per-user copy is already installed removes that copy's program files and does not delete AppData. An upgrade replaces program files and does not delete services. The installer creates a Start Menu shortcut and an uninstaller. The uninstaller removes services and sessions only if you check **Delete app data**; leave that unchecked to keep them. Windows 11 and current Windows 10 already include the WebView2 runtime it needs.
 - **Windows portable:** download `rustbox-windows-x64.exe` and run it. It also needs WebView2.
 - **Linux AppImage:** `chmod +x rustbox-linux-x64.AppImage` and run it.
 - **Linux binary:** extract `rustbox-linux-x64.tar.gz` and run `./rustbox`.
+- **Arch Linux and Omarchy:** install from source against the system WebKitGTK with the one-liner in [Arch Linux / Omarchy](#arch-linux--omarchy). The AppImage's bundled WebKitGTK can abort on a newer Mesa, so this is the recommended Linux install there.
 - **macOS disk image:** download `rustbox-macos-universal.dmg`, open it, and drag Rustbox to Applications. The same file runs on Apple Silicon and Intel. macOS 14 or newer is required.
 - **macOS app archive:** extract `rustbox-macos-universal.app.tar.gz` and open `Rustbox.app`.
 
@@ -22,6 +23,40 @@ xattr -dr com.apple.quarantine /Applications/Rustbox.app
 ```
 
 Use the path of the app you opened if it is not in Applications.
+
+## Arch Linux / Omarchy
+
+The AppImage is built on Ubuntu 22.04 and carries that distribution's WebKitGTK. On Arch and Omarchy the bundled `WebKitWebProcess` can abort as soon as it meets a newer Mesa or GL stack, which shows up as a SIGABRT in `systemd-coredump`. An Arch package builds Rustbox against the system WebKitGTK instead, so the web engine and the graphics driver are the ones pacman already maintains for the rest of the desktop.
+
+Install it with one command. Nothing is cloned and the release asset is the recipe:
+
+```bash
+d=$(mktemp -d) && cd "$d" && curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si
+```
+
+`makepkg` downloads the source tarball for the latest tag, installs `webkit2gtk-4.1`, `gtk3`, `libayatana-appindicator`, `xdg-utils`, and the build dependencies, compiles the app, and hands the result to `pacman`. Rustbox lands in `/usr/bin/rustbox` with a desktop entry and hicolor icons, so it appears in your launcher. The first build takes a while because it compiles the app; later updates reuse the build cache.
+
+Updates are the same command. Rerun it whenever you want the newer release, or run `pacman -Syu` after rebuilding. Rustbox itself does not touch files pacman owns: when a release is newer and the copy is a package install, the update dialog names the version and shows the command instead of offering **Download and install**. The AppImage keeps its own updater.
+
+Uninstall with pacman:
+
+```bash
+sudo pacman -R rustbox
+```
+
+Your services, sessions, and settings live in `~/.config/app.rustbox.desktop/` and `~/.local/share/app.rustbox.desktop/`, which pacman never touches. Removing the package keeps them, so a later reinstall comes back to the same setup; delete those two directories yourself if you want a clean slate.
+
+The package is intentionally not on the AUR yet. The GitHub release asset is the only distribution channel, and `packaging/arch/PKGBUILD` in this repository is the recipe it is rendered from. Every release sets `pkgver` to the tag, resets `pkgrel`, and computes the checksum of that tag's tarball, so the asset always matches the release it came from.
+
+### WebKitGTK on Wayland
+
+Rustbox sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup when it is unset. WebKitGTK 2.42 and later draw through DMA-BUF, and its renderer is what aborts when the web engine, the compositor, and Mesa disagree; the software path avoids that. Set the variable yourself to any value to keep your choice, including `0` to opt back in:
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=0 rustbox
+```
+
+A package does not force the variable on the whole desktop, so it only applies to Rustbox, and the log line at startup says when the default was applied.
 
 Linux builds still need WebKitGTK 4.1 on the machine (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit. On Debian or Ubuntu:
 
@@ -224,6 +259,8 @@ These installs can replace themselves:
 
 The portable Windows executable (`rustbox-windows-x64.exe`) and the Linux tar.gz binary (`rustbox-linux-x64.tar.gz`) are notify-only. Their dialog offers **Open release page** so you can replace the file yourself. An update never deletes services or sessions; those stay in the per-user config and session directories. On Windows, leave the installer's **Delete app data** box unchecked.
 
+The Arch package is notify-only for a different reason: pacman owns `/usr/bin/rustbox`, `/usr/share/applications/rustbox.desktop`, and the icons, so downloading a new binary into place would leave the package database describing files that no longer exist. Its dialog says the release is available and shows the update command from [Arch Linux / Omarchy](#arch-linux--omarchy) instead of **Download and install**. Detection is by install kind: Linux, no `APPIMAGE`, and no `deb` or `rpm` bundle marker means a package build. The AppImage sets `APPIMAGE` and keeps its own updater.
+
 The first time a version is found by an automatic check, Rustbox shows one native notification, and not again for that version. Do not disturb suppresses it until a later check runs with Do not disturb off.
 
 Updater artifacts are signed with the minisign key pair whose public half is in `src-tauri/tauri.conf.json`. The private key and its password live only in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (the password is empty). A local `tauri build` that produces bundles needs that private key in the environment or the bundler stops. `tauri dev` does not.
@@ -243,7 +280,7 @@ Versions follow [Conventional Commits](https://www.conventionalcommits.org/). `.
 
 A scope is optional (`fix(sidebar): ...`). This mapping is the default Release Please strategy, including before 1.0.0: a breaking change on `0.1.x` releases `1.0.0`.
 
-On every push to `master`, `.github/workflows/release-please.yml` runs Release Please. After a releasable commit, it opens a release pull request that bumps `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the `rustbox` entry in `src-tauri/Cargo.lock`, and writes `CHANGELOG.md`. Merging that pull request creates the tag `vX.Y.Z` and a GitHub Release whose notes are the changelog. The same workflow then starts `.github/workflows/release.yml` on that tag.
+On every push to `master`, `.github/workflows/release-please.yml` runs Release Please. After a releasable commit, it opens a release pull request that bumps `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `packaging/arch/PKGBUILD`, and the `rustbox` entry in `src-tauri/Cargo.lock`, and writes `CHANGELOG.md`. Merging that pull request creates the tag `vX.Y.Z` and a GitHub Release whose notes are the changelog. The same workflow then starts `.github/workflows/release.yml` on that tag.
 
 `release.yml` also runs when a `v*` tag is pushed and on manual `workflow_dispatch`. Those runs build:
 
@@ -253,7 +290,9 @@ On every push to `master`, `.github/workflows/release-please.yml` runs Release P
 
 and upload them to the GitHub Release, along with `latest.json` once every platform build has succeeded. The macOS archive that is published is the archive Tauri signed, so the signature matches the bytes. A pull request runs the macOS job (tests, the universal disk image, and the signed app archive) and a dry run of the `latest.json` generator, and does not publish. If the repository signing key is missing on that pull request, the macOS job mints an ephemeral key so the bundler can still emit `.sig` files. A tag or manual run refuses to build updater artifacts without `TAURI_SIGNING_PRIVATE_KEY`. A tag-triggered run requires the tag to match `version` in `src-tauri/tauri.conf.json` (`v0.1.1` for version `0.1.1`). If the release already has notes, the workflow leaves them in place and only adds the build assets. Those notes are also copied into `latest.json`.
 
-The Cargo version lines Release Please rewrites are marked with `x-release-please-version`. Keep that comment on the package version in `src-tauri/Cargo.toml` and on the `rustbox` version in `src-tauri/Cargo.lock`. `cargo update` rewrites the lockfile and drops the comment; put it back on the `rustbox` version line before merging. `node scripts/check-release-versions.mjs` checks that the versions match and that both markers are present.
+The Publish job also uploads `PKGBUILD`, the Arch recipe from [Arch Linux / Omarchy](#arch-linux--omarchy), rendered for that tag. `scripts/render-arch-pkgbuild.mjs` downloads `https://github.com/ifigueroap/rustbox/archive/refs/tags/vX.Y.Z.tar.gz`, sets `pkgver` to the tag, resets `pkgrel=1`, and writes that tarball's `sha256sums`, then checks the result with `bash -n` and a set of grep assertions. The in-repo `packaging/arch/PKGBUILD` is the template: its dependencies, build steps, and installed files are what ships, and Release Please keeps only its `pkgver` in step. `node scripts/render-arch-pkgbuild.mjs --self-test` and `node scripts/check-release-versions.mjs` cover both. The release asset, not the file in the repository, is what the install one-liner fetches, so a stale in-repo copy cannot install a different tree than the one that was tagged.
+
+The versions Release Please rewrites are marked with `x-release-please-version`. Keep that comment on the package version in `src-tauri/Cargo.toml`, on the `rustbox` version in `src-tauri/Cargo.lock`, and on `pkgver` in `packaging/arch/PKGBUILD`. `cargo update` rewrites the lockfile and drops the comment; put it back on the `rustbox` version line before merging. `node scripts/check-release-versions.mjs` checks that every one of those versions matches, that the three markers are present, and that the Arch recipe is still installable.
 
 Release Please uses the workflow `GITHUB_TOKEN`. No extra secret is required. In the repository Actions settings:
 
@@ -290,5 +329,7 @@ The tray menu is rebuilt from the active locale when the setting changes, and ag
 - **Popup OAuth is best-effort.** Redirect sign-in stays inside the webview. A login flow that depends on `window.opener` in a popup can still fail because the popup does not share the service session.
 - **External-link handling is click and `window.open` based.** A script that assigns `location` to another site stays in the webview, so a login redirect is not kicked out to the browser.
 - **Downloads, camera, microphone, and screen sharing** use whatever the system webview allows. They were not exercised in testing.
-- **The updater has not been run against a real GitHub Release.** The check, the dialog, and `latest.json` generation are covered by unit tests. Replacing an installed NSIS app, AppImage, or macOS app, verifying the signature with the repository private key, and the native notification are not. After the next release is published, install the previous version, open it, and use **Check now** (or wait about 10 seconds). The badge should name the new version. **Download and install**, then **Restart to update**, should come back on that version with services and sessions still there. The portable exe and the Linux tar.gz should offer only **Open release page**.
+- **The updater has not been run against a real GitHub Release.** The check, the dialog, and `latest.json` generation are covered by unit tests. Replacing an installed NSIS app, AppImage, or macOS app, verifying the signature with the repository private key, and the native notification are not. After the next release is published, install the previous version, open it, and use **Check now** (or wait about 10 seconds). The badge should name the new version. **Download and install**, then **Restart to update**, should come back on that version with services and sessions still there. The portable exe, the Linux tar.gz, and the Arch package should offer only **Open release page**, with the Arch one also naming the update command.
 - **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, loading Telegram Web, and switching between three workspaces with a shared and an all-pinned service were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, signing in to WhatsApp, Slack, or the other presets, or the tray's per-workspace Do not disturb items. The Windows and macOS builds are produced by CI and were not run.
+- **The Arch package is verified by building it, not by using it.** `makepkg -si` was run in `archlinux:latest` and the installed binary was checked with `ldd` to link the distribution's `libwebkit2gtk-4.1`, but the packaged app has not been launched. A full run needs a Wayland or X session, a tray, and a notification daemon. The first install on Omarchy is the interactive check: the WebKit renderer should stay up, and the update dialog on a package build should show the pacman command rather than **Download and install**.
+- **`WEBKIT_DISABLE_DMABUF_RENDERER=1` is a workaround, not a fix.** It moves WebKitGTK off the DMA-BUF path, which is where the crash comes from, at some cost to drawing performance on hardware where DMA-BUF works. Set the variable to `0` to opt out; Rustbox never overwrites a value you set.

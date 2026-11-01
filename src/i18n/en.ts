@@ -212,6 +212,9 @@ export const en = {
   "updates.noNotes": "No release notes.",
   "updates.manual":
     "This copy cannot install updates itself. Open the release page and replace it when you are ready. Services and sessions stay where they are.",
+  "updates.package":
+    "This copy was installed by your system package manager, so Rustbox does not replace its own files. Update it with the package command below, or open the release page. Services and sessions stay where they are.",
+  "updates.packageCommand": "Update command",
   "updates.download": "Download and install",
   "updates.downloading": "Downloading…",
   "updates.restart": "Restart to update",

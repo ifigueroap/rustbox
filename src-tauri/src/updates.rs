@@ -45,6 +45,9 @@ pub struct UpdateStatus {
     pub notes: Option<String>,
     pub url: Option<String>,
     pub can_install: bool,
+    /// This copy came from a Linux package, not a bundle. The system package
+    /// manager owns the binary, so the dialog points at the package command.
+    pub package_managed: bool,
     pub auto_check: bool,
     pub last_checked_at: Option<String>,
 }
@@ -58,6 +61,7 @@ impl UpdateStatus {
             notes: None,
             url: None,
             can_install,
+            package_managed: false,
             auto_check,
             last_checked_at: None,
         }
@@ -92,6 +96,7 @@ pub struct CheckContext {
     pub notified_version: Option<String>,
     pub do_not_disturb: bool,
     pub can_install: bool,
+    pub package_managed: bool,
     pub auto_check: bool,
     pub last_checked_at: Option<String>,
     pub now: String,
@@ -152,6 +157,15 @@ pub fn detect_bundle_kind() -> BundleKind {
     kind_from_markers(&patched, appimage, &exe)
 }
 
+/// A Linux copy that is neither an AppImage nor a `.deb`/`.rpm` bundle was put
+/// on the system by a package manager (or untarred by hand), and pacman owns
+/// the files. Replacing `/usr/bin/rustbox` behind the package database's back
+/// would leave pacman believing it owns a binary it no longer has, so these
+/// installs are told to update the package instead of patching themselves.
+pub fn package_managed(os: &str, kind: BundleKind) -> bool {
+    os == "linux" && matches!(kind, BundleKind::Unknown)
+}
+
 pub fn normalize_version(raw: &str) -> Option<String> {
     let trimmed = raw.trim().trim_start_matches('v').trim();
     if trimmed.is_empty() {
@@ -203,6 +217,7 @@ pub fn decide(context: &CheckContext, probe: Probe) -> Decision {
         notes: None,
         url: None,
         can_install: context.can_install,
+        package_managed: context.package_managed,
         auto_check: context.auto_check,
         last_checked_at: context.last_checked_at.clone(),
     };
@@ -395,9 +410,14 @@ pub async fn probe(app: &AppHandle) -> Probe {
 ///
 /// This does not delete config or session directories. Those live under the
 /// app data dir, and the plugin only replaces the installed bundle. Portable
-/// executables and the tar.gz binary are refused here.
+/// executables, the tar.gz binary, and Linux package installs are refused
+/// here: pacman owns those files, so the dialog asks for the package command.
 pub async fn download_and_install(app: &AppHandle) -> Result<(), String> {
-    if !supports_self_update(detect_bundle_kind()) {
+    let kind = detect_bundle_kind();
+    if package_managed(std::env::consts::OS, kind) {
+        return Err("this install is managed by a package; update the package".into());
+    }
+    if !supports_self_update(kind) {
         return Err("this install cannot update itself".into());
     }
     let updater = app
@@ -469,6 +489,7 @@ mod tests {
             notified_version: None,
             do_not_disturb: false,
             can_install: true,
+            package_managed: false,
             auto_check: true,
             last_checked_at: None,
             now: "2026-10-29T01:00:00Z".into(),
@@ -730,6 +751,48 @@ mod tests {
     }
 
     #[test]
+    fn a_linux_package_install_is_managed_and_never_installs_itself() {
+        // /usr/bin/rustbox with no bundle marker and no APPIMAGE: a distro
+        // package, which is what the Arch PKGBUILD produces.
+        let packaged = kind_from_markers("", false, "/usr/bin/rustbox");
+        assert_eq!(packaged, BundleKind::Unknown);
+        assert!(package_managed("linux", packaged));
+        assert!(!supports_self_update(packaged));
+
+        // The AppImage keeps its updater even though it is on Linux.
+        assert!(!package_managed("linux", BundleKind::AppImage));
+        assert!(supports_self_update(BundleKind::AppImage));
+
+        // Windows portable, Windows setup, and macOS are unchanged.
+        assert!(!package_managed("windows", BundleKind::Unknown));
+        assert!(!package_managed("windows", BundleKind::Nsis));
+        assert!(!package_managed("macos", BundleKind::App));
+        assert!(!package_managed("linux", BundleKind::App));
+    }
+
+    #[test]
+    fn a_package_install_reports_an_available_release_without_installing() {
+        let mut packaged = context(CheckKind::Manual);
+        packaged.can_install = false;
+        packaged.package_managed = true;
+        let decision = decide(
+            &packaged,
+            Probe::Remote {
+                version: "0.7.0".into(),
+                notes: Some("Notes".into()),
+            },
+        );
+        assert_eq!(decision.status.state, UpdatePhase::Available);
+        assert!(!decision.status.can_install);
+        assert!(decision.status.package_managed);
+        assert_eq!(decision.status.latest.as_deref(), Some("0.7.0"));
+        assert_eq!(
+            decision.status.url.as_deref(),
+            Some("https://github.com/ifigueroap/rustbox/releases/tag/v0.7.0")
+        );
+    }
+
+    #[test]
     fn timestamps_are_utc_rfc3339() {
         assert_eq!(unix_to_rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(unix_to_rfc3339(1_763_251_200), "2025-11-16T00:00:00Z");
@@ -749,6 +812,7 @@ mod tests {
             notes: None,
             url: None,
             can_install: true,
+            package_managed: false,
             auto_check: true,
             last_checked_at: None,
         };

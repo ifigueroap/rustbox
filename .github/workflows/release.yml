@@ -278,6 +278,52 @@ jobs:
       - name: List assets
         run: ls -la artifacts
 
+      # The Arch package builds from the tag tarball, so the recipe has to name
+      # the tag and carry that tarball's checksum. Both are derived here from
+      # the tag rather than trusted from the in-repo copy, which Release Please
+      # only keeps roughly in step. The result is uploaded as `PKGBUILD`, which
+      # is what the README's one-liner downloads.
+      - name: Render Arch PKGBUILD
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.name }}"
+          VERSION="${TAG#v}"
+          TARBALL_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
+          curl -fsSL --retry 3 --retry-delay 4 -o tag-source.tar.gz "$TARBALL_URL"
+          # The recipe installs LICENSE from the source tree, so a tag cut from
+          # before that file existed cannot produce an installable package.
+          # Fail here with a clear message instead of publishing a broken asset.
+          if ! tar -tzf tag-source.tar.gz | grep -qx "rustbox-${VERSION}/LICENSE"; then
+            echo "::error::rustbox-${VERSION}/LICENSE is missing from the tag tarball; the Arch package cannot be built from this tag"
+            exit 1
+          fi
+          node scripts/render-arch-pkgbuild.mjs \
+            --version "$VERSION" \
+            --sha256-file tag-source.tar.gz \
+            --template packaging/arch/PKGBUILD \
+            --out artifacts/PKGBUILD
+          # A rendered file that cannot install is a release blocker.
+          bash -n artifacts/PKGBUILD
+          grep -qx "pkgver=${VERSION} # x-release-please-version" artifacts/PKGBUILD
+          grep -qx "pkgrel=1" artifacts/PKGBUILD
+          grep -q "^sha256sums=('[0-9a-f]\{64\}')$" artifacts/PKGBUILD
+          # The source line interpolates $pkgver, so the tag appears as
+          # `v${pkgver}` in the file rather than as the literal version.
+          grep -qF '/archive/refs/tags/v$pkgver.tar.gz' artifacts/PKGBUILD
+          cat artifacts/PKGBUILD
+
+      - name: Check the repo PKGBUILD matches the tag
+        # Advisory only: the release asset is already authoritative, and an
+        # out-of-date in-repo copy must not block a release.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if diff -u packaging/arch/PKGBUILD artifacts/PKGBUILD; then
+            echo "packaging/arch/PKGBUILD matches the rendered release asset"
+          else
+            echo "::warning::packaging/arch/PKGBUILD differs from the rendered release asset"
+          fi
+
       # latest.json is uploaded only from this job, which needs every platform
       # build. A pull request never reaches here. A missing signature fails the
       # job before anything is published.
@@ -328,6 +374,7 @@ jobs:
             artifacts/rustbox-macos-universal.app.tar.gz
             artifacts/rustbox-macos-universal.app.tar.gz.sig
             artifacts/latest.json
+            artifacts/PKGBUILD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -350,6 +397,7 @@ jobs:
             artifacts/rustbox-macos-universal.app.tar.gz
             artifacts/rustbox-macos-universal.app.tar.gz.sig
             artifacts/latest.json
+            artifacts/PKGBUILD
           body: |
             Rustbox ${{ steps.tag.outputs.name }} builds.
 
