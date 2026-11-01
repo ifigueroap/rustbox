@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/ifigueroap/rustbox/compare/v0.9.0...v0.9.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* close the service dialog after a create or edit ([#31](https://github.com/ifigueroap/rustbox/issues/31)) ([09c8e90](https://github.com/ifigueroap/rustbox/commit/09c8e90fffecdff5e438a0060e9c741f8b5b8b02))
+
 ## [0.9.0](https://github.com/ifigueroap/rustbox/compare/v0.8.0...v0.9.0) (2026-10-30)
 
 
