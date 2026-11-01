@@ -167,6 +167,7 @@ const shellCovers = new Set<string>();
 let shellChain: Promise<void> = Promise.resolve();
 let shellEpoch = 0;
 let workspaceSavePending = false;
+let serviceCreatePending = false;
 let includeServicesPending = false;
 let includeTargetWorkspaceId: string | null = null;
 const localIconUrls = new Map<string, string>();
@@ -504,6 +505,8 @@ export function mountShell(): void {
   shellCovers.clear();
   suspendedId = null;
   workspaceSwitcherOpen = false;
+  serviceCreatePending = false;
+  workspaceSavePending = false;
   shellChain = Promise.resolve();
   abandonConfirmDialog();
   wireEvents();
@@ -1729,6 +1732,9 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
 
   type WorkspaceOption = { id: string; input: HTMLInputElement; row: HTMLLabelElement };
   let workspaceOptions: WorkspaceOption[] = [];
+  /** Workspaces shown as checkboxes. With one workspace there is nothing to
+   * choose, so the form hides the picker and files the service there. */
+  const membershipChoices = (): boolean => workspaces.length > 1;
 
   const syncMembership = (): void => {
     const all = allInput.checked;
@@ -1782,6 +1788,13 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
     : document.querySelector<HTMLButtonElement>("#custom-add");
   const readMembership = (): { workspaces: string[]; allWorkspaces: boolean } => {
     if (allInput.checked) return { workspaces: [], allWorkspaces: true };
+    if (!membershipChoices()) {
+      // One workspace (or none yet) is not a choice: the picker stays hidden
+      // and the service belongs to the only workspace there is. Reading the
+      // hidden list instead left Add and Save disabled forever.
+      const only = workspaces[0]?.id;
+      return { workspaces: only ? [only] : [], allWorkspaces: false };
+    }
     return {
       workspaces: workspaceOptions
         .filter((option) => option.input.checked)
@@ -1956,11 +1969,17 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   };
 }
 
-function closeEditor(): void {
+/** Dismiss the editor and release its cover so a service can come back. */
+function closeEditorAsync(): Promise<void> {
   editingId = null;
   const dialog = document.querySelector<HTMLDialogElement>("#editor");
   if (dialog?.open) dialog.close();
-  if (shellCovers.has("editor")) void releaseCover("editor");
+  if (!shellCovers.has("editor")) return Promise.resolve();
+  return releaseCover("editor");
+}
+
+function closeEditor(): void {
+  void closeEditorAsync();
 }
 
 async function confirmRemoveService(service: Service): Promise<void> {
@@ -1989,10 +2008,9 @@ async function confirmRemoveService(service: Service): Promise<void> {
 async function openEditor(service: Service): Promise<void> {
   claimCover("editor");
   const manager = must<HTMLDialogElement>("#manager");
-  if (manager.open) {
-    manager.close();
-    void releaseCover("manager");
-  }
+  // The editor's cover is already claimed, so the services dialog can release
+  // its own without putting the suspended service back underneath.
+  if (manager.open) void closeManager();
   if (!suspendedId && activeId) await suspendForCover();
   if (!shellCovers.has("editor")) return;
   editingId = service.id;
@@ -2030,7 +2048,7 @@ async function saveEditor(serviceId: string): Promise<void> {
   if (!editorForm || editorSavePending) return;
   editorSavePending = true;
   syncEditorSave();
-  let snapshot: Snapshot | null = null;
+  let snapshot: Snapshot;
   try {
     const values = await editorForm.read();
     snapshot = await invoke<Snapshot>("update_service", {
@@ -2047,17 +2065,17 @@ async function saveEditor(serviceId: string): Promise<void> {
       },
     });
   } catch (error) {
+    // The save failed, so the dialog stays open with the values for a retry.
     showError(errorText(error));
     return;
   } finally {
     editorSavePending = false;
     syncEditorSave();
   }
-  // Close first: a render failure must never leave the dialog trapping the
-  // window, and the edit is already saved by this point.
-  closeEditor();
-  clearError();
-  applySnapshot(snapshot);
+  // The edited service is the one the dialog was holding a cover for, so the
+  // settle path dismisses the editor and lets any suspended service return.
+  // Editing never forces a service open: the desk stays where the user was.
+  await settleServiceDialog(snapshot, { close: closeEditorAsync, nextId: null });
 }
 
 function renderManager(): void {
@@ -2098,10 +2116,7 @@ function renderPresets(): void {
         input.focus();
         return;
       }
-      void run(async () => {
-        clearError();
-        applySnapshot(await invoke<Snapshot>("add_preset", { presetId: preset.id, serverUrl: null }));
-      });
+      void addPresetService(preset, null);
     });
     list.append(button);
   }
@@ -2492,6 +2507,9 @@ async function openManager(): Promise<void> {
   clearError();
   claimCover("manager");
   closeEditor();
+  pendingPreset = null;
+  must<HTMLElement>("#server-url-row").hidden = true;
+  must<HTMLInputElement>("#server-url").value = "";
   await suspendForCover();
   if (!shellCovers.has("manager")) return;
   renderManager();
@@ -2499,10 +2517,115 @@ async function openManager(): Promise<void> {
   if (!dialog.open) dialog.showModal();
 }
 
-async function closeManager(): Promise<void> {
+/** Dismiss the services dialog and let the cover release put a service back.
+ * Returns the promise so a caller can wait for the restore. */
+function closeManager(): Promise<void> {
+  pendingPreset = null;
   const dialog = document.querySelector<HTMLDialogElement>("#manager");
   if (dialog?.open) dialog.close();
-  if (shellCovers.has("manager")) await releaseCover("manager");
+  if (!shellCovers.has("manager")) return Promise.resolve();
+  return releaseCover("manager");
+}
+
+/**
+ * Finish a service create or edit that the backend has already saved.
+ *
+ * The dialog is dismissed first. When `nextId` names the service to open, a
+ * cover is claimed before the dialog closes, so the service the dialog
+ * suspended never paints back for a frame, and `releaseCover` at the end
+ * cannot restore it either: after a create the previously open service is the
+ * wrong one. A render failure after the save must never leave the dialog up,
+ * so it is reported and the switch still runs.
+ */
+async function settleServiceDialog(
+  snapshot: Snapshot,
+  options: { close: () => Promise<void>; nextId: string | null },
+): Promise<void> {
+  const next = options.nextId;
+  if (next) {
+    claimCover("open-service");
+    // This path owns the restore from here.
+    suspendedId = null;
+  }
+  const paint = (state: Snapshot): void => {
+    try {
+      applySnapshot(state);
+    } catch (error) {
+      showError(errorText(error));
+    }
+  };
+  try {
+    await options.close();
+    clearError();
+    if (!next) {
+      paint(snapshot);
+      return;
+    }
+    // Activate before painting, so the desk never flashes empty between the
+    // save and the switch. The webview is still hidden by the cover above.
+    let activated: Snapshot | null = null;
+    await onShellChain(async () => {
+      activated = (await run(() => invoke<Snapshot>("set_active_service", { id: next }))) ?? null;
+    });
+    paint(activated ?? snapshot);
+  } finally {
+    if (next) await releaseCover("open-service");
+  }
+}
+
+/** The service a create just added: the id that was not there before. */
+function createdServiceId(before: Set<string>, snapshot: Snapshot): string | null {
+  return snapshot.services.find((service) => !before.has(service.id))?.id ?? null;
+}
+
+async function addPresetService(preset: Preset, serverUrl: string | null): Promise<void> {
+  // A second click while the first add is in flight must not create two
+  // services, now that a successful add dismisses the dialog.
+  if (serviceCreatePending) return;
+  serviceCreatePending = true;
+  const known = new Set(services.map((service) => service.id));
+  let snapshot: Snapshot;
+  try {
+    clearError();
+    snapshot = await invoke<Snapshot>("add_preset", { presetId: preset.id, serverUrl });
+  } catch (error) {
+    // The dialog stays open with the reason, ready for another try.
+    showError(errorText(error));
+    return;
+  } finally {
+    serviceCreatePending = false;
+  }
+  pendingPreset = null;
+  must<HTMLElement>("#server-url-row").hidden = true;
+  must<HTMLInputElement>("#server-url").value = "";
+  await settleServiceDialog(snapshot, {
+    close: closeManager,
+    nextId: createdServiceId(known, snapshot),
+  });
+}
+
+async function addCustomService(): Promise<void> {
+  if (!customForm || serviceCreatePending) return;
+  serviceCreatePending = true;
+  const known = new Set(services.map((service) => service.id));
+  let snapshot: Snapshot;
+  try {
+    clearError();
+    const values = await customForm.read();
+    snapshot = await invoke<Snapshot>("add_custom", { service: values });
+  } catch (error) {
+    showError(errorText(error));
+    return;
+  } finally {
+    serviceCreatePending = false;
+  }
+  // Reset the form before painting, so a render failure cannot leave stale
+  // values in a dialog that is no longer adding anything.
+  customForm.reset();
+  await settleServiceDialog(snapshot, {
+    close: closeManager,
+    nextId: createdServiceId(known, snapshot),
+  });
 }
 
 function serviceInWorkspace(service: Service, workspaceId: string | null): boolean {
@@ -3207,15 +3330,9 @@ function wireEvents(): void {
   });
   must<HTMLButtonElement>("#server-url-add").addEventListener("click", () => {
     if (!pendingPreset) return;
-    const presetId = pendingPreset.id;
+    const preset = pendingPreset;
     const serverUrl = must<HTMLInputElement>("#server-url").value;
-    void run(async () => {
-      clearError();
-      applySnapshot(await invoke<Snapshot>("add_preset", { presetId, serverUrl }));
-      must<HTMLElement>("#server-url-row").hidden = true;
-      must<HTMLInputElement>("#server-url").value = "";
-      pendingPreset = null;
-    });
+    void addPresetService(preset, serverUrl);
   });
   const include = includeNodes();
   include.form.addEventListener("submit", (event) => {
@@ -3233,18 +3350,7 @@ function wireEvents(): void {
   customForm.reset();
   editorForm = mountServiceForm(must("#editor-fields"));
   must<HTMLButtonElement>("#custom-add").addEventListener("click", () => {
-    void run(async () => {
-      if (!customForm) return;
-      clearError();
-      const values = await customForm.read();
-      const snapshot = await invoke<Snapshot>("add_custom", {
-        service: values,
-      });
-      // Reset the form before painting, so a render failure cannot leave stale
-      // values in a dialog that is no longer adding anything.
-      customForm.reset();
-      applySnapshot(snapshot);
-    });
+    void addCustomService();
   });
   document.querySelector<HTMLButtonElement>("#update-badge")?.addEventListener("click", () => {
     openUpdateDialog();

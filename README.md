@@ -75,7 +75,7 @@ Frontend tests run in jsdom with [Vitest](https://vitest.dev). They mount the re
 npm test
 ```
 
-`tests/workspace-rail.test.ts` reproduces the 0.5.0 rail bug directly: one workspace, then two, then back to one, checking that `#workspace-list` and `#workspace-add` survive and that the sidebar still paints. `tests/workspace-editor.test.ts` asserts that Save dismisses the dialog even when the re-render throws, that a double click creates one workspace, and that a rejected save keeps the dialog open with an inline error.
+`tests/workspace-rail.test.ts` reproduces the 0.5.0 rail bug directly: one workspace, then two, then back to one, checking that `#workspace-list` and `#workspace-add` survive and that the sidebar still paints. `tests/workspace-editor.test.ts` asserts that Save dismisses the dialog even when the re-render throws, that a double click creates one workspace, and that a rejected save keeps the dialog open with an inline error. `tests/service-dialog.test.ts` covers the services dialog: adding a preset, the Zulip server-URL step, and a custom service each dismiss the dialog and bring the new service up instead of restoring the one the dialog suspended; a rejected create keeps the dialog and its values for a retry; and editing saves and closes the same way.
 
 For a visual check without the native shell, `mock/backend.mjs` is a browser stand-in for the Tauri commands, and `mock/verify.mjs` drives it in Chrome through the whole workspace flow and writes screenshots. A small Vite plugin serves `/mock/index.html` as the real `index.html` with only the entry script swapped, so the markup can never drift. With `npm run dev` running:
 
@@ -111,6 +111,7 @@ Right-click a service in the sidebar to turn that service's sound or its badges 
 **Add** opens the services dialog:
 
 - Presets: WhatsApp Web, Slack, Discord, Zulip, Telegram Web, Grok, ChatGPT, and Claude. Each preset uses a brand icon bundled with the app, so the sidebar still shows it offline. Slack and Zulip use their custom workspace or organization icon when available. Zulip asks for your server URL, for example `https://your-org.zulipchat.com`.
+- Adding a service dismisses the dialog and opens it. The dialog hides the service webview that was showing, so creating one never brings that older service back. A rejected create keeps the dialog open with the reason and your values, ready for another try.
 - A custom service is a name, an `http` or `https` URL, an optional icon, an accent color, and a user-agent setting. The icon can be an image URL, a short emoji, or a PNG, SVG, ICO, JPG, or WebP file. A chosen file is copied into the app data `icons` folder; Rustbox does not keep the original path. **Use preset or favicon** clears a custom icon. **Accent color** is the sidebar highlight and the letter fallback, with a hex field and **Use brand default**. A full-color icon keeps its own picture. With no icon of its own, Rustbox tries that site's favicon and falls back to a letter.
 - Drag icons in the sidebar to reorder. **Remove** asks in a Rustbox dialog, then deletes that service's saved session.
 
