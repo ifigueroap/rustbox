@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/ifigueroap/rustbox/compare/v0.10.0...v0.10.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **release:** stop the LICENSE tarball check failing on SIGPIPE ([#35](https://github.com/ifigueroap/rustbox/issues/35)) ([bae3f55](https://github.com/ifigueroap/rustbox/commit/bae3f554ca8ed97a71196620dea254ffcc7e8e2e))
+
 ## [0.10.0](https://github.com/ifigueroap/rustbox/compare/v0.9.1...v0.10.0) (2026-11-01)
 
 
