@@ -1,0 +1,93 @@
+# Maintainer: Ismael Figueroa <ifigueroap@gmail.com>
+#
+# Rustbox is built here from source against the distribution's WebKitGTK
+# instead of shipping a web engine. Arch and Omarchy stay on their own Mesa and
+# Wayland stack, which is what the AppImage gets wrong: its bundled WebKitGTK
+# aborts in WebKitWebProcess when it meets a newer GL driver.
+#
+# The release workflow renders this file for every tag, setting pkgver, pkgrel
+# and the checksum of the GitHub tag tarball, and publishes the result as the
+# `PKGBUILD` release asset. The asset is what the README's one-liner installs;
+# this copy is the source of truth for its shape and is kept at the app version
+# by Release Please.
+pkgname=rustbox
+pkgver=0.9.1 # x-release-please-version
+pkgrel=1
+pkgdesc='Desktop shell that hosts multiple web services in one window'
+arch=(x86_64)
+url='https://github.com/ifigueroap/rustbox'
+license=(MIT)
+depends=(
+  webkit2gtk-4.1
+  gtk3
+  libayatana-appindicator
+  xdg-utils
+)
+makedepends=(
+  rust
+  nodejs
+  npm
+  pkgconf
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('da722eebde6d011afa6f55edc290c5800791dd515e8cdd15f76e8012f44d0e8b')
+
+# makepkg.conf enables `debug` and `lto` by default. `debug` would compile the
+# whole dependency tree with debuginfo and add a multi-gigabyte `rustbox-debug`
+# package to a one-off install, and the release profile strips anyway. `lto`
+# puts `-flto` in CFLAGS, which turns `ring`'s C objects into GCC bitcode that
+# the Rust link step cannot resolve, failing with undefined
+# `ring_core_0_17_14__*` symbols. Rust does its own LTO from the release
+# profile, so neither option is wanted here.
+options=(!debug !lto)
+
+# Rustbox is only ever installed by the user running `makepkg -si`, and an
+# update rebuilds it. The default $HOME/.cargo registry and git cache make that
+# rebuild cheap; the AppImage build needs no special setup, and no build output
+# lands in the source tree.
+
+build() {
+  cd "$pkgname-$pkgver"
+
+  npm ci --no-audit --no-fund
+
+  # `tauri build` runs the frontend build first, so the Vite output in dist/ is
+  # what gets embedded in the binary. Nothing is bundled: pacman installs this
+  # copy now, so the AppImage and its minisign updater artifacts are skipped and
+  # TAURI_SIGNING_PRIVATE_KEY is not needed.
+  npm run tauri build -- --no-bundle \
+    --config '{"bundle":{"createUpdaterArtifacts":false}}'
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  install -Dm755 src-tauri/target/release/rustbox "$pkgdir/usr/bin/rustbox"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/rustbox.desktop" <<-'EOF'
+		[Desktop Entry]
+		Type=Application
+		Name=Rustbox
+		GenericName=Web app shell
+		Comment=Host multiple web apps in one window
+		Exec=rustbox
+		Icon=rustbox
+		Terminal=false
+		Categories=Network;InstantMessaging;
+		Keywords=chat;messaging;workspace;webview;
+		StartupNotify=true
+	EOF
+
+  install -Dm644 src-tauri/icons/32x32.png \
+    "$pkgdir/usr/share/icons/hicolor/32x32/apps/rustbox.png"
+  install -Dm644 src-tauri/icons/64x64.png \
+    "$pkgdir/usr/share/icons/hicolor/64x64/apps/rustbox.png"
+  install -Dm644 src-tauri/icons/128x128.png \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/rustbox.png"
+  install -Dm644 src-tauri/icons/128x128@2x.png \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/rustbox.png"
+  install -Dm644 src-tauri/icons/icon.png \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/rustbox.png"
+}

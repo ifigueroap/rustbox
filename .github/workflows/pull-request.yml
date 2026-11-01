@@ -39,3 +39,30 @@ jobs:
 
       - name: Check app versions and release-please markers
         run: node scripts/check-release-versions.mjs
+
+  pkgbuild:
+    name: Arch recipe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exercises renderPkgbuild and assertPkgbuild, including the shell-level
+      # shape the release job writes.
+      - name: Render and validate the PKGBUILD
+        run: |
+          set -euo pipefail
+          node scripts/render-arch-pkgbuild.mjs --self-test
+          node scripts/render-arch-pkgbuild.mjs \
+            --version 0.0.1 \
+            --sha256-file README.md \
+            --out /tmp/PKGBUILD.rendered
+          bash -n /tmp/PKGBUILD.rendered
+          grep -qx 'pkgver=0.0.1 # x-release-please-version' /tmp/PKGBUILD.rendered
+          grep -qx 'pkgrel=1' /tmp/PKGBUILD.rendered
+
+      - name: The README one-liner matches the release asset
+        run: |
+          set -euo pipefail
+          grep -q '^pkgname=rustbox$' packaging/arch/PKGBUILD
+          grep -q 'https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD' README.md
+          grep -q 'makepkg -si' README.md
