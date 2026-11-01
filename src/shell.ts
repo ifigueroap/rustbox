@@ -19,6 +19,15 @@ import { httpUrl, renderReleaseNotes } from "./release-notes";
 /** Public releases index. Opened with the system browser, never inside a service webview. */
 const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
 
+/**
+ * What a pacman install runs to get the new version. The release workflow
+ * publishes the rendered PKGBUILD as a release asset, and `makepkg -si`
+ * rebuilds it against the system WebKitGTK. Kept as one line so it can be
+ * copied out of the dialog.
+ */
+const PACKAGE_UPDATE_COMMAND =
+  "d=$(mktemp -d) && cd \"$d\" && curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si";
+
 interface Service {
   id: string;
   name: string;
@@ -89,6 +98,7 @@ interface UpdateStatus {
   notes: string | null;
   url: string | null;
   canInstall: boolean;
+  packageManaged: boolean;
   autoCheck: boolean;
   lastCheckedAt: string | null;
 }
@@ -214,6 +224,7 @@ function idleUpdate(current: string): UpdateStatus {
     notes: null,
     url: null,
     canInstall: false,
+    packageManaged: false,
     autoCheck: true,
     lastCheckedAt: null,
   };
@@ -2971,15 +2982,24 @@ function paintUpdateDialog(): void {
   const notes = document.querySelector<HTMLElement>("#update-notes");
   if (notes) paintReleaseNotes(notes);
   const manual = document.querySelector<HTMLElement>("#update-manual");
+  const packagePanel = document.querySelector<HTMLElement>("#update-package");
+  const packageCopy = document.querySelector<HTMLElement>("#update-package-copy");
+  const packageCommand = document.querySelector<HTMLElement>("#update-package-command");
   const install = document.querySelector<HTMLButtonElement>("#update-install");
   const restart = document.querySelector<HTMLButtonElement>("#update-restart");
   const open = document.querySelector<HTMLButtonElement>("#update-open");
   const skip = document.querySelector<HTMLButtonElement>("#update-skip");
   const ready = updateInstalledVersion !== null && updateInstalledVersion === updateStatus.latest;
+  // A pacman install cannot swap its own binary; it gets the command that
+  // reinstalls the package instead of the self-update explanation.
+  const packaged = !updateStatus.canInstall && updateStatus.packageManaged;
   if (manual) {
-    manual.hidden = updateStatus.canInstall;
-    manual.textContent = updateStatus.canInstall ? "" : t("updates.manual");
+    manual.hidden = updateStatus.canInstall || packaged;
+    manual.textContent = updateStatus.canInstall || packaged ? "" : t("updates.manual");
   }
+  if (packagePanel) packagePanel.hidden = !packaged;
+  if (packageCopy) packageCopy.textContent = packaged ? t("updates.package") : "";
+  if (packageCommand) packageCommand.textContent = packaged ? PACKAGE_UPDATE_COMMAND : "";
   if (install) {
     install.hidden = !updateStatus.canInstall || ready;
     if (!install.disabled) install.textContent = t("updates.download");

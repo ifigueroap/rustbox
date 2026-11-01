@@ -31,6 +31,7 @@ function available(overrides: Partial<TestUpdate> = {}): TestUpdate {
     notes: "Tray menu and a signed release.",
     url: "https://github.com/ifigueroap/rustbox/releases/tag/v0.7.0",
     canInstall: true,
+    packageManaged: false,
     autoCheck: true,
     lastCheckedAt: "2026-10-29T01:00:00Z",
     ...overrides,
@@ -183,6 +184,10 @@ describe("update dialog", () => {
     expect(document.querySelector<HTMLButtonElement>("#update-install")?.hidden).toBe(true);
     expect(document.querySelector<HTMLButtonElement>("#update-restart")?.hidden).toBe(true);
     expect(document.querySelector<HTMLElement>("#update-manual")?.hidden).toBe(false);
+    expect(document.querySelector("#update-manual")?.textContent).toBe(
+      "This copy cannot install updates itself. Open the release page and replace it when you are ready. Services and sessions stay where they are.",
+    );
+    expect(document.querySelector("#update-package")?.hasAttribute("hidden")).toBe(true);
     expect(document.querySelector("#update-open")?.textContent).toBe("Open release page");
 
     backend = (command) => {
@@ -194,6 +199,75 @@ describe("update dialog", () => {
       command: "open_external",
       args: { url: "https://github.com/ifigueroap/rustbox/releases/tag/v0.7.0" },
     });
+  });
+
+  it("tells a pacman install to reinstall the package instead of downloading", () => {
+    applyShellSnapshot(
+      snapshot({
+        update: available({ canInstall: false, packageManaged: true }),
+        appVersion: "0.6.0",
+      }),
+    );
+    openUpdateDialog();
+
+    // The release is still announced, and nothing offers a self-install.
+    expect(document.querySelector<HTMLButtonElement>("#update-badge")?.hidden).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>("#update-install")?.hidden).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>("#update-restart")?.hidden).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>("#update-open")?.hidden).toBe(false);
+
+    // The package hint replaces the generic "cannot install" one.
+    expect(document.querySelector<HTMLElement>("#update-manual")?.hidden).toBe(true);
+    const panel = document.querySelector<HTMLElement>("#update-package");
+    expect(panel?.hidden).toBe(false);
+    expect(document.querySelector("#update-package-copy")?.textContent).toContain(
+      "installed by your system package manager",
+    );
+    const command = document.querySelector("#update-package-command")?.textContent ?? "";
+    expect(command).toContain("releases/latest/download/PKGBUILD");
+    expect(command).toContain("makepkg -si");
+    expect(command).not.toContain("\n");
+
+    // Clicking around cannot reach the updater.
+    document.querySelector<HTMLButtonElement>("#update-install")?.click();
+    expect(calls.some((call) => call.command === "install_update")).toBe(false);
+  });
+
+  it("uses the Spanish package strings", () => {
+    applyShellSnapshot(
+      snapshot({
+        language: "es",
+        osLocale: "en",
+        update: available({ canInstall: false, packageManaged: true }),
+        appVersion: "0.6.0",
+      }),
+    );
+    openUpdateDialog();
+    expect(document.querySelector("#update-package-copy")?.textContent).toContain(
+      "gestor de paquetes",
+    );
+    expect(document.querySelector("#update-package")?.textContent).toContain(
+      "Comando de actualización",
+    );
+  });
+
+  it("keeps the self-update wording for an AppImage", () => {
+    // A version other than the previous test's, so the "already installed"
+    // flag from that test does not hide the button here.
+    applyShellSnapshot(
+      snapshot({
+        update: available({
+          canInstall: true,
+          latest: "0.8.0",
+          url: "https://github.com/ifigueroap/rustbox/releases/tag/v0.8.0",
+        }),
+        appVersion: "0.6.0",
+      }),
+    );
+    openUpdateDialog();
+    expect(document.querySelector<HTMLButtonElement>("#update-install")?.hidden).toBe(false);
+    expect(document.querySelector("#update-package")?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector<HTMLElement>("#update-manual")?.hidden).toBe(true);
   });
 
   it("skips the version and later leaves it available", async () => {

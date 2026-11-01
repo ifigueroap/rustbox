@@ -64,6 +64,7 @@ export interface TestUpdate {
   notes: string | null;
   url: string | null;
   canInstall: boolean;
+  packageManaged: boolean;
   autoCheck: boolean;
   lastCheckedAt: string | null;
 }
@@ -144,6 +145,7 @@ export function snapshot(overrides: Partial<TestSnapshot> = {}): TestSnapshot {
       notes: null,
       url: null,
       canInstall: true,
+      packageManaged: false,
       autoCheck: true,
       lastCheckedAt: null,
     },

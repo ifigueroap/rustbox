@@ -80,6 +80,7 @@ const state = {
     notes: null,
     url: null,
     canInstall: true,
+    packageManaged: false,
     autoCheck: true,
     lastCheckedAt: null,
   },
@@ -259,6 +260,7 @@ window.__TAURI_INTERNALS__ = {
           notes: "A quieter tray and a signed update.",
           url: "https://github.com/ifigueroap/rustbox/releases/tag/v0.9.0",
           canInstall: true,
+          packageManaged: false,
           lastCheckedAt: "2026-10-29T01:00:00Z",
         };
         return Promise.resolve(state.update);

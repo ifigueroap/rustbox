@@ -212,7 +212,9 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         update: {
             let mut update = updates::apply_settings(&updates::current_status(), &config.updates);
             update.current = env!("CARGO_PKG_VERSION").to_string();
-            update.can_install = updates::supports_self_update(updates::detect_bundle_kind());
+            let kind = updates::detect_bundle_kind();
+            update.can_install = updates::supports_self_update(kind);
+            update.package_managed = updates::package_managed(std::env::consts::OS, kind);
             update
         },
     }

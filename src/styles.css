@@ -1099,6 +1099,47 @@ input.switch:disabled {
   color: var(--muted);
 }
 
+.update-package {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft-panel);
+}
+
+.update-package[hidden] {
+  display: none;
+}
+
+.update-package .field-hint {
+  margin: 0;
+}
+
+.update-package-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.update-package-command {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--input);
+  color: var(--text);
+  font-family: ui-monospace, "JetBrains Mono", "Cascadia Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .update-notes > :first-child {
   margin-top: 0;
 }
