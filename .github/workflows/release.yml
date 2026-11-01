@@ -293,7 +293,10 @@ jobs:
           # The recipe installs LICENSE from the source tree, so a tag cut from
           # before that file existed cannot produce an installable package.
           # Fail here with a clear message instead of publishing a broken asset.
-          if ! tar -tzf tag-source.tar.gz | grep -qx "rustbox-${VERSION}/LICENSE"; then
+          # List to a file first: `grep -q` exits on the first match, and under
+          # pipefail the SIGPIPE that kills `tar` would fail the check.
+          tar -tzf tag-source.tar.gz > tag-source.list
+          if ! grep -qx "rustbox-${VERSION}/LICENSE" tag-source.list; then
             echo "::error::rustbox-${VERSION}/LICENSE is missing from the tag tarball; the Arch package cannot be built from this tag"
             exit 1
           fi
