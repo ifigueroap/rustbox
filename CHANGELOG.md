@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/ifigueroap/rustbox/compare/v0.9.1...v0.10.0) (2026-11-01)
+
+
+### Features
+
+* build an Arch package from source against the system WebKitGTK ([#33](https://github.com/ifigueroap/rustbox/issues/33)) ([ba70300](https://github.com/ifigueroap/rustbox/commit/ba70300cb8922aad18a4482df7842520383b72ac))
+
 ## [0.9.1](https://github.com/ifigueroap/rustbox/compare/v0.9.0...v0.9.1) (2026-11-01)
 
 
