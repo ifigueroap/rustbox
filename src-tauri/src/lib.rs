@@ -378,6 +378,10 @@ fn read_local_icon(app: tauri::AppHandle, token: String) -> Result<String, Strin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK reads its DMA-BUF switch when the first web process starts, so
+    // this has to happen before any window or webview exists.
+    #[cfg(target_os = "linux")]
+    linux_host::prepare_environment();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let app = app.clone();
@@ -427,15 +431,15 @@ pub fn run() {
             if let Err(err) = tray::install(app.handle()) {
                 eprintln!("rustbox: tray icon was not created: {err}");
             }
-            let can_install = updates::supports_self_update(updates::detect_bundle_kind());
+            let kind = updates::detect_bundle_kind();
+            let can_install = updates::supports_self_update(kind);
             let auto_check = services::lock(&app.state::<RuntimeState>().config)
                 .updates
                 .auto_check;
-            updates::set_status(updates::UpdateStatus::idle(
-                env!("CARGO_PKG_VERSION"),
-                can_install,
-                auto_check,
-            ));
+            let mut idle =
+                updates::UpdateStatus::idle(env!("CARGO_PKG_VERSION"), can_install, auto_check);
+            idle.package_managed = updates::package_managed(std::env::consts::OS, kind);
+            updates::set_status(idle);
             spawn_update_schedule(app.handle().clone());
             Ok(())
         })
@@ -519,10 +523,13 @@ pub(crate) async fn run_update_check(
             config.updates.last_checked_at.clone(),
         )
     };
-    let can_install = updates::supports_self_update(updates::detect_bundle_kind());
+    let bundle = updates::detect_bundle_kind();
+    let can_install = updates::supports_self_update(bundle);
+    let package_managed = updates::package_managed(std::env::consts::OS, bundle);
     let mut checking = updates::begin_check(&updates::current_status());
     checking.current = app.package_info().version.to_string();
     checking.can_install = can_install;
+    checking.package_managed = package_managed;
     checking.auto_check = auto_check;
     checking.last_checked_at = last_checked_at.clone();
     updates::set_status(checking);
@@ -537,6 +544,7 @@ pub(crate) async fn run_update_check(
             notified_version: notified,
             do_not_disturb,
             can_install,
+            package_managed,
             auto_check,
             last_checked_at,
             now: updates::rfc3339_now(),

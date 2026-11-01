@@ -8,10 +8,40 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 
 use gtk::prelude::*;
 use tauri::{LogicalPosition, LogicalSize, Webview};
 use webkit2gtk::WebViewExt;
+
+/// WebKitGTK 2.42 and later draw through DMA-BUF by default, and its renderer
+/// aborts inside `WebKitWebProcess` when the compositor, the GL driver, or Mesa
+/// disagree with what WebKitGTK was built against. A distro build can be newer
+/// or older than the Mesa stack beside it, which is the crash a bundled
+/// WebKitGTK reports on Wayland. WebKitGTK reads this switch once, while it
+/// creates the first web process, so it has to be in the environment before any
+/// webview exists.
+pub fn prepare_environment() {
+    let configured = std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER");
+    let Some(value) = dmabuf_fallback(configured.as_deref()) else {
+        return;
+    };
+    // SAFETY: `run` calls this before Tauri is built, so no GTK, WebKit, or
+    // Rust thread exists yet and nothing can be reading the environment.
+    unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", value) };
+    eprintln!(
+        "rustbox: WEBKIT_DISABLE_DMABUF_RENDERER was unset; using 1 so WebKitGTK does not abort on DMA-BUF"
+    );
+}
+
+/// `None` leaves the environment alone. Any value the user set, including an
+/// empty one, is a deliberate choice and wins over the fallback.
+fn dmabuf_fallback(configured: Option<&OsStr>) -> Option<&'static str> {
+    match configured {
+        Some(_) => None,
+        None => Some("1"),
+    }
+}
 
 struct Host {
     fixed: gtk::Fixed,
@@ -167,4 +197,24 @@ fn px(value: f64) -> i32 {
 
 fn px_size(value: f64) -> i32 {
     value.round().max(1.0) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unset_dmabuf_switch_gets_the_software_renderer_fallback() {
+        assert_eq!(dmabuf_fallback(None), Some("1"));
+    }
+
+    #[test]
+    fn a_user_set_dmabuf_switch_is_never_overridden() {
+        // `0` is how a user proves WebKit works on their GL stack, and an empty
+        // value is still a deliberate set-and-empty. Both stay as they are.
+        assert_eq!(dmabuf_fallback(Some(OsStr::new("0"))), None);
+        assert_eq!(dmabuf_fallback(Some(OsStr::new("1"))), None);
+        assert_eq!(dmabuf_fallback(Some(OsStr::new(""))), None);
+        assert_eq!(dmabuf_fallback(Some(OsStr::new(" true "))), None);
+    }
 }
