@@ -26,7 +26,7 @@ Use the path of the app you opened if it is not in Applications.
 
 ## Arch Linux / Omarchy
 
-The AppImage is built on Ubuntu 22.04 and carries that distribution's WebKitGTK. On Arch and Omarchy the bundled `WebKitWebProcess` can abort as soon as it meets a newer Mesa or GL stack, which shows up as a SIGABRT in `systemd-coredump`. An Arch package builds Rustbox against the system WebKitGTK instead, so the web engine and the graphics driver are the ones pacman already maintains for the rest of the desktop.
+The AppImage is built on Ubuntu 22.04 and carries that distribution's WebKitGTK. On Arch and Omarchy the bundled `WebKitWebProcess` can abort as soon as it meets a newer Mesa or GL stack, which shows up as a SIGABRT in `systemd-coredump`. An Arch package builds Rustbox against the system WebKitGTK instead, so the web engine and the graphics driver are the ones pacman already maintains for the rest of the desktop. That build keeps WebKitGTK's DMA-BUF renderer and depends on `gst-plugins-base` and `gst-plugins-good`, because WebKitGTK aborts in `WebKitWebProcess` the first time a page plays audio when no installed GStreamer plugin provides `autoaudiosink`; `gst-plugins-bad` and `gst-libav` add codecs for voice notes and video.
 
 Install it with one command. Nothing is cloned and the release asset is the recipe:
 
@@ -34,7 +34,7 @@ Install it with one command. Nothing is cloned and the release asset is the reci
 d=$(mktemp -d) && cd "$d" && curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si
 ```
 
-`makepkg` downloads the source tarball for the latest tag, installs `webkit2gtk-4.1`, `gtk3`, `libayatana-appindicator`, `xdg-utils`, and the build dependencies, compiles the app, and hands the result to `pacman`. Rustbox lands in `/usr/bin/rustbox` with a desktop entry and hicolor icons, so it appears in your launcher. The first build takes a while because it compiles the app; later updates reuse the build cache.
+`makepkg` downloads the source tarball for the latest tag, installs `webkit2gtk-4.1`, `gtk3`, `libayatana-appindicator`, `xdg-utils`, `gst-plugins-base`, `gst-plugins-good`, and the build dependencies, compiles the app, and hands the result to `pacman`. Rustbox lands in `/usr/bin/rustbox` with a desktop entry and hicolor icons, so it appears in your launcher. The first build takes a while because it compiles the app; later updates reuse the build cache.
 
 Updates are the same command. Rerun it whenever you want the newer release, or run `pacman -Syu` after rebuilding. Rustbox itself does not touch files pacman owns: when a release is newer and the copy is a package install, the update dialog names the version and shows the command instead of offering **Download and install**. The AppImage keeps its own updater.
 
@@ -50,13 +50,30 @@ The package is intentionally not on the AUR yet. The GitHub release asset is the
 
 ### WebKitGTK on Wayland
 
-Rustbox sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup when it is unset. WebKitGTK 2.42 and later draw through DMA-BUF, and its renderer is what aborts when the web engine, the compositor, and Mesa disagree; the software path avoids that. Set the variable yourself to any value to keep your choice, including `0` to opt back in:
+The AppImage is the only build that sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup, and only when the variable is unset. WebKitGTK 2.42 and later draw through DMA-BUF, and its renderer is what aborts when the web engine, the compositor, and Mesa disagree. The AppImage carries Ubuntu 22.04's WebKitGTK, so on Arch with a newer Mesa that disagreement is a crash, and the software path avoids it.
+
+A package build leaves the variable alone. It links the distribution's WebKitGTK, which was built against the same Mesa the desktop already runs, so DMA-BUF works and is much faster; forcing the software path there makes heavy pages crawl and typing in WhatsApp Web keep a whole core busy. Set the variable yourself to any value to keep your choice, in either build:
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=0 rustbox
+WEBKIT_DISABLE_DMABUF_RENDERER=1 rustbox
 ```
 
-A package does not force the variable on the whole desktop, so it only applies to Rustbox, and the log line at startup says when the default was applied.
+Rustbox never overwrites a value you set, and the log line at startup says when its own default was applied.
+
+### GStreamer plugins
+
+WebKitGTK builds its audio pipeline from GStreamer plugins at runtime. The first time a page plays audio it asks for `autoaudiosink`, and a native install with no plugin providing that element aborts in `WebKitWebProcess`: the log shows `no such element factory "autoaudiosink"`, a `GLib-GObject-CRITICAL` about a NULL instance, and then SIGABRT. The Arch package depends on `gst-plugins-base` and `gst-plugins-good`, which provide it. Two optional packages add codecs:
+
+| Package | Why install it |
+| --- | --- |
+| `gst-plugins-bad` | Extra codecs and the WebRTC pieces some call and screen-share pages use |
+| `gst-libav` | H.264, AAC, and other patent-encumbered codecs behind voice notes and video |
+
+```bash
+sudo pacman -S gst-plugins-bad gst-libav
+```
+
+On Debian or Ubuntu the equivalent runtime packages are `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad`, and `gstreamer1.0-libav`. The AppImage is not affected: it does not link the distribution's WebKitGTK, and it brings the plugins that engine was built against.
 
 Linux builds still need WebKitGTK 4.1 on the machine (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit. On Debian or Ubuntu:
 
@@ -331,5 +348,6 @@ The tray menu is rebuilt from the active locale when the setting changes, and ag
 - **Downloads, camera, microphone, and screen sharing** use whatever the system webview allows. They were not exercised in testing.
 - **The updater has not been run against a real GitHub Release.** The check, the dialog, and `latest.json` generation are covered by unit tests. Replacing an installed NSIS app, AppImage, or macOS app, verifying the signature with the repository private key, and the native notification are not. After the next release is published, install the previous version, open it, and use **Check now** (or wait about 10 seconds). The badge should name the new version. **Download and install**, then **Restart to update**, should come back on that version with services and sessions still there. The portable exe, the Linux tar.gz, and the Arch package should offer only **Open release page**, with the Arch one also naming the update command.
 - **Interactive testing was on Linux.** Adding a preset, saving `config.json`, creating that service's session directory, loading Telegram Web, and switching between three workspaces with a shared and an all-pinned service were checked. GUI checks did not cover notification toasts, drag-reorder, removing a service, signing in to WhatsApp, Slack, or the other presets, or the tray's per-workspace Do not disturb items. The Windows and macOS builds are produced by CI and were not run.
-- **The Arch package is verified by building it, not by using it.** `makepkg -si` was run in `archlinux:latest` and the installed binary was checked with `ldd` to link the distribution's `libwebkit2gtk-4.1`, but the packaged app has not been launched. A full run needs a Wayland or X session, a tray, and a notification daemon. The first install on Omarchy is the interactive check: the WebKit renderer should stay up, and the update dialog on a package build should show the pacman command rather than **Download and install**.
-- **`WEBKIT_DISABLE_DMABUF_RENDERER=1` is a workaround, not a fix.** It moves WebKitGTK off the DMA-BUF path, which is where the crash comes from, at some cost to drawing performance on hardware where DMA-BUF works. Set the variable to `0` to opt out; Rustbox never overwrites a value you set.
+- **The Arch package is verified by building it, not by using it.** `makepkg -si` was run in `archlinux:latest` and the installed binary was checked with `ldd` to link the distribution's `libwebkit2gtk-4.1`, and the built package's `.PKGINFO` is checked for the GStreamer dependencies. The packaged app has not been launched. A full run needs a Wayland or X session, a tray, and a notification daemon. The first install on Omarchy is the interactive check: the WebKit renderer should stay up, the audio path should load `autoaudiosink` instead of aborting, and the update dialog on a package build should show the pacman command rather than **Download and install**.
+- **`WEBKIT_DISABLE_DMABUF_RENDERER=1` is an AppImage workaround, not a fix.** It moves WebKitGTK off the DMA-BUF path, which is where the crash from the bundled WebKitGTK comes from, at some cost to drawing performance and input latency: on a machine where DMA-BUF works, it made typing in WhatsApp Web slow enough to run the web process at about 67% CPU. Only the AppImage sets it, and only when unset; a package or native build keeps DMA-BUF. Set the variable to `0` to opt out of the AppImage default, or to `1` to force the software path anywhere; Rustbox never overwrites a value you set.
+- **A native Linux install needs GStreamer good plugins.** WebKitGTK resolves `autoaudiosink` at runtime and aborts `WebKitWebProcess` the first time a page plays audio when no installed plugin provides it, which shows up as a SIGABRT in `systemd-coredump` with a `no such element factory "autoaudiosink"` warning just before it. The Arch package depends on `gst-plugins-base` and `gst-plugins-good`; `gst-plugins-bad` and `gst-libav` are optional and add codecs for voice notes and video.
