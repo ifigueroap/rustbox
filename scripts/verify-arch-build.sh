@@ -83,6 +83,25 @@ tail -n 40 /work/makepkg.log
 PKG=$(ls /build/rustbox-*.pkg.tar.zst)
 echo "=== built package: $PKG ==="
 cp "$PKG" /work/pkg/
+
+# WebKitGTK looks up `autoaudiosink` at runtime and aborts in WebKitWebProcess
+# when no GStreamer plugin provides it, so the recipe has to declare the plugin
+# sets as real package dependencies. Read the metadata pacman installs from.
+echo "=== .PKGINFO: gstreamer runtime dependencies ==="
+bsdtar -xOf "$PKG" .PKGINFO | grep -E '^(depend|optdepend) =' || true
+for dep in gst-plugins-base gst-plugins-good; do
+  bsdtar -xOf "$PKG" .PKGINFO | grep -qx "depend = $dep" || {
+    echo "FAIL: .PKGINFO is missing the $dep dependency"
+    exit 1
+  }
+done
+for dep in gst-plugins-bad gst-libav; do
+  bsdtar -xOf "$PKG" .PKGINFO | grep -q "^optdepend = $dep: " || {
+    echo "FAIL: .PKGINFO is missing the $dep optional dependency"
+    exit 1
+  }
+done
+
 pacman -Qp --info "$PKG"
 echo "=== files ==="
 pacman -Qlp "$PKG"

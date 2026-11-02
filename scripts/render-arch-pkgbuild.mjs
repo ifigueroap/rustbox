@@ -93,9 +93,24 @@ export function assertPkgbuild(content, { version } = {}) {
   }
   if (!/^build\(\)/m.test(content)) problems.push("build()");
   if (!/^package\(\)/m.test(content)) problems.push("package()");
-  for (const bin of ["webkit2gtk-4.1", "gtk3", "libayatana-appindicator"]) {
+  // WebKitGTK resolves its audio pipeline from GStreamer plugins at runtime and
+  // aborts in WebKitWebProcess when `autoaudiosink` is missing, so the core
+  // plugin sets are hard depends rather than optional extras.
+  for (const bin of [
+    "webkit2gtk-4.1",
+    "gtk3",
+    "libayatana-appindicator",
+    "gst-plugins-base",
+    "gst-plugins-good",
+  ]) {
     if (!new RegExp(`^\\s+${bin.replace(/[.+]/g, "\\$&")}$`, "m").test(content)) {
       problems.push(`depends ${bin}`);
+    }
+  }
+  if (!/^optdepends=\(/m.test(content)) problems.push("optdepends");
+  for (const pkg of ["gst-plugins-bad", "gst-libav"]) {
+    if (!new RegExp(`^\\s+'${pkg.replace(/[.+]/g, "\\$&")}: `, "m").test(content)) {
+      problems.push(`optdepends ${pkg}`);
     }
   }
   if (/^(makedepends|depends)=\(.*\b(cargo|rustup)\b/m.test(content)) {
