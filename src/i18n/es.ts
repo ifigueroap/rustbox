@@ -143,8 +143,13 @@ export const es = {
   "service.soundOff": "Sonido desactivado",
   "service.notificationsOff": "Notificaciones desactivadas",
   "service.silenced": "Silenciado por No molestar del espacio de trabajo",
+  "service.notifyInDnd": "Notificar incluso en No molestar",
+  "service.notifyInDndHint":
+    "Permite que las notificaciones y el sonido de este servicio pasen mientras No molestar está activo. Las insignias siguen ocultas.",
+  "service.notifyInDndBadge": "Omite No molestar",
   "service.menuSound": "Sonido",
   "service.menuNotifications": "Notificaciones",
+  "service.menuNotifyInDnd": "Notificar en No molestar",
   "service.menuReload": "Recargar",
   "service.menuCopyUrl": "Copiar URL",
   "service.menuOpenBrowser": "Abrir en el navegador",

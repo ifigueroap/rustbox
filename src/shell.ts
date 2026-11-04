@@ -40,6 +40,7 @@ interface Service {
   preset?: string | null;
   soundEnabled: boolean;
   notificationsEnabled: boolean;
+  notifyInDnd: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
   workspaceSilenced: boolean;
@@ -205,6 +206,8 @@ interface ServiceFormSeed {
   brandColor: string;
   workspaces: string[];
   allWorkspaces: boolean;
+  /** Only meaningful once a service exists; absent from the "add service" seed. */
+  notifyInDnd?: boolean;
 }
 
 interface ServiceForm {
@@ -1435,6 +1438,7 @@ function renderSidebar(): void {
     avatar.className = "avatar";
     paintAvatar(avatar, service);
     avatar.classList.toggle("sound-off", soundOff(service));
+    avatar.classList.toggle("dnd-bypass", service.notifyInDnd);
     const name = document.createElement("span");
     name.className = "svc-name";
     name.textContent = service.name;
@@ -1531,6 +1535,7 @@ function serviceCard(service: Service): HTMLElement {
   avatar.className = "avatar";
   paintAvatar(avatar, service);
   avatar.classList.toggle("sound-off", soundOff(service));
+  avatar.classList.toggle("dnd-bypass", service.notifyInDnd);
   const copy = document.createElement("span");
   copy.className = "card-copy";
   const name = document.createElement("strong");
@@ -1703,6 +1708,25 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   chromeInput.type = "checkbox";
   chromeInput.checked = true;
   chrome.append(chromeInput, caption("service.chromeUa"));
+
+  // Only the editor (an existing service) can toggle this instantly; the
+  // "add service" form has no id yet to apply it to.
+  const isEditor = container.id === "editor-fields";
+  const dndBypass = document.createElement("label");
+  dndBypass.className = "check wide";
+  const dndBypassInput = document.createElement("input");
+  dndBypassInput.type = "checkbox";
+  dndBypass.append(dndBypassInput, caption("service.notifyInDnd"));
+  const dndBypassHint = document.createElement("p");
+  dndBypassHint.className = "field-hint";
+  dndBypassHint.dataset.i18n = "service.notifyInDndHint";
+  dndBypassHint.textContent = t("service.notifyInDndHint");
+  if (isEditor) {
+    dndBypassInput.addEventListener("change", () => {
+      if (editingId) void setServiceFlag(editingId, "notifyInDnd", dndBypassInput.checked);
+    });
+  }
+
   const agent = field("service.customUa", "");
   agent.label.classList.add("wide");
   agent.input.dataset.i18nPlaceholder = "service.customUaPlaceholder";
@@ -1731,15 +1755,8 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   membershipError.textContent = t("service.membershipError");
   membership.append(legend, membershipHint, allRow, options, membershipError);
 
-  container.append(
-    name.label,
-    url.label,
-    iconLabel,
-    accent,
-    chrome,
-    agent.label,
-    membership,
-  );
+  container.append(name.label, url.label, iconLabel, accent, chrome, agent.label, membership);
+  if (isEditor) container.append(dndBypass, dndBypassHint);
 
   type WorkspaceOption = { id: string; input: HTMLInputElement; row: HTMLLabelElement };
   let workspaceOptions: WorkspaceOption[] = [];
@@ -1932,6 +1949,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
       if (iconValue.startsWith("http")) iconText.value = iconValue;
       chromeInput.checked = values.useChromeUserAgent;
       agent.input.value = values.userAgent;
+      dndBypassInput.checked = values.notifyInDnd ?? false;
       hasInteracted = false;
       setColor(values.color || brandColor);
       allInput.checked = values.allWorkspaces;
@@ -2040,6 +2058,7 @@ async function openEditor(service: Service): Promise<void> {
     brandColor: brandColorFor(service.preset),
     workspaces: service.workspaces,
     allWorkspaces: service.allWorkspaces,
+    notifyInDnd: service.notifyInDnd,
   });
   const error = must<HTMLElement>("#editor-error");
   error.hidden = true;
@@ -2687,6 +2706,7 @@ function serviceTitle(service: Service): string {
     parts.push(t("service.notificationsOff"));
   }
   if (service.workspaceSilenced) parts.push(t("service.silenced"));
+  if (service.notifyInDnd) parts.push(t("service.notifyInDndBadge"));
   return parts.join(". ");
 }
 
@@ -2724,6 +2744,11 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
       checked: service.notificationsEnabled,
       action: () => void setServiceFlag(service.id, "notifications", !service.notificationsEnabled),
     }));
+    add(await CheckMenuItem.new({
+      text: t("service.menuNotifyInDnd"),
+      checked: service.notifyInDnd,
+      action: () => void setServiceFlag(service.id, "notifyInDnd", !service.notifyInDnd),
+    }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
       text: t("service.menuReload"),
@@ -2745,8 +2770,17 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
   }
 }
 
-async function setServiceFlag(id: string, kind: "sound" | "notifications", enabled: boolean): Promise<void> {
-  const command = kind === "sound" ? "set_service_sound" : "set_service_notifications";
+async function setServiceFlag(
+  id: string,
+  kind: "sound" | "notifications" | "notifyInDnd",
+  enabled: boolean,
+): Promise<void> {
+  const command =
+    kind === "sound"
+      ? "set_service_sound"
+      : kind === "notifications"
+        ? "set_service_notifications"
+        : "set_service_notify_in_dnd";
   const snapshot = await run(() => invoke<Snapshot>(command, { id, enabled }));
   if (snapshot) applySnapshot(snapshot);
 }

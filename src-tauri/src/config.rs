@@ -182,6 +182,12 @@ pub struct Service {
     /// Unread badges and desktop notifications. Do not disturb hides them anyway.
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
+    /// Lets this service's native notifications and sound through while Do
+    /// not disturb (global or every workspace it belongs to) is active.
+    /// Badges stay governed by `notifications_enabled` and Do not disturb
+    /// regardless. Off by default so old configs keep their current behavior.
+    #[serde(default)]
+    pub notify_in_dnd: bool,
     /// Workspace ids this service is listed under.
     #[serde(default)]
     pub workspaces: Vec<String>,
@@ -565,6 +571,7 @@ impl Config {
             preset: Some(preset.id.to_string()),
             sound_enabled: true,
             notifications_enabled: true,
+            notify_in_dnd: false,
             workspaces: workspace.into_iter().collect(),
             all_workspaces: false,
         };
@@ -587,6 +594,7 @@ impl Config {
             preset: None,
             sound_enabled: true,
             notifications_enabled: true,
+            notify_in_dnd: false,
             workspaces,
             all_workspaces,
         };
@@ -1540,6 +1548,10 @@ mod tests {
         for service in &loaded.services {
             assert_eq!(service.workspaces, vec![main.id.clone()]);
             assert!(!service.all_workspaces);
+            assert!(
+                !service.notify_in_dnd,
+                "a config written before this setting existed must not bypass Do not disturb"
+            );
         }
         assert_eq!(
             loaded.active_workspace_id.as_deref(),
@@ -1565,6 +1577,33 @@ mod tests {
         assert_eq!(reloaded, loaded);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn notify_in_dnd_defaults_to_off_and_round_trips_once_set() {
+        // A config saved before this setting existed has no field at all.
+        let bare: Config = serde_json::from_str(
+            r#"{"version":1,"services":[{"id":"a","name":"Slack","url":"https://app.slack.com/"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(bare.services.len(), 1, "migration must not drop services");
+        assert!(!bare.services[0].notify_in_dnd);
+
+        let mut config = bare;
+        config.services[0].notify_in_dnd = true;
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"notifyInDnd\":true") || json.contains("\"notifyInDnd\": true"));
+        let reloaded: Config = serde_json::from_str(&json).unwrap();
+        assert!(reloaded.services[0].notify_in_dnd);
+    }
+
+    #[test]
+    fn new_services_do_not_bypass_do_not_disturb_by_default() {
+        let mut config = config_with_workspaces(&["Work"]);
+        let preset = config.add_preset("slack", None).unwrap();
+        assert!(!preset.notify_in_dnd);
+        let custom = add_service(&mut config, "Mail", &[]);
+        assert!(!custom.notify_in_dnd);
     }
 
     #[test]

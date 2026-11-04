@@ -44,6 +44,9 @@ pub struct ServiceDto {
     pub preset: Option<String>,
     pub sound_enabled: bool,
     pub notifications_enabled: bool,
+    /// Lets native notifications and sound through Do not disturb; badges
+    /// are unaffected and keep following `notifications_enabled`.
+    pub notify_in_dnd: bool,
     /// Workspace ids this service is listed under, empty when pinned to all.
     pub workspaces: Vec<String>,
     pub all_workspaces: bool,
@@ -178,6 +181,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 preset: service.preset.clone(),
                 sound_enabled: service.sound_enabled,
                 notifications_enabled: service.notifications_enabled,
+                notify_in_dnd: service.notify_in_dnd,
                 workspaces: service.workspaces.clone(),
                 all_workspaces: service.all_workspaces,
                 workspace_silenced: workspace_dnd,
@@ -745,7 +749,7 @@ pub fn forward_notification(
             .map(|service| service.name.clone())
             .unwrap_or_else(|| "Rustbox".to_string())
     };
-    if !notifications_visible(&state, service_id) {
+    if !native_notification_allowed(&state, service_id) {
         return Ok(());
     }
     if !allow_notification(&state, service_id) {
@@ -855,6 +859,9 @@ pub fn refresh_title_if_active(app: &AppHandle, id: &str) {
     }
 }
 
+/// Gates the live unread-count event (badges), which stays governed by
+/// `notifications_shown` regardless of a service's "notify even in Do not
+/// disturb" switch.
 fn notifications_visible(state: &RuntimeState, service_id: &str) -> bool {
     let config = lock(&state.config);
     let Some(service) = config
@@ -871,16 +878,37 @@ fn notifications_visible(state: &RuntimeState, service_id: &str) -> bool {
     )
 }
 
+/// Gates the actual native OS notification, honoring a service's "notify
+/// even in Do not disturb" switch. Unlike `notifications_visible` (badges),
+/// this can return true during Do not disturb.
+fn native_notification_allowed(state: &RuntimeState, service_id: &str) -> bool {
+    let config = lock(&state.config);
+    let Some(service) = config
+        .services
+        .iter()
+        .find(|service| service.id == service_id)
+    else {
+        return !config.do_not_disturb;
+    };
+    policy::notification_allowed(
+        config.do_not_disturb,
+        config.workspace_silenced(service),
+        service.notifications_enabled,
+        service.notify_in_dnd,
+    )
+}
+
 fn service_sound_muted(app: &AppHandle, id: &str) -> bool {
     let state = app.state::<RuntimeState>();
     let config = lock(&state.config);
     let Some(service) = config.services.iter().find(|service| service.id == id) else {
         return config.do_not_disturb;
     };
-    policy::sound_muted(
+    policy::sound_muted_allowing_bypass(
         config.do_not_disturb,
         config.workspace_silenced(service),
         service.sound_enabled,
+        service.notify_in_dnd,
     )
 }
 

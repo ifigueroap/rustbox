@@ -137,8 +137,13 @@ export const en = {
   "service.soundOff": "Sound off",
   "service.notificationsOff": "Notifications off",
   "service.silenced": "Silenced by workspace Do not disturb",
+  "service.notifyInDnd": "Notify even in Do not disturb",
+  "service.notifyInDndHint":
+    "Lets this service's notifications and sound through while Do not disturb is on. Badges stay hidden.",
+  "service.notifyInDndBadge": "Bypasses Do not disturb",
   "service.menuSound": "Sound",
   "service.menuNotifications": "Notifications",
+  "service.menuNotifyInDnd": "Notify in Do not disturb",
   "service.menuReload": "Reload",
   "service.menuCopyUrl": "Copy URL",
   "service.menuOpenBrowser": "Open in browser",
