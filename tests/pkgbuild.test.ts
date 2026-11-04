@@ -16,17 +16,33 @@ const template = fs.readFileSync(path.resolve(process.cwd(), PKGBUILD_PATH), "ut
 const DIGEST = "b".repeat(64);
 
 describe("Arch PKGBUILD rendering", () => {
+  it("renders the current app version", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
+    expect(template).toContain(`pkgver=${pkg.version} # x-release-please-version`);
+    expect(() => assertPkgbuild(template, { version: pkg.version })).not.toThrow();
+  });
+
   it("ships the recipe the release job rewrites", () => {
     expect(template).toContain("pkgname=rustbox");
-    expect(template).toContain("pkgver=0.9.1 # x-release-please-version");
     expect(template).toContain("arch=(x86_64)");
     expect(template).toContain("license=(MIT)");
+    expect(template).toContain("pkgrel=1");
     expect(template).toContain("/archive/refs/tags/v$pkgver.tar.gz");
-    expect(() => assertPkgbuild(template, { version: "0.9.1" })).not.toThrow();
+    expect(template).toContain("x-release-please-version");
   });
 
   it("names the dependency set the app actually links", () => {
-    for (const dep of ["webkit2gtk-4.1", "gtk3", "libayatana-appindicator", "xdg-utils"]) {
+    for (const dep of [
+      "webkit2gtk-4.1",
+      "gtk3",
+      "libayatana-appindicator",
+      "xdg-utils",
+      // WebKitGTK asks GStreamer for `autoaudiosink` the first time a page
+      // plays audio and aborts in WebKitWebProcess when the plugin is missing,
+      // so the plugins that provide it are runtime dependencies, not extras.
+      "gst-plugins-base",
+      "gst-plugins-good",
+    ]) {
       expect(template).toMatch(new RegExp(`^\\s+${dep.replace(/[.+]/g, "\\$&")}$`, "m"));
     }
     for (const dep of ["rust", "nodejs", "npm", "pkgconf"]) {
@@ -35,6 +51,22 @@ describe("Arch PKGBUILD rendering", () => {
     // `cargo` is provided by `rust`; naming both would break makepkg -s.
     expect(template).not.toMatch(/^\s+cargo$/m);
     expect(template).not.toMatch(/^\s+git$/m);
+  });
+
+  it("offers the extra GStreamer codec sets without requiring them", () => {
+    const optdepends = template.match(/^optdepends=\(\n([\s\S]*?)^\)$/m)?.[1] ?? "";
+    for (const dep of ["gst-plugins-bad", "gst-libav"]) {
+      // `name: description` is the makepkg form pacman shows next to the
+      // package, so each entry has to carry a reason.
+      expect(optdepends).toMatch(
+        new RegExp(`^\\s+'${dep.replace(/[.+]/g, "\\$&")}: \\S.+',?$`, "m"),
+      );
+    }
+    // Optional, not mandatory: they add codecs, and the audio path above works
+    // without them.
+    const depends = template.match(/^depends=\(\n([\s\S]*?)^\)$/m)?.[1] ?? "";
+    expect(depends).not.toContain("gst-plugins-bad");
+    expect(depends).not.toContain("gst-libav");
   });
 
   it("builds without bundling an AppImage or needing the signing key", () => {
@@ -79,6 +111,12 @@ describe("Arch PKGBUILD rendering", () => {
   it("rejects a recipe that drops a dependency or a build step", () => {
     const withoutWebkit = template.replace(/^\s+webkit2gtk-4\.1\n/m, "");
     expect(() => assertPkgbuild(withoutWebkit, { version: "0.9.1" })).toThrow(/webkit2gtk/);
+    // Dropping the GStreamer plugin sets brings back the WebKitWebProcess
+    // abort on the first page that plays audio.
+    const withoutAudio = template.replace(/^\s+gst-plugins-good\n/m, "");
+    expect(() => assertPkgbuild(withoutAudio, { version: "0.9.1" })).toThrow(/gst-plugins-good/);
+    const withoutOptdepends = template.replace(/^optdepends=\([\s\S]*?^\)\n/m, "");
+    expect(() => assertPkgbuild(withoutOptdepends, { version: "0.9.1" })).toThrow(/optdepends/);
     const withoutBuild = template.replace(/^build\(\)/m, "prepare()");
     expect(() => assertPkgbuild(withoutBuild, { version: "0.9.1" })).toThrow(/build\(\)/);
     expect(() => assertPkgbuild(template, { version: "9.9.9" })).toThrow(/does not match/);

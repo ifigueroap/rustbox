@@ -22,6 +22,18 @@ depends=(
   gtk3
   libayatana-appindicator
   xdg-utils
+  # WebKitGTK builds its audio pipeline out of GStreamer plugins at runtime. It
+  # asks for `autoaudiosink` the first time a page plays audio, and when the
+  # plugin is missing the element factory lookup fails, the NULL sink instance
+  # trips a `GLib-GObject-CRITICAL`, and WebKitWebProcess aborts. Base ships the
+  # core elements and playback; good ships `autoaudiosink` and the audio/video
+  # sinks.
+  gst-plugins-base
+  gst-plugins-good
+)
+optdepends=(
+  'gst-plugins-bad: extra codecs and WebRTC'
+  'gst-libav: H.264/AAC and other codecs for voice notes and video'
 )
 makedepends=(
   rust

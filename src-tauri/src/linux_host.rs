@@ -16,30 +16,44 @@ use webkit2gtk::WebViewExt;
 
 /// WebKitGTK 2.42 and later draw through DMA-BUF by default, and its renderer
 /// aborts inside `WebKitWebProcess` when the compositor, the GL driver, or Mesa
-/// disagree with what WebKitGTK was built against. A distro build can be newer
-/// or older than the Mesa stack beside it, which is the crash a bundled
-/// WebKitGTK reports on Wayland. WebKitGTK reads this switch once, while it
-/// creates the first web process, so it has to be in the environment before any
-/// webview exists.
+/// disagree with what WebKitGTK was built against. That is the AppImage's
+/// problem: it bundles Ubuntu 22.04's WebKitGTK and meets whatever Mesa the
+/// host distribution has, and on Arch the mismatch is a crash. A package build
+/// links the distribution's own WebKitGTK, which was built against the same
+/// Mesa, so it keeps DMA-BUF: forcing the software path there only costs
+/// drawing and input latency (typing in WhatsApp Web ran a whole core hot).
+/// WebKitGTK reads this switch once, while it creates the first web process, so
+/// it has to be in the environment before any webview exists.
 pub fn prepare_environment() {
     let configured = std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER");
-    let Some(value) = dmabuf_fallback(configured.as_deref()) else {
+    let appimage = std::env::var_os("APPIMAGE");
+    let Some(value) = dmabuf_fallback(configured.as_deref(), appimage.as_deref()) else {
         return;
     };
     // SAFETY: `run` calls this before Tauri is built, so no GTK, WebKit, or
     // Rust thread exists yet and nothing can be reading the environment.
     unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", value) };
     eprintln!(
-        "rustbox: WEBKIT_DISABLE_DMABUF_RENDERER was unset; using 1 so WebKitGTK does not abort on DMA-BUF"
+        "rustbox: WEBKIT_DISABLE_DMABUF_RENDERER was unset; using 1 for the AppImage's bundled WebKitGTK so it does not abort on DMA-BUF"
     );
 }
 
-/// `None` leaves the environment alone. Any value the user set, including an
-/// empty one, is a deliberate choice and wins over the fallback.
-fn dmabuf_fallback(configured: Option<&OsStr>) -> Option<&'static str> {
-    match configured {
-        Some(_) => None,
-        None => Some("1"),
+/// The value to install in `WEBKIT_DISABLE_DMABUF_RENDERER`, or `None` to leave
+/// the environment alone.
+///
+/// Any value the user set, including an empty one, is a deliberate choice and
+/// wins over the fallback. The fallback itself is only for the AppImage, whose
+/// bundled WebKitGTK is older than the host's Mesa; a package build, where
+/// `APPIMAGE` is absent, keeps the DMA-BUF renderer. Presence alone decides,
+/// which is how `updates::detect_bundle_kind` reads the same variable.
+fn dmabuf_fallback(configured: Option<&OsStr>, appimage: Option<&OsStr>) -> Option<&'static str> {
+    if configured.is_some() {
+        return None;
+    }
+    if appimage.is_some() {
+        Some("1")
+    } else {
+        None
     }
 }
 
@@ -204,17 +218,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_unset_dmabuf_switch_gets_the_software_renderer_fallback() {
-        assert_eq!(dmabuf_fallback(None), Some("1"));
+    fn an_unset_dmabuf_switch_gets_the_software_renderer_in_the_appimage() {
+        assert_eq!(
+            dmabuf_fallback(None, Some(OsStr::new("/tmp/.mount_rustbox"))),
+            Some("1")
+        );
+        // The variable is a marker: an empty value still means "AppImage".
+        assert_eq!(dmabuf_fallback(None, Some(OsStr::new(""))), Some("1"));
+    }
+
+    #[test]
+    fn a_package_install_keeps_the_dmabuf_renderer() {
+        // A native build links the distribution's WebKitGTK, built against the
+        // same Mesa, so the software path is only a slowdown. The hardware path
+        // is what makes typing in WhatsApp Web responsive.
+        assert_eq!(dmabuf_fallback(None, None), None);
     }
 
     #[test]
     fn a_user_set_dmabuf_switch_is_never_overridden() {
         // `0` is how a user proves WebKit works on their GL stack, and an empty
-        // value is still a deliberate set-and-empty. Both stay as they are.
-        assert_eq!(dmabuf_fallback(Some(OsStr::new("0"))), None);
-        assert_eq!(dmabuf_fallback(Some(OsStr::new("1"))), None);
-        assert_eq!(dmabuf_fallback(Some(OsStr::new(""))), None);
-        assert_eq!(dmabuf_fallback(Some(OsStr::new(" true "))), None);
+        // value is still a deliberate set-and-empty. Both stay as they are,
+        // in the AppImage and outside it.
+        for appimage in [None, Some(OsStr::new("/tmp/.mount_rustbox"))] {
+            assert_eq!(dmabuf_fallback(Some(OsStr::new("0")), appimage), None);
+            assert_eq!(dmabuf_fallback(Some(OsStr::new("1")), appimage), None);
+            assert_eq!(dmabuf_fallback(Some(OsStr::new("")), appimage), None);
+            assert_eq!(dmabuf_fallback(Some(OsStr::new(" true ")), appimage), None);
+        }
     }
 }
