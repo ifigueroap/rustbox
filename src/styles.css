@@ -676,6 +676,23 @@ select:focus-visible {
   box-shadow: 0 0 0 2px var(--panel);
 }
 
+/* A quiet corner mark, not a badge: it should not compete with unread counts. */
+.avatar.dnd-bypass::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--copper);
+  box-shadow: 0 0 0 2px var(--sidebar);
+}
+
+.card .avatar.dnd-bypass::before {
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
 .avatar.glyph {
   padding: 7px;
 }

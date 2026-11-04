@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-service-notify-in-dnd"
+description = "Enables the set_service_notify_in_dnd command without any pre-configured scope."
+commands.allow = ["set_service_notify_in_dnd"]
+
+[[permission]]
+identifier = "deny-set-service-notify-in-dnd"
+description = "Denies the set_service_notify_in_dnd command without any pre-configured scope."
+commands.deny = ["set_service_notify_in_dnd"]

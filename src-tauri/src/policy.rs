@@ -53,6 +53,49 @@ pub fn notifications_shown(
     !do_not_disturb && !workspace_dnd && notifications_enabled
 }
 
+/// Whether a service's "notify even in Do not disturb" switch is actually in
+/// effect, i.e. Do not disturb (global or every workspace the service
+/// belongs to) is on and the service opted in. Badges are never covered by
+/// this: they keep following `notifications_shown` regardless.
+pub fn bypasses_do_not_disturb(
+    do_not_disturb: bool,
+    workspace_dnd: bool,
+    notify_in_dnd: bool,
+) -> bool {
+    notify_in_dnd && (do_not_disturb || workspace_dnd)
+}
+
+/// Native notification visibility for a service, honoring its "notify even
+/// in Do not disturb" switch. Unread badges are not covered by this function;
+/// they keep using `notifications_shown` so badges stay unaffected by the
+/// bypass.
+pub fn notification_allowed(
+    do_not_disturb: bool,
+    workspace_dnd: bool,
+    notifications_enabled: bool,
+    notify_in_dnd: bool,
+) -> bool {
+    notifications_enabled
+        && (bypasses_do_not_disturb(do_not_disturb, workspace_dnd, notify_in_dnd)
+            || notifications_shown(do_not_disturb, workspace_dnd, notifications_enabled))
+}
+
+/// Page audio mute for a service, honoring its "notify even in Do not
+/// disturb" switch the same way `notification_allowed` does for
+/// notifications.
+pub fn sound_muted_allowing_bypass(
+    do_not_disturb: bool,
+    workspace_dnd: bool,
+    sound_enabled: bool,
+    notify_in_dnd: bool,
+) -> bool {
+    if bypasses_do_not_disturb(do_not_disturb, workspace_dnd, notify_in_dnd) {
+        !sound_enabled
+    } else {
+        sound_muted(do_not_disturb, workspace_dnd, sound_enabled)
+    }
+}
+
 /// Resolve the per-service silencing rule for a service listed in several
 /// workspaces: it is silenced only when every workspace it belongs to has Do
 /// not disturb on. `workspace_dnd` values are the switches of the workspaces
@@ -309,6 +352,64 @@ mod tests {
         assert!(!notifications_shown(true, false, true));
         assert!(!notifications_shown(true, false, false));
         assert!(!notifications_shown(false, true, true));
+    }
+
+    #[test]
+    fn notify_in_dnd_bypasses_only_while_do_not_disturb_is_active() {
+        assert!(
+            !bypasses_do_not_disturb(false, false, true),
+            "nothing to bypass while awake"
+        );
+        assert!(bypasses_do_not_disturb(true, false, true));
+        assert!(bypasses_do_not_disturb(false, true, true));
+        assert!(
+            !bypasses_do_not_disturb(true, true, false),
+            "the service did not opt in"
+        );
+    }
+
+    #[test]
+    fn notify_in_dnd_lets_native_notifications_through_do_not_disturb() {
+        // Awake: behaves exactly like notifications_shown either way.
+        assert!(notification_allowed(false, false, true, false));
+        assert!(notification_allowed(false, false, true, true));
+        assert!(
+            !notification_allowed(false, false, false, true),
+            "the service's own switch still gates it"
+        );
+
+        // Global Do not disturb: only the opted-in service gets through.
+        assert!(!notification_allowed(true, false, true, false));
+        assert!(notification_allowed(true, false, true, true));
+        assert!(
+            !notification_allowed(true, false, false, true),
+            "disabled notifications are not resurrected by the bypass"
+        );
+
+        // Workspace Do not disturb behaves the same as global.
+        assert!(!notification_allowed(false, true, true, false));
+        assert!(notification_allowed(false, true, true, true));
+    }
+
+    #[test]
+    fn notify_in_dnd_lets_sound_through_do_not_disturb() {
+        // Awake: behaves exactly like sound_muted either way.
+        assert!(!sound_muted_allowing_bypass(false, false, true, false));
+        assert!(!sound_muted_allowing_bypass(false, false, true, true));
+        assert!(
+            sound_muted_allowing_bypass(false, false, false, true),
+            "sound_enabled still gates it"
+        );
+
+        // Global and workspace Do not disturb: only the opted-in service stays audible.
+        assert!(sound_muted_allowing_bypass(true, false, true, false));
+        assert!(!sound_muted_allowing_bypass(true, false, true, true));
+        assert!(sound_muted_allowing_bypass(false, true, true, false));
+        assert!(!sound_muted_allowing_bypass(false, true, true, true));
+        assert!(
+            sound_muted_allowing_bypass(true, false, false, true),
+            "disabled sound is not resurrected by the bypass"
+        );
     }
 
     #[test]

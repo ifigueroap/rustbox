@@ -137,6 +137,26 @@ fn set_service_notifications(
 }
 
 #[tauri::command]
+fn set_service_notify_in_dnd(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|service| service.id == id)
+            .ok_or_else(|| "service not found".to_string())?;
+        service.notify_in_dnd = enabled;
+        Ok(())
+    })?;
+    services::apply_sound_policy(&app);
+    tray::sync(&app);
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 fn set_do_not_disturb(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
     tray::store_do_not_disturb(&app, enabled)?;
     Ok(services::snapshot(&app))
@@ -455,6 +475,7 @@ pub fn run() {
             set_sidebar_collapsed,
             set_service_sound,
             set_service_notifications,
+            set_service_notify_in_dnd,
             set_do_not_disturb,
             set_close_to_tray,
             quit_app,
