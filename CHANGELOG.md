@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.0](https://github.com/ifigueroap/rustbox/compare/v0.10.1...v0.11.0) (2026-11-04)
+
+
+### Features
+
+* let a service notify even in Do Not Disturb ([#39](https://github.com/ifigueroap/rustbox/issues/39)) ([11a7dee](https://github.com/ifigueroap/rustbox/commit/11a7deedea903ee18e28269cc65acddf86e1bdc8))
+
+
+### Bug Fixes
+
+* **linux:** depend on GStreamer plugins and keep the DMA-BUF workaround to the AppImage ([#37](https://github.com/ifigueroap/rustbox/issues/37)) ([f6db3f0](https://github.com/ifigueroap/rustbox/commit/f6db3f0eb501ee22cdf92b03061844e7474cdef2))
+
 ## [0.10.1](https://github.com/ifigueroap/rustbox/compare/v0.10.0...v0.10.1) (2026-11-01)
 
 
