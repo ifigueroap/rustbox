@@ -1,5 +1,16 @@
 import { afterEach, vi } from "vitest";
 
+// jsdom does not implement CSS.escape; the shell uses it when refreshing
+// unread pills from live events.
+if (typeof CSS === "undefined") {
+  (globalThis as { CSS: { escape: (value: string) => string } }).CSS = {
+    escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`),
+  };
+} else if (typeof CSS.escape !== "function") {
+  CSS.escape = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
+}
+
+
 // The shell imports @tauri-apps/api, which talks to the native IPC bridge. In
 // jsdom there is no bridge, so the modules are stubbed. Tests that need a
 // backend stub `src/ipc.ts` instead, which leaves the shell's own code intact.

@@ -53,6 +53,19 @@ pub fn notifications_shown(
     !do_not_disturb && !workspace_dnd && notifications_enabled
 }
 
+/// The Home/desk dashboard's informational unread count for a service.
+///
+/// Unlike `notifications_shown`, this has no Do not disturb parameter at
+/// all: Do not disturb only suppresses attention-grabbing surfaces (sidebar
+/// and workspace-rail badges, the tray, the window badge overlay, native
+/// notifications), never the desk's unread counts. The only thing that
+/// zeroes a Home count is the service's own Badges switch
+/// (`notifications_enabled`), matching how disabling Badges already hides
+/// desktop notifications for that service.
+pub fn informational_unread(raw: u32, notifications_enabled: bool) -> u32 {
+    if notifications_enabled { raw } else { 0 }
+}
+
 /// Whether a service's "notify even in Do not disturb" switch is actually in
 /// effect, i.e. Do not disturb (global or every workspace the service
 /// belongs to) is on and the service opted in. Badges are never covered by
@@ -352,6 +365,21 @@ mod tests {
         assert!(!notifications_shown(true, false, true));
         assert!(!notifications_shown(true, false, false));
         assert!(!notifications_shown(false, true, true));
+    }
+
+    #[test]
+    fn informational_unread_respects_badges_but_ignores_do_not_disturb() {
+        // No `do_not_disturb` parameter exists to pass here at all: Home
+        // counts simply do not know about Do not disturb.
+        assert_eq!(informational_unread(5, true), 5);
+        assert_eq!(informational_unread(0, true), 0);
+        assert_eq!(informational_unread(5, false), 0, "Badges off still hides Home's count");
+
+        // Confirm it diverges from the attention-badge rule while Do not
+        // disturb is active and Badges are on: the badge is hidden, but the
+        // informational count is not.
+        assert!(!notifications_shown(true, false, true));
+        assert_eq!(informational_unread(5, true), 5);
     }
 
     #[test]
