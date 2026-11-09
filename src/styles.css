@@ -1474,6 +1474,14 @@ input.switch:disabled {
   color: var(--brand-ink);
 }
 
+/* Do not disturb keeps Home's count visible but less attention-grabbing
+   than the copper emphasis above. */
+.card-copy .unread-pill.has-unread.dnd-quiet {
+  border-color: var(--copper-deep);
+  background: var(--tag-bg);
+  color: var(--tag-fg);
+}
+
 .eyebrow {
   margin: 0 0 var(--space-2);
   color: var(--copper);

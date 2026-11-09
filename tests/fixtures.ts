@@ -17,6 +17,7 @@ export interface TestService {
   preset?: string | null;
   soundEnabled: boolean;
   notificationsEnabled: boolean;
+  notifyInDnd: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
   workspaceSilenced: boolean;
@@ -101,6 +102,7 @@ export function service(
     preset: null,
     soundEnabled: true,
     notificationsEnabled: true,
+    notifyInDnd: false,
     workspaces: workspaceIds,
     allWorkspaces: false,
     workspaceSilenced: false,

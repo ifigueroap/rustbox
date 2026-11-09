@@ -108,7 +108,10 @@ type ThemePreference = "auto" | "light" | "dark";
 
 interface UnreadEvent {
   serviceId: string;
+  /** Attention-badge count: sidebar, workspace rail, tray. Zero under Do not disturb. */
   count: number;
+  /** Unconditional title-derived count. Home's pill derives from this, see `informationalUnread`. */
+  rawCount: number;
 }
 
 interface IconTarget {
@@ -1542,8 +1545,12 @@ function serviceCard(service: Service): HTMLElement {
   name.textContent = service.name;
   const meta = document.createElement("span");
   meta.dataset.unreadFor = service.id;
-  meta.className = service.unread > 0 ? "unread-pill has-unread" : "unread-pill";
-  meta.textContent = unreadLabel(service.unread);
+  const informational = informationalUnread(service);
+  meta.className =
+    informational > 0
+      ? `unread-pill has-unread${quietedByDnd(service) ? " dnd-quiet" : ""}`
+      : "unread-pill";
+  meta.textContent = unreadLabel(informational);
   const url = document.createElement("span");
   url.className = "card-url";
   url.textContent = service.url;
@@ -2677,21 +2684,45 @@ function recomputeWorkspaceUnread(): void {
   }
 }
 
-function refreshUnread(serviceId: string, count: number): void {
+/** Home's informational unread count: gated only by the service's Badges
+ * switch, never by Do not disturb. Mirrors `policy::informational_unread`
+ * on the backend. Sidebar/rail badges and the tray keep using
+ * `service.unread` instead, which Do not disturb does zero. */
+function informationalUnread(service: Service): number {
+  return service.notificationsEnabled ? service.rawUnread : 0;
+}
+
+/** Whether Home's unread pill should render muted rather than copper: while
+ * Do not disturb (global or this service's workspace) is active, the count
+ * stays visible but is not meant to grab attention. */
+function quietedByDnd(service: Service): boolean {
+  return doNotDisturb || service.workspaceSilenced;
+}
+
+function refreshUnread(serviceId: string, count: number, rawCount: number): void {
   const service = services.find((item) => item.id === serviceId);
-  if (!service || service.unread === count) return;
+  if (!service) return;
+  const badgeChanged = service.unread !== count;
+  const rawChanged = service.rawUnread !== rawCount;
+  if (!badgeChanged && !rawChanged) return;
   service.unread = count;
-  recomputeWorkspaceUnread();
-  const failures = [
-    renderStageSafely(t("render.workspaceRail"), renderWorkspaceRail),
-    renderStageSafely(t("render.workspaceSwitcher"), renderWorkspaceSwitcher),
-    renderStageSafely(t("render.sidebar"), renderSidebar),
-  ].filter((message): message is string => message !== null);
-  if (failures.length > 0) showError(failures.join(" — "));
+  service.rawUnread = rawCount;
+  if (badgeChanged) {
+    recomputeWorkspaceUnread();
+    const failures = [
+      renderStageSafely(t("render.workspaceRail"), renderWorkspaceRail),
+      renderStageSafely(t("render.workspaceSwitcher"), renderWorkspaceSwitcher),
+      renderStageSafely(t("render.sidebar"), renderSidebar),
+    ].filter((message): message is string => message !== null);
+    if (failures.length > 0) showError(failures.join(" — "));
+  }
+  const informational = informationalUnread(service);
+  const quiet = quietedByDnd(service);
   document.querySelectorAll<HTMLElement>(`[data-unread-for="${CSS.escape(serviceId)}"]`).forEach((node) => {
     if (node.classList.contains("badge")) return;
-    node.classList.toggle("has-unread", count > 0);
-    node.textContent = unreadLabel(count);
+    node.classList.toggle("has-unread", informational > 0);
+    node.classList.toggle("dnd-quiet", informational > 0 && quiet);
+    node.textContent = unreadLabel(informational);
   });
 }
 
@@ -2954,7 +2985,7 @@ async function boot(): Promise<void> {
 export async function renderShell(): Promise<void> {
   mountShell();
   await listen<UnreadEvent>("unread-count", (event) => {
-    refreshUnread(event.payload.serviceId, event.payload.count);
+    refreshUnread(event.payload.serviceId, event.payload.count, event.payload.rawCount);
   });
   await listen<Snapshot>("app-snapshot", (event) => {
     applySnapshot(event.payload);

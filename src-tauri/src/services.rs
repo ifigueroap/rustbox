@@ -52,8 +52,14 @@ pub struct ServiceDto {
     pub all_workspaces: bool,
     /// True when workspace Do not disturb silences this service.
     pub workspace_silenced: bool,
-    /// Raw title-derived count, before any Do not disturb hides it.
+    /// Raw title-derived count, unconditional. The desk dashboard shows this
+    /// (gated client side only by `notifications_enabled`, never by Do not
+    /// disturb) so Home counts stay visible through Do not disturb; see
+    /// `policy::informational_unread`.
     pub raw_unread: u32,
+    /// Attention-badge count: zero while hidden by `notifications_shown`
+    /// (Do not disturb, workspace silencing, or Badges off). Drives the
+    /// sidebar, workspace rail, and tray; never the desk dashboard.
     pub unread: u32,
 }
 
@@ -99,11 +105,17 @@ pub struct Snapshot {
     pub update: UpdateStatus,
 }
 
+/// `count` is the attention-badge value (zero under Do not disturb,
+/// workspace silencing, or Badges off). `raw_count` is the unconditional
+/// title-derived count, so the desk dashboard can keep showing it through Do
+/// not disturb; the frontend gates it only by `notificationsEnabled`,
+/// mirroring `policy::informational_unread`.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UnreadEvent {
     service_id: String,
     count: u32,
+    raw_count: u32,
 }
 
 impl RuntimeState {
@@ -724,6 +736,7 @@ pub fn note_title(app: &AppHandle, service_id: &str, title: &str) {
             UnreadEvent {
                 service_id: service_id.to_string(),
                 count: visible,
+                raw_count: count,
             },
         );
         crate::tray::sync(app);
@@ -859,9 +872,11 @@ pub fn refresh_title_if_active(app: &AppHandle, id: &str) {
     }
 }
 
-/// Gates the live unread-count event (badges), which stays governed by
-/// `notifications_shown` regardless of a service's "notify even in Do not
-/// disturb" switch.
+/// Gates the live unread-count event's badge-visible `count`, which stays
+/// governed by `notifications_shown` regardless of a service's "notify even
+/// in Do not disturb" switch. The event's `raw_count` is unconditional and
+/// is what feeds the desk dashboard's informational count instead; do not
+/// reuse this function to gate that.
 fn notifications_visible(state: &RuntimeState, service_id: &str) -> bool {
     let config = lock(&state.config);
     let Some(service) = config
