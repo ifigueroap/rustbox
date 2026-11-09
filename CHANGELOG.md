@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/ifigueroap/rustbox/compare/v0.11.0...v0.11.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* keep unread counts on Home during Do Not Disturb ([#40](https://github.com/ifigueroap/rustbox/issues/40)) ([14e7d2b](https://github.com/ifigueroap/rustbox/commit/14e7d2b952ce68ae6a5b9bf8e92c1368c7c09bf5))
+
 ## [0.11.0](https://github.com/ifigueroap/rustbox/compare/v0.10.1...v0.11.0) (2026-11-04)
 
 
