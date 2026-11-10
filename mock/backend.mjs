@@ -41,6 +41,8 @@ function makeService(name, preset, workspaceIds, extra = {}) {
     useChromeUserAgent: true,
     preset,
     soundEnabled: true,
+    neverHibernate: false,
+    hibernated: false,
     notificationsEnabled: true,
     workspaces: workspaceIds,
     allWorkspaces: false,
@@ -68,6 +70,8 @@ const state = {
   workspaceRailHidden: false,
   doNotDisturb: false,
   closeToTray: true,
+  hibernateAfterMinutes: 0,
+  hibernateInactiveWorkspaces: false,
   trayAvailable: true,
   theme: "auto",
   language: "system",
@@ -243,6 +247,15 @@ window.__TAURI_INTERNALS__ = {
       case "relaunch_app":
       case "set_ui_locale":
         return Promise.resolve(snapshot());
+      case "set_hibernation_settings":
+        state.hibernateAfterMinutes = args.afterMinutes;
+        state.hibernateInactiveWorkspaces = args.inactiveWorkspaces;
+        return Promise.resolve(snapshot());
+      case "set_service_never_hibernate": {
+        const service = state.services.find((item) => item.id === args.id);
+        if (service) service.neverHibernate = Boolean(args.enabled);
+        return Promise.resolve(snapshot());
+      }
       case "set_close_to_tray":
         state.closeToTray = Boolean(args.enabled);
         return Promise.resolve(snapshot());

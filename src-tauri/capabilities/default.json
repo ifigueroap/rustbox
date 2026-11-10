@@ -18,6 +18,8 @@
     "allow-set-service-sound",
     "allow-set-service-notifications",
     "allow-set-service-notify-in-dnd",
+    "allow-set-hibernation-settings",
+    "allow-set-service-never-hibernate",
     "allow-set-do-not-disturb",
     "allow-set-dnd-schedule",
     "allow-set-close-to-tray",

@@ -185,6 +185,41 @@ mod tests {
         assert_eq!(compute(&current, &imported, true).unwrap(), imported);
     }
     #[test]
+    fn backups_keep_combined_service_and_global_preferences() {
+        let current = populated();
+        let mut imported = populated();
+        imported.services[0].zoom = 1.25;
+        imported.services[0].spellcheck_enabled = Some(false);
+        imported.services[0].never_hibernate = true;
+        imported.start_at_login = true;
+        imported.start_hidden = true;
+        imported.hibernate_after_minutes = 15;
+        imported.hibernate_inactive_workspaces = true;
+        imported.dnd_schedule = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "rules": [{ "days": ["fri"], "startMinute": 1140, "endMinute": 480 }]
+        }))
+        .unwrap();
+        imported.workspaces[0].dnd_schedule = imported.dnd_schedule.clone();
+
+        let exported = document(imported.clone());
+        let restored = parse(&serde_json::to_vec(&exported).unwrap()).unwrap();
+        assert_eq!(restored.config, imported);
+        assert_eq!(compute(&current, &restored.config, true).unwrap(), imported);
+
+        let merged = compute(&current, &restored.config, false).unwrap();
+        assert_eq!(merged.services[0], current.services[0]);
+        assert_eq!(merged.services[1], imported.services[0]);
+        assert_eq!(merged.workspaces[1].id, imported.workspaces[0].id);
+        assert_eq!(merged.workspaces[1].dnd_schedule, imported.workspaces[0].dnd_schedule);
+        assert_eq!(merged.start_at_login, current.start_at_login);
+        assert_eq!(merged.start_hidden, current.start_hidden);
+        assert_eq!(merged.hibernate_after_minutes, current.hibernate_after_minutes);
+        assert_eq!(merged.hibernate_inactive_workspaces, current.hibernate_inactive_workspaces);
+        assert_eq!(merged.dnd_schedule, current.dnd_schedule);
+    }
+
+    #[test]
     fn invalid_files_and_old_versions_are_rejected() {
         assert_eq!(parse(b"{}").err().as_deref(), Some("shape"));
         assert_eq!(parse(b"not json").err().as_deref(), Some("shape"));

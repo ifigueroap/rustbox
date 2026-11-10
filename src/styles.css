@@ -2191,3 +2191,24 @@ button:disabled,
 .schedule-days button { padding: 5px; }
 .schedule-days button[aria-pressed="true"] { background: var(--copper); color: var(--brand-ink); }
 .schedule-editor input[type="time"] { width: 115px; margin: 4px; }
+/* Preserve the last count while making sleeping services quietly distinct. */
+.svc.hibernated .avatar,
+.card.hibernated .avatar,
+.svc.hibernated .badge,
+.card.hibernated .unread-pill {
+  opacity: 0.5;
+}
+.hibernation-mark {
+  color: var(--muted);
+  font-size: 0.85em;
+  flex-shrink: 0;
+}
+.sidebar-collapsed .svc .hibernation-mark {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+}
+
+#hibernate-workspaces-row[hidden] {
+  display: none;
+}

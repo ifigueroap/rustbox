@@ -306,4 +306,15 @@ export const es = {
   "zoom.level": "{percent}%",
   "zoom.reset": "Restablecer zoom",
 
+  // Idle service hibernation.
+  "hibernate.after": "Hibernar servicios en segundo plano después de",
+  "hibernate.off": "Desactivado",
+  "hibernate.minutes5": "5 minutos",
+  "hibernate.minutes15": "15 minutos",
+  "hibernate.minutes30": "30 minutos",
+  "hibernate.minutes60": "60 minutos",
+  "hibernate.workspaces": "Hibernar también los servicios de espacios inactivos",
+  "hibernate.never": "Nunca hibernar",
+  "hibernate.state": "En hibernación — abrir para reactivar; el contador es anterior a la hibernación",
+  "hibernate.hint": "Los servicios en hibernación pausan las notificaciones y los contadores. Ábrelos para reactivarlos; el estado sin guardar de la página puede perderse.",
 } satisfies SameShape<typeof en>;
