@@ -3145,6 +3145,70 @@ function openSettings(): void {
   void suspendForCover().then(reveal);
 }
 
+// Only known backup codes may select a message; never display native error details.
+const backupErrorKeys: ReadonlyMap<string, MessageKey> = new Map([
+  ["shape", "backup.error.shape"],
+  ["version", "backup.error.version"],
+  ["size", "backup.error.size"],
+  ["workspaces", "backup.error.workspaces"],
+  ["id", "backup.error.id"],
+  ["url", "backup.error.url"],
+  ["name", "backup.error.name"],
+  ["membership", "backup.error.membership"],
+  ["icon", "backup.error.icon"],
+  ["io", "backup.error.io"],
+  ["dialog", "backup.error.dialog"],
+  ["mode", "backup.error.mode"],
+  ["pending", "backup.error.pending"],
+  ["userAgent", "backup.error.userAgent"],
+]);
+
+async function configBackup(action: "export" | "import"): Promise<void> {
+  const status = document.querySelector<HTMLElement>("#backup-status");
+  const buttons = document.querySelectorAll<HTMLButtonElement>("#config-export, #config-import");
+  buttons.forEach((button) => { button.disabled = true; });
+  if (status) status.textContent = "";
+  claimCover("config-backup");
+  try {
+    if (action === "export") {
+      if (await invoke<boolean>("export_config") && status) status.textContent = t("backup.exported");
+      return;
+    }
+    if (!await invoke<boolean>("prepare_config_import")) return;
+    const choice = document.querySelector<HTMLDialogElement>("#import-choice")!;
+    const form = choice.querySelector<HTMLFormElement>("form")!;
+    const submit = (event: SubmitEvent) => {
+      event.preventDefault();
+      choice.returnValue = (event.submitter as HTMLButtonElement | null)?.value || "cancel";
+      choice.close();
+    };
+    form.addEventListener("submit", submit);
+    const mode = await new Promise<string>((resolve) => {
+      choice.returnValue = "cancel";
+      choice.addEventListener("close", () => resolve(choice.returnValue || "cancel"), { once: true });
+      choice.showModal();
+    });
+    form.removeEventListener("submit", submit);
+    let selected = mode;
+    if (mode === "replace" && !await confirmDialog({
+      title: t("backup.confirmTitle"), message: t("backup.confirm"),
+      confirmLabel: t("backup.replace"), cancelLabel: t("common.cancel"), danger: true,
+    })) selected = "cancel";
+    const snapshot = await invoke<Snapshot>("apply_config_import", { mode: selected });
+    if (selected !== "cancel") {
+      if (selected === "replace") suspendedId = snapshot.lastServiceId;
+      applySnapshot(snapshot);
+      if (status) status.textContent = t("backup.imported");
+    }
+  } catch (error) {
+    const code = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    if (status) status.textContent = t(backupErrorKeys.get(code) ?? "backup.error");
+  } finally {
+    buttons.forEach((button) => { button.disabled = false; });
+    await releaseCover("config-backup");
+  }
+}
+
 function closeSettings(): void {
   const dialog = document.querySelector<HTMLDialogElement>("#settings");
   if (dialog?.open) dialog.close();
@@ -3273,6 +3337,8 @@ function wireEvents(): void {
     const value = button?.dataset.value;
     if (value === "auto" || value === "light" || value === "dark") void setTheme(value);
   });
+  document.querySelector<HTMLButtonElement>("#config-export")?.addEventListener("click", () => { void configBackup("export"); });
+  document.querySelector<HTMLButtonElement>("#config-import")?.addEventListener("click", () => { void configBackup("import"); });
   document.querySelector<HTMLButtonElement>("#settings-button")?.addEventListener("click", () => {
     openSettings();
   });

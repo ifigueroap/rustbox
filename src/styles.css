@@ -900,6 +900,10 @@ select:focus-visible {
   padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
+#import-choice {
+  width: min(520px, calc(100vw - var(--space-6) * 2));
+}
+
 #settings {
   width: min(560px, calc(100vw - var(--space-6) * 2));
 }
