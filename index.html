@@ -397,6 +397,22 @@
           </section>
 
           <section class="settings-section">
+            <h3 data-i18n="settings.startup">Startup</h3>
+            <div class="settings-row">
+              <label class="settings-label" for="start-at-login" data-i18n="settings.startAtLogin">Start Rustbox when I log in</label>
+              <input id="start-at-login" class="switch" type="checkbox" role="switch" />
+            </div>
+            <div class="settings-row">
+              <div class="settings-copy">
+                <label class="settings-label" for="start-hidden" data-i18n="settings.startHidden">Start hidden in the tray</label>
+                <p id="startup-hint" class="field-hint" data-i18n="settings.startHiddenHint">Only at login. Requires start at login and an available tray icon. Manual launches show the window.</p>
+              </div>
+              <input id="start-hidden" class="switch" type="checkbox" role="switch" disabled aria-describedby="startup-hint" />
+            </div>
+            <p id="startup-error" class="field-hint" role="alert" hidden></p>
+          </section>
+
+          <section class="settings-section">
             <h3 data-i18n="settings.updates">Updates</h3>
             <div class="settings-row">
               <div class="settings-copy">

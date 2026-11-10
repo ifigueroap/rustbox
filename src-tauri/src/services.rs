@@ -108,6 +108,11 @@ pub struct Snapshot {
     pub os_locale: crate::i18n::Locale,
     pub app_version: String,
     pub update: UpdateStatus,
+    /// Reconciled against the OS login entry at startup and after every
+    /// `set_start_at_login` call; see `crate::autostart`.
+    pub start_at_login: bool,
+    pub start_hidden: bool,
+    pub autostart_error: bool,
 }
 
 /// `count` is the attention-badge value (zero under Do not disturb,
@@ -242,6 +247,9 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
             update.package_managed = updates::package_managed(std::env::consts::OS, kind);
             update
         },
+        start_at_login: config.start_at_login,
+        start_hidden: config.start_hidden,
+        autostart_error: crate::autostart::has_error(),
     }
 }
 
@@ -1028,6 +1036,23 @@ fn allow_notification(state: &RuntimeState, service_id: &str) -> bool {
     }
     entries.push_back(now);
     true
+}
+
+/// Hidden login launches still load every service for notifications and badges.
+pub fn load_background_services(app: &AppHandle) -> Result<(), String> {
+    let services = lock(&app.state::<RuntimeState>().config).services.clone();
+    for service in services {
+        ensure_webview(app, &service)?;
+        if let Some(webview) = app.get_webview(&label_for(&service.id)) {
+            let window = main_window(app)?;
+            let (position, size) = content_bounds(app, &window)?;
+            let muted = service_sound_muted(app, &service.id);
+            place_webview(&webview, position, size, muted)?;
+            apply_webview_sound(&webview, muted);
+            webview.hide().map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {

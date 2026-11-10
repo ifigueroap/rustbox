@@ -349,6 +349,17 @@ pub struct Config {
     /// Background update checks. Missing on older files, which means on.
     #[serde(default)]
     pub updates: UpdateSettings,
+    /// Launch Rustbox when the user logs in. The OS login entry is the
+    /// source of truth; this is reconciled against it at startup. Missing
+    /// on older files, which means off, matching the absence of a login entry.
+    #[serde(default)]
+    pub start_at_login: bool,
+    /// When starting from the login entry, skip showing the window (the
+    /// tray icon is still created). Has no effect on a launch the user
+    /// starts themselves, and on a launch with no tray available. Missing
+    /// on older files, which means off.
+    #[serde(default)]
+    pub start_hidden: bool,
 }
 
 impl Default for Config {
@@ -371,6 +382,8 @@ impl Default for Config {
             theme: Theme::Auto,
             language: LanguagePreference::System,
             updates: UpdateSettings::default(),
+            start_at_login: false,
+            start_hidden: false,
         }
     }
 }
@@ -1717,6 +1730,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             ids
         );
+    /// A config written before this feature existed has neither key. Both
+    /// must default to off, matching a machine with no login entry yet.
+    #[test]
+    fn a_config_from_before_autostart_existed_loads_with_it_off() {
+        let config: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
+        assert!(!config.start_at_login);
+        assert!(!config.start_hidden);
     }
 
     // ---- Workspaces -------------------------------------------------------

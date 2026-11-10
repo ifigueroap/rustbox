@@ -19,6 +19,8 @@ fn main() {
             "set_do_not_disturb",
             "set_dnd_schedule",
             "set_close_to_tray",
+            "set_start_at_login",
+            "set_start_hidden",
             "quit_app",
             "set_theme",
             "set_language",

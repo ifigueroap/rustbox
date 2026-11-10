@@ -21,6 +21,8 @@
     "allow-set-do-not-disturb",
     "allow-set-dnd-schedule",
     "allow-set-close-to-tray",
+    "allow-set-start-at-login",
+    "allow-set-start-hidden",
     "allow-quit-app",
     "allow-import-local-icon",
     "allow-read-local-icon",
