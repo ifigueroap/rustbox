@@ -8,6 +8,8 @@ mod i18n;
 #[cfg(target_os = "linux")]
 mod linux_host;
 mod page_tools;
+mod maintenance;
+mod maintenance_native;
 mod policy;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod service_notifications;
@@ -438,6 +440,27 @@ fn reload_service(app: tauri::AppHandle, id: String) -> Result<Snapshot, String>
 }
 
 #[tauri::command]
+async fn maintain_service(
+    app: tauri::AppHandle,
+    id: String,
+    session: bool,
+) -> Result<Snapshot, String> {
+    services::maintain_service(&app, &id, session)?;
+    tray::sync(&app);
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+async fn set_service_spellcheck(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    services::set_spellcheck(&app, &id, enabled)?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
     Ok(run_update_check(&app, updates::CheckKind::Manual).await)
 }
@@ -684,6 +707,8 @@ pub fn run() {
             report_find_result,
             reset_service_zoom,
             reload_service,
+            maintain_service,
+            set_service_spellcheck,
             open_external,
             check_for_updates,
             set_update_auto_check,

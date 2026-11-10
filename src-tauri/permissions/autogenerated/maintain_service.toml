@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-maintain-service"
+description = "Enables the maintain_service command without any pre-configured scope."
+commands.allow = ["maintain_service"]
+
+[[permission]]
+identifier = "deny-maintain-service"
+description = "Denies the maintain_service command without any pre-configured scope."
+commands.deny = ["maintain_service"]

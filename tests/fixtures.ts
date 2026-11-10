@@ -18,6 +18,7 @@ export interface TestService {
   soundEnabled: boolean;
   notificationsEnabled: boolean;
   notifyInDnd: boolean;
+  spellcheckEnabled: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
   workspaceSilenced: boolean;
@@ -108,6 +109,7 @@ export function service(
     soundEnabled: true,
     notificationsEnabled: true,
     notifyInDnd: false,
+    spellcheckEnabled: true,
     workspaces: workspaceIds,
     allWorkspaces: false,
     workspaceSilenced: false,

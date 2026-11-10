@@ -192,3 +192,21 @@ mod tests {
         assert_eq!(resolve_preference(LanguagePreference::Es), Locale::Es);
     }
 }
+
+// Maintenance errors contain no service URLs, paths or underlying profile data.
+pub fn maintenance_failed() -> String {
+    match ui_locale() {
+        Locale::En => "Could not clear this service's data. Close any service popups and try again.",
+        Locale::Es => "No se pudieron borrar los datos de este servicio. Cierra sus ventanas emergentes e inténtalo de nuevo.",
+    }.into()
+}
+
+pub fn maintenance_busy() -> String {
+    match ui_locale() {
+        Locale::En => "Service maintenance is in progress. Try again shortly.",
+        Locale::Es => {
+            "Hay un mantenimiento de servicio en curso. Inténtalo de nuevo en unos instantes."
+        }
+    }
+    .into()
+}

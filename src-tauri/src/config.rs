@@ -248,6 +248,9 @@ pub struct Service {
     /// regardless. Off by default so old configs keep their current behavior.
     #[serde(default)]
     pub notify_in_dnd: bool,
+    /// None preserves the platform default; explicit choices apply on creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spellcheck_enabled: Option<bool>,
     /// Workspace ids this service is listed under.
     #[serde(default)]
     pub workspaces: Vec<String>,
@@ -682,6 +685,7 @@ impl Config {
             sound_enabled: true,
             notifications_enabled: true,
             notify_in_dnd: false,
+            spellcheck_enabled: None,
             workspaces: workspace.into_iter().collect(),
             all_workspaces: false,
             zoom: default_zoom(),
@@ -706,6 +710,7 @@ impl Config {
             sound_enabled: true,
             notifications_enabled: true,
             notify_in_dnd: false,
+            spellcheck_enabled: None,
             workspaces,
             all_workspaces,
             zoom: default_zoom(),
@@ -1522,6 +1527,24 @@ mod tests {
         assert!(config.workspaces[0].dnd);
         assert_eq!(config.workspaces[0].dnd_schedule, Schedule::default());
         assert!(config.workspaces[0].dnd_override.is_none());
+    }
+
+    #[test]
+    fn old_config_without_spellcheck_preserves_services_and_workspaces() {
+        let mut config = Config::default();
+        config.add_preset("slack", None).unwrap();
+        let before = config.clone();
+        let mut value = serde_json::to_value(&config).unwrap();
+        value["services"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("spellcheckEnabled");
+        let mut loaded: Config = serde_json::from_value(value).unwrap();
+        assert_eq!(loaded, before);
+        assert_eq!(loaded.services[0].spellcheck_enabled, None);
+        loaded.services[0].spellcheck_enabled = Some(false);
+        let saved = serde_json::to_string(&loaded).unwrap();
+        assert_eq!(serde_json::from_str::<Config>(&saved).unwrap(), loaded);
     }
 
     #[test]
