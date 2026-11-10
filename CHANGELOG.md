@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/ifigueroap/rustbox/compare/v0.11.1...v0.12.0) (2026-11-10)
+
+
+### Features
+
+* add find in page and remembered per-service zoom ([#48](https://github.com/ifigueroap/rustbox/issues/48)) ([9263eb0](https://github.com/ifigueroap/rustbox/commit/9263eb06f79829a7e91c6eb91012a458b781b835))
+* add global and workspace Do Not Disturb schedules ([#46](https://github.com/ifigueroap/rustbox/issues/46)) ([c9c5e52](https://github.com/ifigueroap/rustbox/commit/c9c5e527541725d68a102a57598bb87525e67641))
+* add per-service cache clearing, log out and spellcheck ([#43](https://github.com/ifigueroap/rustbox/issues/43)) ([0691881](https://github.com/ifigueroap/rustbox/commit/0691881615d04b6bfe0b3639264d50428f498e37))
+* export and import the configuration ([#45](https://github.com/ifigueroap/rustbox/issues/45)) ([5c8e721](https://github.com/ifigueroap/rustbox/commit/5c8e721fe06d2140640950764eacbac6aecca47a))
+* focus the service when its notification is clicked ([#42](https://github.com/ifigueroap/rustbox/issues/42)) ([5896a62](https://github.com/ifigueroap/rustbox/commit/5896a62f395954be6e55c67a52d6a28eece2a965))
+* hibernate idle background services ([#44](https://github.com/ifigueroap/rustbox/issues/44)) ([1b97c87](https://github.com/ifigueroap/rustbox/commit/1b97c87cfa7aa72c01ea98a577ca52f660512787))
+* start at login, optionally hidden in the tray ([#47](https://github.com/ifigueroap/rustbox/issues/47)) ([56ae7f7](https://github.com/ifigueroap/rustbox/commit/56ae7f73cda5dbaf09736c3abe84b903f8b9f0cc))
+
 ## [0.11.1](https://github.com/ifigueroap/rustbox/compare/v0.11.0...v0.11.1) (2026-11-09)
 
 
