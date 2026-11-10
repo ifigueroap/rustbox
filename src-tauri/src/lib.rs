@@ -4,6 +4,7 @@ mod autostart;
 mod click_focus;
 mod config;
 mod dnd_schedule;
+mod hibernate;
 mod i18n;
 #[cfg(target_os = "linux")]
 mod linux_host;
@@ -665,6 +666,7 @@ pub fn run() {
                     std::thread::sleep(std::time::Duration::from_secs(15));
                 }
             });
+            services::spawn_hibernation_schedule(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -683,6 +685,8 @@ pub fn run() {
             set_service_sound,
             set_service_notifications,
             set_service_notify_in_dnd,
+            set_hibernation_settings,
+            set_service_never_hibernate,
             set_do_not_disturb,
             set_dnd_schedule,
             set_close_to_tray,
@@ -854,4 +858,39 @@ fn spawn_update_schedule(app: tauri::AppHandle) {
     {
         eprintln!("rustbox: update checks were not scheduled: {err}");
     }
+}
+
+#[tauri::command]
+fn set_hibernation_settings(
+    app: tauri::AppHandle,
+    after_minutes: u32,
+    inactive_workspaces: bool,
+) -> Result<Snapshot, String> {
+    if !matches!(after_minutes, 0 | 5 | 15 | 30 | 60) {
+        return Err("invalid hibernation interval".into());
+    }
+    services::mutate(&app, |config| {
+        config.hibernate_after_minutes = after_minutes;
+        config.hibernate_inactive_workspaces = inactive_workspaces;
+        Ok(())
+    })?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_service_never_hibernate(
+    app: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|service| service.id == id)
+            .ok_or_else(|| "service not found".to_string())?;
+        service.never_hibernate = enabled;
+        Ok(())
+    })?;
+    Ok(services::snapshot(&app))
 }

@@ -16,6 +16,8 @@ fn main() {
             "set_service_sound",
             "set_service_notifications",
             "set_service_notify_in_dnd",
+            "set_hibernation_settings",
+            "set_service_never_hibernate",
             "set_do_not_disturb",
             "set_dnd_schedule",
             "set_close_to_tray",

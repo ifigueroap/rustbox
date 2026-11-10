@@ -1,3 +1,5 @@
+import type { Schedule } from "../src/dnd-schedule";
+
 let counter = 0;
 
 function id(prefix: string): string {
@@ -19,6 +21,8 @@ export interface TestService {
   notificationsEnabled: boolean;
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
+  neverHibernate: boolean;
+  hibernated: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
   workspaceSilenced: boolean;
@@ -33,6 +37,7 @@ export interface TestWorkspace {
   icon?: string | null;
   color: string;
   dnd: boolean;
+  dndSchedule?: Schedule;
   order: number;
   unread: number;
   rawUnread: number;
@@ -52,10 +57,13 @@ export interface TestSnapshot {
   sidebarCollapsed: boolean;
   workspaceRailHidden: boolean;
   doNotDisturb: boolean;
+  dndSchedule?: Schedule;
   closeToTray: boolean;
   startAtLogin?: boolean;
   startHidden?: boolean;
   autostartError?: boolean;
+  hibernateAfterMinutes: number;
+  hibernateInactiveWorkspaces: boolean;
   trayAvailable: boolean;
   theme: "auto" | "light" | "dark";
   language?: "system" | "en" | "es";
@@ -83,6 +91,7 @@ export function workspace(name: string, overrides: Partial<TestWorkspace> = {}):
     icon: null,
     color: "#8d8478",
     dnd: false,
+    dndSchedule: { enabled: false, rules: [] },
     order: 0,
     unread: 0,
     rawUnread: 0,
@@ -110,11 +119,14 @@ export function service(
     notificationsEnabled: true,
     notifyInDnd: false,
     spellcheckEnabled: true,
+    neverHibernate: false,
+    hibernated: false,
     workspaces: workspaceIds,
     allWorkspaces: false,
     workspaceSilenced: false,
     rawUnread: 0,
     unread: 0,
+    zoom: 1,
     ...overrides,
   };
 }
@@ -134,6 +146,7 @@ export function snapshot(overrides: Partial<TestSnapshot> = {}): TestSnapshot {
     })),
     activeWorkspaceId: list[0]?.id ?? null,
     activeId: null,
+    findServiceId: null,
     lastServiceId: null,
     chromeUserAgent: "Chrome/155",
     configPath: "/tmp/config.json",
@@ -141,7 +154,13 @@ export function snapshot(overrides: Partial<TestSnapshot> = {}): TestSnapshot {
     sidebarCollapsed: false,
     workspaceRailHidden: false,
     doNotDisturb: false,
+    dndSchedule: { enabled: false, rules: [] },
     closeToTray: true,
+    startAtLogin: false,
+    startHidden: false,
+    autostartError: false,
+    hibernateAfterMinutes: 0,
+    hibernateInactiveWorkspaces: false,
     trayAvailable: true,
     theme: "dark",
     language: "system",

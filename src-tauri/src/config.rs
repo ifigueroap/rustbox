@@ -262,6 +262,10 @@ pub struct Service {
     /// out of the saved file again while it stays at 1.0.
     #[serde(default = "default_zoom", skip_serializing_if = "is_default_zoom")]
     pub zoom: f64,
+    /// Exempts this service from the idle-hibernation timer. Off by default
+    /// so old configs keep their current behavior once hibernation ships.
+    #[serde(default)]
+    pub never_hibernate: bool,
 }
 
 impl Service {
@@ -363,6 +367,15 @@ pub struct Config {
     /// on older files, which means off.
     #[serde(default)]
     pub start_hidden: bool,
+    /// Minutes a background service may stay loaded before the idle timer
+    /// hibernates it. 0 means off, which is also the default so old configs
+    /// keep every service loaded exactly like before.
+    #[serde(default)]
+    pub hibernate_after_minutes: u32,
+    /// Also hibernate services that are not members of the active workspace.
+    /// Off by default.
+    #[serde(default)]
+    pub hibernate_inactive_workspaces: bool,
 }
 
 impl Default for Config {
@@ -387,6 +400,8 @@ impl Default for Config {
             updates: UpdateSettings::default(),
             start_at_login: false,
             start_hidden: false,
+            hibernate_after_minutes: 0,
+            hibernate_inactive_workspaces: false,
         }
     }
 }
@@ -689,6 +704,7 @@ impl Config {
             workspaces: workspace.into_iter().collect(),
             all_workspaces: false,
             zoom: default_zoom(),
+            never_hibernate: false,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -714,6 +730,7 @@ impl Config {
             workspaces,
             all_workspaces,
             zoom: default_zoom(),
+            never_hibernate: false,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -1762,6 +1779,68 @@ mod tests {
         let config: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
         assert!(!config.start_at_login);
         assert!(!config.start_hidden);
+    }
+
+    /// A config written before hibernation existed has none of its fields.
+    /// It must still load, keep every service, and default to "off" so
+    /// nothing starts hibernating that was not before.
+    #[test]
+    fn a_config_without_hibernate_fields_loads_with_hibernation_off() {
+        let json = r#"{
+            "version": 1,
+            "services": [
+                {"id": "a", "name": "WhatsApp", "url": "https://web.whatsapp.com/"}
+            ]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.hibernate_after_minutes, 0);
+        assert!(!config.hibernate_inactive_workspaces);
+        assert_eq!(config.services.len(), 1);
+        assert!(!config.services[0].never_hibernate);
+    }
+
+    #[test]
+    fn hibernation_settings_roundtrip_without_changing_workspace_or_session_ids() {
+        let mut config = config_with_workspaces(&["Work", "Personal"]);
+        let workspace_ids: Vec<_> = config.workspaces.iter().map(|w| w.id.clone()).collect();
+        let service = add_service(
+            &mut config,
+            "Shared",
+            &[&workspace_ids[0], &workspace_ids[1]],
+        );
+        config.hibernate_after_minutes = 15;
+        config.hibernate_inactive_workspaces = true;
+        config.services[0].never_hibernate = true;
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["hibernateAfterMinutes"], 15);
+        assert_eq!(json["services"][0]["neverHibernate"], true);
+        let loaded: Config = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(loaded.services[0].id, service.id);
+        assert_eq!(loaded.services[0].workspaces, workspace_ids);
+        assert_eq!(loaded.hibernate_after_minutes, 15);
+        assert!(loaded.hibernate_inactive_workspaces);
+        assert!(loaded.services[0].never_hibernate);
+        // The same workspace-era config without any new fields stays intact.
+        let mut legacy = json;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("hibernateAfterMinutes");
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("hibernateInactiveWorkspaces");
+        legacy["services"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("neverHibernate");
+        let legacy: Config = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.services[0].id, service.id);
+        assert_eq!(legacy.services[0].workspaces, workspace_ids);
+        assert_eq!(legacy.workspaces.len(), 2);
+        assert_eq!(legacy.hibernate_after_minutes, 0);
+        assert!(!legacy.hibernate_inactive_workspaces);
+        assert!(!legacy.services[0].never_hibernate);
     }
 
     // ---- Workspaces -------------------------------------------------------

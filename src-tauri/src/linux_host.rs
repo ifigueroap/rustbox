@@ -189,6 +189,16 @@ pub fn set_muted(label: &str, muted: bool) -> bool {
     })
 }
 
+/// Drop our extra reference before Tauri/Wry destroys a child webview. Called
+/// via `with_webview`, so GTK and this thread-local host stay on the UI thread.
+pub fn forget(label: &str) {
+    HOST.with(|slot| {
+        if let Some(host) = slot.borrow_mut().as_mut() {
+            host.services.remove(label);
+        }
+    });
+}
+
 fn attach(fixed: &gtk::Fixed, view: &webkit2gtk::WebView, x: i32, y: i32, width: i32, height: i32) {
     let fixed_widget: gtk::Widget = fixed.clone().upcast();
     let already = view.parent().is_some_and(|parent| parent == fixed_widget);

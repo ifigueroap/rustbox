@@ -300,4 +300,15 @@ export const en = {
   "zoom.level": "{percent}%",
   "zoom.reset": "Reset zoom",
 
+  // Idle service hibernation.
+  "hibernate.after": "Hibernate background services after",
+  "hibernate.off": "Off",
+  "hibernate.minutes5": "5 minutes",
+  "hibernate.minutes15": "15 minutes",
+  "hibernate.minutes30": "30 minutes",
+  "hibernate.minutes60": "60 minutes",
+  "hibernate.workspaces": "Also hibernate services of inactive workspaces",
+  "hibernate.never": "Never hibernate",
+  "hibernate.state": "Hibernated — open to wake; unread count is from before hibernation",
+  "hibernate.hint": "Sleeping services pause notifications and unread updates. Open one to wake it; unsaved page state may be lost.",
 } as const;

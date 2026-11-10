@@ -44,6 +44,8 @@ interface Service {
   notificationsEnabled: boolean;
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
+  neverHibernate: boolean;
+  hibernated: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
   workspaceSilenced: boolean;
@@ -92,6 +94,8 @@ interface Snapshot {
   startAtLogin?: boolean;
   startHidden?: boolean;
   autostartError?: boolean;
+  hibernateAfterMinutes: number;
+  hibernateInactiveWorkspaces: boolean;
   trayAvailable: boolean;
   theme: ThemePreference;
   language?: LanguagePreference;
@@ -170,6 +174,8 @@ let startAtLogin = false;
 let startHidden = false;
 let autostartError = false;
 let startupBusy = false;
+let hibernateAfterMinutes = 0;
+let hibernateInactiveWorkspaces = false;
 let trayAvailable = false;
 let themePreference: ThemePreference = "auto";
 let languagePreference: LanguagePreference = "system";
@@ -832,6 +838,8 @@ function applySnapshot(snapshot: Snapshot): void {
   startAtLogin = snapshot.startAtLogin ?? false;
   startHidden = snapshot.startHidden ?? false;
   autostartError = snapshot.autostartError ?? false;
+  hibernateAfterMinutes = snapshot.hibernateAfterMinutes ?? 0;
+  hibernateInactiveWorkspaces = snapshot.hibernateInactiveWorkspaces ?? false;
   trayAvailable = snapshot.trayAvailable;
   themePreference = snapshot.theme;
   languagePreference = asLanguage(snapshot.language);
@@ -1429,6 +1437,7 @@ function renderSidebar(): void {
     const button = document.createElement("button");
     button.type = "button";
     button.className = service.id === activeId ? "svc active" : "svc";
+    button.classList.toggle("hibernated", service.hibernated);
     button.style.setProperty("--svc", service.color);
     button.title = serviceTitle(service);
     button.setAttribute("role", "option");
@@ -1474,6 +1483,7 @@ function renderSidebar(): void {
     name.className = "svc-name";
     name.textContent = service.name;
     button.append(avatar, name);
+    if (service.hibernated) button.append(hibernationMark());
 
     if (service.unread > 0) {
       const badge = document.createElement("span");
@@ -1556,12 +1566,14 @@ function renderDashboard(): void {
 function serviceCard(service: Service): HTMLElement {
   const card = document.createElement("article");
   card.className = "card";
+  card.classList.toggle("hibernated", service.hibernated);
   card.dataset.serviceId = service.id;
 
   const main = document.createElement("button");
   main.type = "button";
   main.className = "card-main";
   main.title = t("card.openNamed", { name: service.name });
+  if (service.hibernated) main.title += `. ${t("hibernate.state")}`;
   const avatar = document.createElement("span");
   avatar.className = "avatar";
   paintAvatar(avatar, service);
@@ -1571,6 +1583,7 @@ function serviceCard(service: Service): HTMLElement {
   copy.className = "card-copy";
   const name = document.createElement("strong");
   name.textContent = service.name;
+  if (service.hibernated) name.append(" ", hibernationMark());
   const meta = document.createElement("span");
   meta.dataset.unreadFor = service.id;
   const informational = informationalUnread(service);
@@ -2772,7 +2785,7 @@ function quietedByDnd(service: Service): boolean {
 
 function refreshUnread(serviceId: string, count: number, rawCount: number): void {
   const service = services.find((item) => item.id === serviceId);
-  if (!service) return;
+  if (!service || service.hibernated) return;
   const badgeChanged = service.unread !== count;
   const rawChanged = service.rawUnread !== rawCount;
   if (!badgeChanged && !rawChanged) return;
@@ -2809,6 +2822,7 @@ function serviceTitle(service: Service): string {
   }
   if (service.workspaceSilenced) parts.push(t("service.silenced"));
   if (service.notifyInDnd) parts.push(t("service.notifyInDndBadge"));
+  if (service.hibernated) parts.push(t("hibernate.state"));
   return parts.join(". ");
 }
 
@@ -2850,6 +2864,11 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
       text: t("service.menuNotifyInDnd"),
       checked: service.notifyInDnd,
       action: () => void setServiceFlag(service.id, "notifyInDnd", !service.notifyInDnd),
+    }));
+    add(await CheckMenuItem.new({
+      text: t("hibernate.never"),
+      checked: service.neverHibernate,
+      action: () => void setServiceFlag(service.id, "neverHibernate", !service.neverHibernate),
     }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
@@ -2947,7 +2966,7 @@ async function changeSpellcheck(id: string, enabled: boolean): Promise<void> {
 
 async function setServiceFlag(
   id: string,
-  kind: "sound" | "notifications" | "notifyInDnd",
+  kind: "sound" | "notifications" | "notifyInDnd" | "neverHibernate",
   enabled: boolean,
 ): Promise<void> {
   const command =
@@ -2955,7 +2974,9 @@ async function setServiceFlag(
       ? "set_service_sound"
       : kind === "notifications"
         ? "set_service_notifications"
-        : "set_service_notify_in_dnd";
+        : kind === "neverHibernate"
+          ? "set_service_never_hibernate"
+          : "set_service_notify_in_dnd";
   const snapshot = await run(() => invoke<Snapshot>(command, { id, enabled }));
   if (snapshot) applySnapshot(snapshot);
 }
@@ -3226,6 +3247,12 @@ function paintUpdateDialog(): void {
 
 function paintSettingsControls(): void {
   applyTheme();
+  const after = document.querySelector<HTMLSelectElement>("#hibernate-after");
+  if (after) after.value = String(hibernateAfterMinutes);
+  const inactive = document.querySelector<HTMLInputElement>("#hibernate-workspaces");
+  if (inactive) inactive.checked = hibernateInactiveWorkspaces;
+  const row = document.querySelector<HTMLElement>("#hibernate-workspaces-row");
+  if (row) row.hidden = hibernateAfterMinutes === 0;
   const language = document.querySelector<HTMLSelectElement>("#language-select");
   if (language) language.value = languagePreference;
 
@@ -3481,6 +3508,20 @@ function applyUpdateStatus(status: UpdateStatus): void {
 }
 
 function wireEvents(): void {
+  const after = document.querySelector<HTMLSelectElement>("#hibernate-after");
+  const inactive = document.querySelector<HTMLInputElement>("#hibernate-workspaces");
+  const saveHibernation = () => void run(async () => {
+    try {
+      applySnapshot(await invoke<Snapshot>("set_hibernation_settings", {
+        afterMinutes: Number(after?.value ?? 0),
+        inactiveWorkspaces: inactive?.checked ?? false,
+      }));
+    } finally {
+      paintSettingsControls();
+    }
+  });
+  after?.addEventListener("change", saveHibernation);
+  inactive?.addEventListener("change", saveHibernation);
   must<HTMLButtonElement>("#brand-button").addEventListener("click", () => {
     void showDashboard();
   });
@@ -3838,3 +3879,12 @@ function wireEvents(): void {
 }
 
 void boot().catch((error: unknown) => showError(errorText(error)));
+
+function hibernationMark(): HTMLElement {
+  const mark = document.createElement("span");
+  mark.className = "hibernation-mark";
+  mark.textContent = "☾";
+  mark.title = t("hibernate.state");
+  mark.setAttribute("aria-label", t("hibernate.state"));
+  return mark;
+}

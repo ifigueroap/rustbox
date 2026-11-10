@@ -394,6 +394,21 @@
               </div>
               <input id="close-tray" class="switch" type="checkbox" role="switch" checked aria-describedby="close-tray-hint" />
             </div>
+            <div class="settings-row">
+              <label class="settings-label" for="hibernate-after" data-i18n="hibernate.after">Hibernate background services after</label>
+              <select id="hibernate-after" class="settings-select">
+                <option value="0" data-i18n="hibernate.off">Off</option>
+                <option value="5" data-i18n="hibernate.minutes5">5 minutes</option>
+                <option value="15" data-i18n="hibernate.minutes15">15 minutes</option>
+                <option value="30" data-i18n="hibernate.minutes30">30 minutes</option>
+                <option value="60" data-i18n="hibernate.minutes60">60 minutes</option>
+              </select>
+            </div>
+            <div id="hibernate-workspaces-row" class="settings-row" hidden>
+              <label class="settings-label" for="hibernate-workspaces" data-i18n="hibernate.workspaces">Also hibernate services of inactive workspaces</label>
+              <input id="hibernate-workspaces" class="switch" type="checkbox" role="switch" />
+            </div>
+            <p class="field-hint" data-i18n="hibernate.hint">Sleeping services pause notifications and unread updates. Open one to wake it; unsaved page state may be lost.</p>
           </section>
 
           <section class="settings-section">

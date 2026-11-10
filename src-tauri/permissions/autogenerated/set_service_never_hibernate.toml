@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-service-never-hibernate"
+description = "Enables the set_service_never_hibernate command without any pre-configured scope."
+commands.allow = ["set_service_never_hibernate"]
+
+[[permission]]
+identifier = "deny-set-service-never-hibernate"
+description = "Denies the set_service_never_hibernate command without any pre-configured scope."
+commands.deny = ["set_service_never_hibernate"]

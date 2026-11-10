@@ -31,7 +31,12 @@ pub fn clear_find(app: &AppHandle) {
 
 pub fn set_find_open(app: &AppHandle, open: bool) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
-    let _ops = lock(&state.ops);
+    // Native maintenance and hibernation dispatch work back to the UI thread.
+    // A shortcut/command on that thread must not wait for their operations lock.
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     if open {
         let Some(id) = lock(&state.active_id).clone() else {
             return Ok(());
@@ -69,7 +74,12 @@ pub fn find_in_service(
     request_id: u32,
 ) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
-    let _ops = lock(&state.ops);
+    // Native maintenance and hibernation dispatch work back to the UI thread.
+    // A shortcut/command on that thread must not wait for their operations lock.
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     let active = lock(&state.active_id).clone();
     let mut tools = lock(&state.page_tools);
     if tools.find_service_id.as_deref() != Some(id) || active.as_deref() != Some(id) {
@@ -109,7 +119,12 @@ pub fn report_find_result(app: &AppHandle, label: &str, result: FindResult) {
 
 pub fn change_zoom(app: &AppHandle, id: &str, action: ZoomAction) -> Result<f64, String> {
     let state = app.state::<RuntimeState>();
-    let _ops = lock(&state.ops);
+    // Native maintenance and hibernation dispatch work back to the UI thread.
+    // A shortcut/command on that thread must not wait for their operations lock.
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     let previous = lock(&state.config)
         .services
         .iter()

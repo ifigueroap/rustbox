@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -29,6 +29,7 @@ pub struct RuntimeState {
     pub workspace_icons: Mutex<HashMap<String, String>>,
     pub ops: Mutex<()>,
     pub page_tools: Mutex<crate::page_tools::PageToolsState>,
+    hibernation: Mutex<HibernationState>,
 }
 
 #[derive(Clone, Serialize)]
@@ -52,6 +53,8 @@ pub struct ServiceDto {
     /// Workspace ids this service is listed under, empty when pinned to all.
     pub workspaces: Vec<String>,
     pub all_workspaces: bool,
+    pub never_hibernate: bool,
+    pub hibernated: bool,
     /// True when workspace Do not disturb silences this service.
     pub workspace_silenced: bool,
     /// Raw title-derived count, unconditional. The desk dashboard shows this
@@ -101,6 +104,8 @@ pub struct Snapshot {
     pub do_not_disturb: bool,
     pub dnd_schedule: crate::dnd_schedule::Schedule,
     pub close_to_tray: bool,
+    pub hibernate_after_minutes: u32,
+    pub hibernate_inactive_workspaces: bool,
     pub tray_available: bool,
     pub theme: Theme,
     pub language: crate::config::LanguagePreference,
@@ -172,6 +177,7 @@ impl RuntimeState {
             workspace_icons: Mutex::new(HashMap::new()),
             ops: Mutex::new(()),
             page_tools: Mutex::new(Default::default()),
+            hibernation: Mutex::new(HibernationState::default()),
         })
     }
 }
@@ -180,6 +186,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
     let state = app.state::<RuntimeState>();
     let config = lock(&state.config);
     let active_id = lock(&state.active_id).clone();
+    let hibernated = lock(&state.hibernation).hibernated.clone();
     let unread = lock(&state.unread);
     let workspace_icons = lock(&state.workspace_icons);
     let services = config
@@ -211,6 +218,8 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                     .unwrap_or(!cfg!(target_os = "linux")),
                 workspaces: service.workspaces.clone(),
                 all_workspaces: service.all_workspaces,
+                never_hibernate: service.never_hibernate,
+                hibernated: hibernated.contains(&service.id),
                 workspace_silenced: workspace_dnd,
                 raw_unread: count,
                 unread: if shown { count } else { 0 },
@@ -238,6 +247,8 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         do_not_disturb: config.effective_do_not_disturb(),
         dnd_schedule: config.dnd_schedule.clone(),
         close_to_tray: config.close_to_tray,
+        hibernate_after_minutes: config.hibernate_after_minutes,
+        hibernate_inactive_workspaces: config.hibernate_inactive_workspaces,
         tray_available: app.tray_by_id("rustbox").is_some(),
         theme: config.theme,
         language: config.language,
@@ -366,6 +377,7 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
     if *lock(&state.active_id) != id {
         crate::page_tools::clear_find(app);
     }
+    let previous = lock(&state.active_id).clone();
     match id {
         Some(id) => {
             let service = {
@@ -391,6 +403,18 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
             remember_open_service(app, None);
         }
     }
+    let active = lock(&state.active_id).clone();
+    let mut hibernation = lock(&state.hibernation);
+    let now = hibernation.started_at.elapsed().as_secs();
+    if previous != active {
+        if let Some(previous) = previous {
+            hibernation.background_since.insert(previous, now);
+        }
+    }
+    if let Some(active) = active {
+        hibernation.background_since.remove(&active);
+    }
+    drop(hibernation);
     drop(_ops);
     sync_bounds(app)?;
     Ok(())
@@ -613,6 +637,10 @@ pub fn clear_runtime_service(app: &AppHandle, id: &str) {
     lock(&state.unread).remove(id);
     lock(&state.notify_times).remove(id);
     lock(&state.workspace_icons).remove(id);
+    let mut hibernation = lock(&state.hibernation);
+    hibernation.background_since.remove(id);
+    hibernation.hibernated.remove(id);
+    drop(hibernation);
     let mut active = lock(&state.active_id);
     if active.as_deref() == Some(id) {
         *active = None;
@@ -802,6 +830,10 @@ pub fn sync_bounds(app: &AppHandle) -> Result<(), String> {
 pub fn note_title(app: &AppHandle, service_id: &str, title: &str) {
     let count = policy::parse_unread_count(title);
     let state = app.state::<RuntimeState>();
+    let hibernation = lock(&state.hibernation);
+    if hibernation.hibernated.contains(service_id) {
+        return;
+    }
     let changed = {
         let mut unread = lock(&state.unread);
         if unread.get(service_id).copied() == Some(count) {
@@ -811,6 +843,7 @@ pub fn note_title(app: &AppHandle, service_id: &str, title: &str) {
             true
         }
     };
+    drop(hibernation);
     if changed {
         let visible = if notifications_visible(&state, service_id) {
             count
@@ -839,6 +872,9 @@ pub fn forward_notification(
         return Err("notifications are only accepted from service webviews".into());
     };
     let state = app.state::<RuntimeState>();
+    if lock(&state.hibernation).hibernated.contains(service_id) {
+        return Ok(());
+    }
     let name = {
         let config = lock(&state.config);
         config
@@ -1238,6 +1274,11 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
             .map_err(|err| err.to_string())?;
     }
     let _ = webview;
+    let state = app.state::<RuntimeState>();
+    let mut hibernation = lock(&state.hibernation);
+    hibernation.hibernated.remove(&service.id);
+    let now = hibernation.started_at.elapsed().as_secs();
+    hibernation.background_since.insert(service.id.clone(), now);
     Ok(())
 }
 
@@ -1351,6 +1392,15 @@ fn close_webview(app: &AppHandle, id: &str) -> Result<(), String> {
         crate::page_tools::clear_find(app);
     }
     if let Some(webview) = app.get_webview(&label_for(id)) {
+        // Release the host's GTK reference on the UI thread before Wry destroys
+        // the widget. Both operations are queued in order by the dispatcher.
+        #[cfg(target_os = "linux")]
+        {
+            let label = label_for(id);
+            webview
+                .with_webview(move |_platform| crate::linux_host::forget(&label))
+                .map_err(|err| err.to_string())?;
+        }
         webview.close().map_err(|err| err.to_string())?;
     }
     Ok(())
@@ -1582,7 +1632,9 @@ pub fn maintain_service(app: &AppHandle, id: &str, session: bool) -> Result<(), 
     crate::maintenance::session_dir(&state.sessions_dir, id)
         .map_err(|_| crate::i18n::maintenance_failed())?;
     // Linux needs a view to access its retained context/data manager. An
-    // unopened service is created hidden, never changing workspace selection.
+    // unopened or hibernated service is created hidden, never changing workspace
+    // selection. ensure_webview wakes it and starts a fresh background timer;
+    // the operations lock keeps the idle scheduler out until clearing finishes.
     ensure_webview(app, &service)?;
     if let Some(view) = app.get_webview(&label_for(id)) {
         view.hide().map_err(|e| e.to_string())?;
@@ -1635,6 +1687,9 @@ pub fn set_spellcheck(app: &AppHandle, id: &str, enabled: bool) -> Result<(), St
     })
     .map_err(|e| e.to_string())?;
     rx.recv().map_err(|_| crate::i18n::maintenance_failed())?;
+    // A hibernated service stays asleep; its saved preference takes effect on
+    // the next normal creation. Loaded services recreate through ensure_webview
+    // so their background timer is restarted under the same operations lock.
     if existed || lock(&state.active_id).as_deref() == Some(id) {
         ensure_webview(app, &service)?;
         if lock(&state.active_id).as_deref() == Some(id) {
@@ -1644,4 +1699,91 @@ pub fn set_spellcheck(app: &AppHandle, id: &str, enabled: bool) -> Result<(), St
         }
     }
     Ok(())
+}
+
+// Runtime-only state: hibernation never changes service/session identity and
+// is deliberately not persisted across application launches.
+struct HibernationState {
+    started_at: Instant,
+    background_since: HashMap<String, u64>,
+    hibernated: HashSet<String>,
+}
+
+impl Default for HibernationState {
+    fn default() -> Self {
+        Self {
+            started_at: Instant::now(),
+            background_since: HashMap::new(),
+            hibernated: HashSet::new(),
+        }
+    }
+}
+
+fn hibernate_idle(app: &AppHandle) {
+    let state = app.state::<RuntimeState>();
+    // Serialize the decision and close against activation/recreation. A
+    // shared service occurs once in config.services, regardless of membership.
+    let _ops = lock(&state.ops);
+    let due = {
+        let config = lock(&state.config);
+        let active = lock(&state.active_id).clone();
+        let hibernation = lock(&state.hibernation);
+        let workspace = config.active_workspace_id();
+        let candidates: Vec<_> = config
+            .services
+            .iter()
+            .map(|service| crate::hibernate::Candidate {
+                id: &service.id,
+                background_since: hibernation.background_since.get(&service.id).copied(),
+                never_hibernate: service.never_hibernate,
+                in_active_workspace: workspace
+                    .as_deref()
+                    .is_none_or(|id| service_in_workspace(service, id)),
+            })
+            .collect();
+        crate::hibernate::due_for_hibernation(
+            hibernation.started_at.elapsed().as_secs(),
+            crate::hibernate::Settings {
+                after_minutes: config.hibernate_after_minutes,
+                inactive_workspaces: config.hibernate_inactive_workspaces,
+            },
+            active.as_deref(),
+            &hibernation.hibernated,
+            &candidates,
+        )
+    };
+    let mut changed = false;
+    for id in due {
+        if app.get_webview(&label_for(&id)).is_none() {
+            continue;
+        }
+        // Suppress queued title/notification callbacks while closing. Keep the
+        // last unread count and the entire on-disk session unchanged.
+        lock(&state.hibernation).hibernated.insert(id.clone());
+        if close_webview(app, &id).is_ok() {
+            lock(&state.hibernation).background_since.remove(&id);
+            changed = true;
+        } else {
+            lock(&state.hibernation).hibernated.remove(&id);
+            eprintln!("rustbox: could not hibernate a background service");
+        }
+    }
+    if changed {
+        let _ = app.emit("app-snapshot", snapshot(app));
+    }
+}
+
+pub fn spawn_hibernation_schedule(app: AppHandle) {
+    if std::thread::Builder::new()
+        .name("rustbox-hibernate".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(30));
+                hibernate_idle(&app);
+            }
+        })
+        .is_err()
+    {
+        eprintln!("rustbox: idle hibernation was not scheduled");
+    }
 }
