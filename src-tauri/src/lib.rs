@@ -1,6 +1,7 @@
 mod backup;
 mod backup_commands;
 mod autostart;
+mod click_focus;
 mod config;
 mod dnd_schedule;
 mod i18n;
@@ -8,6 +9,8 @@ mod i18n;
 mod linux_host;
 mod page_tools;
 mod policy;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod service_notifications;
 mod services;
 mod shortcuts;
 mod tray;

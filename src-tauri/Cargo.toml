@@ -32,7 +32,11 @@ auto-launch = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+notify-rust = "4.18"
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-winrt-notification = "0.8"
 
 [profile.release]
 codegen-units = 1

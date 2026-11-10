@@ -833,11 +833,94 @@ pub fn forward_notification(
     } else {
         format!("{name}: {title}")
     };
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let click_app = app.clone();
+        let clicked_service = service_id.to_string();
+        let fallback_app = app.clone();
+        let fallback_heading = heading.clone();
+        let fallback_body = body.clone();
+        if crate::service_notifications::show(
+            &app.config().identifier,
+            &heading,
+            &body,
+            move || {
+                let app = click_app.clone();
+                let id = clicked_service.clone();
+                // GTK/WebKit and the other native webviews must be changed on
+                // the main thread, never on a notification listener thread.
+                let _ = click_app.run_on_main_thread(move || {
+                    focus_service_from_notification(&app, &id);
+                });
+            },
+            move || {
+                if show_plugin_notification(&fallback_app, &fallback_heading, &fallback_body)
+                    .is_err()
+                {
+                    eprintln!("rustbox: could not show the fallback service notification");
+                }
+            },
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+    }
+    show_plugin_notification(app, &heading, &body)
+}
+
+fn show_plugin_notification(app: &AppHandle, heading: &str, body: &str) -> Result<(), String> {
     let mut builder = app.notification().builder().title(heading);
     if !body.is_empty() {
         builder = builder.body(body);
     }
     builder.show().map_err(|err| err.to_string())
+}
+
+/// Shows and focuses the main window, then switches to the service a
+/// clicked notification came from, through the same `switch_workspace` and
+/// `set_active` calls the UI uses so the sidebar, rail, and Home stay in
+/// sync. Switches workspace only when the active one does not already list
+/// the service; see `click_focus::workspace_for_click`. Does nothing if the
+/// service was removed since the notification was shown.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn focus_service_from_notification(app: &AppHandle, service_id: &str) {
+    let (active_workspace, candidate_workspaces) = {
+        let state = app.state::<RuntimeState>();
+        let config = lock(&state.config);
+        let Some(service) = config
+            .services
+            .iter()
+            .find(|service| service.id == service_id)
+        else {
+            return;
+        };
+        let candidates = config
+            .workspaces
+            .iter()
+            .filter(|workspace| service_in_workspace(service, &workspace.id))
+            .map(|workspace| workspace.id.clone())
+            .collect::<Vec<_>>();
+        (config.active_workspace_id(), candidates)
+    };
+    let Some(target) =
+        crate::click_focus::workspace_for_click(active_workspace.as_deref(), &candidate_workspaces)
+    else {
+        return;
+    };
+    let _ = crate::tray::reveal(app);
+    let result = if active_workspace.as_deref() != Some(target.as_str()) {
+        switch_workspace(app, &target)
+    } else {
+        Ok(())
+    }
+    .and_then(|()| set_active(app, Some(service_id.to_string())));
+    if result.is_err() {
+        eprintln!("rustbox: could not activate the service for a notification click");
+    }
+    // Publish even after a partial failure so the shell reflects the native
+    // state rather than keeping the previous workspace/sidebar highlighted.
+    let _ = app.emit("app-snapshot", snapshot(app));
 }
 
 pub fn report_workspace_icon(
