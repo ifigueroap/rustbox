@@ -9,6 +9,14 @@
   </head>
   <body>
     <div id="shell">
+      <div id="find-bar" role="search" hidden>
+        <input id="find-input" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="find.placeholder" data-i18n-aria="find.placeholder" />
+        <span id="find-status" role="status" aria-live="polite"></span>
+        <button id="find-previous" type="button" class="text-button" data-i18n-title="find.previous" data-i18n-aria="find.previous">↑</button>
+        <button id="find-next" type="button" class="text-button" data-i18n-title="find.next" data-i18n-aria="find.next">↓</button>
+        <button id="find-close" type="button" class="text-button" data-i18n-title="find.close" data-i18n-aria="find.close">×</button>
+      </div>
+      <output id="service-zoom" role="status" aria-live="polite" hidden></output>
       <div id="app-error" class="app-error" role="alert" hidden>
         <span id="app-error-text"></span>
         <button id="app-error-dismiss" class="text-button" type="button" data-i18n="common.dismiss">Dismiss</button>

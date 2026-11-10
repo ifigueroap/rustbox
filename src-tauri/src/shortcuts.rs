@@ -62,6 +62,12 @@ pub fn is_settings_shortcut(key: &str, ctrl_or_meta: bool, shift: bool, alt: boo
     ctrl_or_meta && !shift && !alt && key == ","
 }
 
+/// Ctrl/Cmd+F opens the find bar over the active service. The shell and a
+/// service webview both report it.
+pub fn is_find_shortcut(key: &str, ctrl_or_meta: bool, shift: bool, alt: bool) -> bool {
+    ctrl_or_meta && !shift && !alt && key.eq_ignore_ascii_case("f")
+}
+
 /// Ctrl/Cmd+Alt+1 … 9 selects a workspace by rail position.
 pub fn parse_workspace_shortcut(
     key: &str,
@@ -223,5 +229,15 @@ mod tests {
         assert!(!is_settings_shortcut(",", true, true, false));
         assert!(!is_settings_shortcut(",", true, false, true));
         assert!(!is_settings_shortcut(".", true, false, false));
+    }
+
+    #[test]
+    fn f_with_ctrl_or_cmd_opens_find_and_is_case_insensitive() {
+        assert!(is_find_shortcut("f", true, false, false));
+        assert!(is_find_shortcut("F", true, false, false));
+        assert!(!is_find_shortcut("f", false, false, false));
+        assert!(!is_find_shortcut("f", true, true, false));
+        assert!(!is_find_shortcut("f", true, false, true));
+        assert!(!is_find_shortcut("g", true, false, false));
     }
 }

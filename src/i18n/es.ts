@@ -241,4 +241,16 @@ export const es = {
   "render.sidebar": "barra lateral",
   "render.desk": "escritorio",
   "render.serviceDialog": "diálogo de servicios",
+
+  "find.placeholder": "Buscar en la página",
+  "find.previous": "Coincidencia anterior (Mayús+Intro)",
+  "find.next": "Siguiente coincidencia (Intro)",
+  "find.close": "Cerrar búsqueda (Esc)",
+  "find.searching": "Buscando…",
+  "find.unavailable": "Búsqueda no disponible",
+  "find.noMatches": "Sin coincidencias",
+  "find.matches": "{current} de {total}",
+  "zoom.level": "{percent}%",
+  "zoom.reset": "Restablecer zoom",
+
 } satisfies SameShape<typeof en>;

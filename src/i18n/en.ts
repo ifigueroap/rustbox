@@ -235,4 +235,16 @@ export const en = {
   "render.sidebar": "sidebar",
   "render.desk": "desk",
   "render.serviceDialog": "service dialog",
+
+  "find.placeholder": "Find in page",
+  "find.previous": "Previous match (Shift+Enter)",
+  "find.next": "Next match (Enter)",
+  "find.close": "Close find (Esc)",
+  "find.searching": "Searching…",
+  "find.unavailable": "Search unavailable",
+  "find.noMatches": "No matches",
+  "find.matches": "{current} of {total}",
+  "zoom.level": "{percent}%",
+  "zoom.reset": "Reset zoom",
+
 } as const;
