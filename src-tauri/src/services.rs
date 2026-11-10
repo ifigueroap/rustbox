@@ -48,6 +48,7 @@ pub struct ServiceDto {
     /// Lets native notifications and sound through Do not disturb; badges
     /// are unaffected and keep following `notifications_enabled`.
     pub notify_in_dnd: bool,
+    pub spellcheck_enabled: bool,
     /// Workspace ids this service is listed under, empty when pinned to all.
     pub workspaces: Vec<String>,
     pub all_workspaces: bool,
@@ -205,6 +206,9 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 sound_enabled: service.sound_enabled,
                 notifications_enabled: service.notifications_enabled,
                 notify_in_dnd: service.notify_in_dnd,
+                spellcheck_enabled: service
+                    .spellcheck_enabled
+                    .unwrap_or(!cfg!(target_os = "linux")),
                 workspaces: service.workspaces.clone(),
                 all_workspaces: service.all_workspaces,
                 workspace_silenced: workspace_dnd,
@@ -355,7 +359,10 @@ where
 
 pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
-    let _ops = lock(&state.ops);
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     if *lock(&state.active_id) != id {
         crate::page_tools::clear_find(app);
     }
@@ -492,7 +499,10 @@ pub fn apply_shortcut(
 pub fn switch_workspace(app: &AppHandle, workspace_id: &str) -> Result<(), String> {
     let keep_open = {
         let state = app.state::<RuntimeState>();
-        let _ops = lock(&state.ops);
+        let _ops = state
+            .ops
+            .try_lock()
+            .map_err(|_| crate::i18n::maintenance_busy())?;
         let mut config = lock(&state.config);
         if !config
             .workspaces
@@ -542,7 +552,10 @@ pub fn reload_service(app: &AppHandle, id: &str) -> Result<(), String> {
     if app.get_webview(&label).is_none() {
         return set_active(app, Some(service.id));
     }
-    let _ops = lock(&state.ops);
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     let Some(webview) = app.get_webview(&label) else {
         drop(_ops);
         return set_active(app, Some(service.id));
@@ -560,13 +573,19 @@ pub fn reload_service(app: &AppHandle, id: &str) -> Result<(), String> {
 
 pub fn close_service_webview(app: &AppHandle, id: &str) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
-    let _ops = lock(&state.ops);
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     close_webview(app, id)
 }
 
 pub fn recreate_if_active(app: &AppHandle, id: &str) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
-    let _ops = lock(&state.ops);
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
     let active = lock(&state.active_id).clone();
     if active.as_deref() != Some(id) {
         close_webview(app, id)?;
@@ -727,15 +746,24 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn delete_session_dir(app: &AppHandle, id: &str) {
-    // Linux and Windows keep the webview profile in this directory. macOS
-    // stores cookies in a WKWebsiteDataStore keyed by the service id, so
-    // deleting the directory does not remove that store.
+    // Remove has already closed this view. A manager entry disappearing alone
+    // is insufficient: wait until the native destruction event was processed.
+    let (tx, rx) = std::sync::mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = tx.send(());
+        })
+        .is_err()
+        || rx.recv().is_err()
+    {
+        eprintln!("rustbox: service session deletion was interrupted");
+        return;
+    }
     let state = app.state::<RuntimeState>();
-    let dir = state.sessions_dir.join(id);
-    if let Err(err) = std::fs::remove_dir_all(&dir) {
-        if err.kind() != std::io::ErrorKind::NotFound {
-            eprintln!("rustbox: could not delete {}: {err}", dir.display());
-        }
+    let result = crate::maintenance::session_dir(&state.sessions_dir, id)
+        .and_then(|dir| crate::maintenance::remove_with_retry(&dir));
+    if result.is_err() {
+        eprintln!("rustbox: could not delete service session");
     }
 }
 
@@ -1180,6 +1208,12 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
         .zoom_hotkeys_enabled(false)
         .devtools(cfg!(debug_assertions));
 
+    if let Some(enabled) = service.spellcheck_enabled {
+        builder = builder.initialization_script(include_str!("spellcheck.js").replace(
+            "__RUSTBOX_SPELLCHECK__",
+            if enabled { "true" } else { "false" },
+        ));
+    }
     builder = isolate_session(builder, app, service)?;
     if let Some(agent) = service.resolved_user_agent() {
         builder = builder.user_agent(&agent);
@@ -1191,6 +1225,19 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
     webview
         .set_zoom(service.zoom)
         .map_err(|err| err.to_string())?;
+    webview.hide().map_err(|err| err.to_string())?;
+    #[cfg(target_os = "linux")]
+    if let Some(enabled) = service.spellcheck_enabled {
+        webview
+            .with_webview(move |platform| {
+                use webkit2gtk::{WebContextExt, WebViewExt};
+                if let Some(context) = platform.inner().context() {
+                    context.set_spell_checking_enabled(enabled);
+                }
+            })
+            .map_err(|err| err.to_string())?;
+    }
+    let _ = webview;
     Ok(())
 }
 
@@ -1235,7 +1282,8 @@ fn isolate_session(
     #[cfg(not(target_os = "macos"))]
     {
         let state = app.state::<RuntimeState>();
-        let dir = state.sessions_dir.join(&service.id);
+        let dir = crate::maintenance::session_dir(&state.sessions_dir, &service.id)
+            .map_err(|_| crate::i18n::maintenance_failed())?;
         std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         Ok(builder.data_directory(dir))
     }
@@ -1511,4 +1559,89 @@ mod tests {
         // One service is one webview; the label never mentions a workspace.
         assert_eq!(label_for("abc"), "svc-abc");
     }
+}
+
+/// Only called while the caller owns RuntimeState::ops. Never block the UI
+/// thread on that mutex while native destruction/completion is pending.
+pub(crate) fn close_for_maintenance(app: &AppHandle, id: &str) -> Result<(), String> {
+    close_webview(app, id)
+}
+
+pub fn maintain_service(app: &AppHandle, id: &str, session: bool) -> Result<(), String> {
+    let state = app.state::<RuntimeState>();
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
+    let service = lock(&state.config)
+        .services
+        .iter()
+        .find(|s| s.id == id)
+        .cloned()
+        .ok_or_else(crate::i18n::maintenance_failed)?;
+    crate::maintenance::session_dir(&state.sessions_dir, id)
+        .map_err(|_| crate::i18n::maintenance_failed())?;
+    // Linux needs a view to access its retained context/data manager. An
+    // unopened service is created hidden, never changing workspace selection.
+    ensure_webview(app, &service)?;
+    if let Some(view) = app.get_webview(&label_for(id)) {
+        view.hide().map_err(|e| e.to_string())?;
+    }
+    let result = crate::maintenance_native::clear(app, id, session);
+    if session && result.is_ok() {
+        lock(&state.unread).remove(id);
+        lock(&state.notify_times).remove(id);
+    }
+    // Even on failure restore a usable view, but report the clear failure.
+    let recreated = ensure_webview(app, &service).and_then(|()| {
+        if lock(&state.active_id).as_deref() == Some(id) {
+            show_webview(app, id)
+        } else if let Some(view) = app.get_webview(&label_for(id)) {
+            view.hide().map_err(|e| e.to_string())
+        } else {
+            Ok(())
+        }
+    });
+    result.and(recreated)
+}
+
+pub fn set_spellcheck(app: &AppHandle, id: &str, enabled: bool) -> Result<(), String> {
+    let state = app.state::<RuntimeState>();
+    let _ops = state
+        .ops
+        .try_lock()
+        .map_err(|_| crate::i18n::maintenance_busy())?;
+    mutate(app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or_else(crate::i18n::maintenance_failed)?;
+        service.spellcheck_enabled = Some(enabled);
+        Ok(())
+    })?;
+    let service = lock(&state.config)
+        .services
+        .iter()
+        .find(|s| s.id == id)
+        .cloned()
+        .unwrap();
+    let existed = app.get_webview(&label_for(id)).is_some();
+    close_webview(app, id)?;
+    // A UI barrier is needed before reusing the label and profile.
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(());
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv().map_err(|_| crate::i18n::maintenance_failed())?;
+    if existed || lock(&state.active_id).as_deref() == Some(id) {
+        ensure_webview(app, &service)?;
+        if lock(&state.active_id).as_deref() == Some(id) {
+            show_webview(app, id)?;
+        } else if let Some(view) = app.get_webview(&label_for(id)) {
+            view.hide().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }

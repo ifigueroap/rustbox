@@ -43,6 +43,7 @@ interface Service {
   soundEnabled: boolean;
   notificationsEnabled: boolean;
   notifyInDnd: boolean;
+  spellcheckEnabled: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
   workspaceSilenced: boolean;
@@ -228,9 +229,11 @@ interface ServiceFormSeed {
   allWorkspaces: boolean;
   /** Only meaningful once a service exists; absent from the "add service" seed. */
   notifyInDnd?: boolean;
+  spellcheckEnabled?: boolean;
 }
 
 interface ServiceForm {
+  syncSubmit(): void;
   read(): Promise<ServiceFormValues>;
   set(values: ServiceFormSeed): void;
   reset(): void;
@@ -540,6 +543,7 @@ export function mountShell(): void {
   suspendedId = null;
   workspaceSwitcherOpen = false;
   serviceCreatePending = false;
+  maintenancePending = false;
   workspaceSavePending = false;
   shellChain = Promise.resolve();
   abandonConfirmDialog();
@@ -1787,7 +1791,38 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   membership.append(legend, membershipHint, allRow, options, membershipError);
 
   container.append(name.label, url.label, iconLabel, accent, chrome, agent.label, membership);
-  if (isEditor) container.append(dndBypass, dndBypassHint);
+  const spellcheck = document.createElement("label");
+  spellcheck.className = "check wide";
+  const spellcheckInput = document.createElement("input");
+  spellcheckInput.type = "checkbox";
+  spellcheckInput.dataset.serviceSpellcheck = "true";
+  spellcheck.append(spellcheckInput, caption("service.spellcheck"));
+  if (isEditor) {
+    container.append(dndBypass, dndBypassHint, spellcheck);
+    spellcheckInput.addEventListener("change", () => {
+      if (editingId) void changeSpellcheck(editingId, spellcheckInput.checked);
+    });
+    const maintenance = document.createElement("details");
+    maintenance.className = "wide";
+    const summary = document.createElement("summary");
+    summary.dataset.i18n = "service.maintenance";
+    summary.textContent = t("service.maintenance");
+    maintenance.append(summary);
+    for (const [key, session] of [["service.clearCache", false], ["service.logout", true]] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = session ? "danger" : "";
+      button.dataset.i18n = key;
+      button.dataset.serviceMaintenance = String(session);
+      button.textContent = t(key);
+      button.addEventListener("click", () => {
+        const service = services.find((item) => item.id === editingId);
+        if (service) void maintainService(service, session);
+      });
+      maintenance.append(button);
+    }
+    container.append(maintenance);
+  }
 
   type WorkspaceOption = { id: string; input: HTMLInputElement; row: HTMLLabelElement };
   let workspaceOptions: WorkspaceOption[] = [];
@@ -1869,7 +1904,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
     const ready =
       name.input.value.trim() !== "" && url.input.value.trim() !== "" && membershipValid();
     membershipError.hidden = membershipValid() || !hasInteracted;
-    if (submit) submit.disabled = !ready;
+    if (submit) submit.disabled = !ready || (isEditor && maintenancePending);
   };
   let hasInteracted = false;
   name.input.addEventListener("input", () => {
@@ -1968,6 +2003,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   brandButton.addEventListener("click", () => setColor(brandColor));
 
   return {
+    syncSubmit,
     set(values) {
       name.input.value = values.name;
       url.input.value = values.url;
@@ -1981,6 +2017,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
       chromeInput.checked = values.useChromeUserAgent;
       agent.input.value = values.userAgent;
       dndBypassInput.checked = values.notifyInDnd ?? false;
+      spellcheckInput.checked = values.spellcheckEnabled ?? true;
       hasInteracted = false;
       setColor(values.color || brandColor);
       allInput.checked = values.allWorkspaces;
@@ -2090,6 +2127,7 @@ async function openEditor(service: Service): Promise<void> {
     workspaces: service.workspaces,
     allWorkspaces: service.allWorkspaces,
     notifyInDnd: service.notifyInDnd,
+    spellcheckEnabled: service.spellcheckEnabled,
   });
   const error = must<HTMLElement>("#editor-error");
   error.hidden = true;
@@ -2106,7 +2144,7 @@ function syncEditorSave(): void {
 }
 
 async function saveEditor(serviceId: string): Promise<void> {
-  if (!editorForm || editorSavePending) return;
+  if (!editorForm || editorSavePending || maintenancePending) return;
   editorSavePending = true;
   syncEditorSave();
   let snapshot: Snapshot;
@@ -2827,6 +2865,19 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
         applySnapshot(await invoke<Snapshot>("reset_service_zoom", { id: service.id }));
       }),
     }));
+    add(await CheckMenuItem.new({
+      text: t("service.spellcheck"),
+      checked: service.spellcheckEnabled,
+      action: () => deferMenuAction(() => void changeSpellcheck(service.id, !service.spellcheckEnabled)),
+    }));
+    add(await MenuItem.new({
+      text: t("service.clearCache"),
+      action: () => deferMenuAction(() => void maintainService(service, false)),
+    }));
+    add(await MenuItem.new({
+      text: t("service.logout"),
+      action: () => deferMenuAction(() => void maintainService(service, true)),
+    }));
     add(await MenuItem.new({ text: t("service.menuCopyUrl"), action: () => void copyText(service.url) }));
     add(await MenuItem.new({
       text: t("service.menuOpenBrowser"),
@@ -2838,6 +2889,59 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
   } catch (error) {
     await closeServiceMenu();
     showError(errorText(error));
+  }
+}
+
+// Hold the service cover through native clearing and recreation. The editor
+// remains open, including unsaved fields, and duplicate actions are ignored.
+let maintenancePending = false;
+
+function syncMaintenanceControls(): void {
+  document.querySelectorAll<HTMLInputElement | HTMLButtonElement>(
+    "[data-service-maintenance], [data-service-spellcheck]",
+  ).forEach((control) => { control.disabled = maintenancePending; });
+  editorForm?.syncSubmit();
+}
+
+async function maintainService(service: Service, session: boolean): Promise<void> {
+  if (maintenancePending) return;
+  maintenancePending = true;
+  syncMaintenanceControls();
+  claimCover("maintenance");
+  try {
+    if (session && !await confirmDialog({
+      title: t("service.logoutTitle"),
+      message: t("service.logoutConfirm", { name: service.name }),
+      confirmLabel: t("service.logout"),
+      danger: true,
+    })) return;
+    await suspendForCover();
+    await run(async () => {
+      applySnapshot(await invoke<Snapshot>("maintain_service", { id: service.id, session }));
+    });
+  } finally {
+    maintenancePending = false;
+    syncMaintenanceControls();
+    await releaseCover("maintenance");
+  }
+}
+
+async function changeSpellcheck(id: string, enabled: boolean): Promise<void> {
+  if (maintenancePending) return;
+  maintenancePending = true;
+  syncMaintenanceControls();
+  claimCover("maintenance");
+  try {
+    await suspendForCover();
+    const snapshot = await run(() => invoke<Snapshot>("set_service_spellcheck", { id, enabled }));
+    if (snapshot) applySnapshot(snapshot);
+    const service = services.find((item) => item.id === id);
+    const input = document.querySelector<HTMLInputElement>("#editor-fields [data-service-spellcheck]");
+    if (service && input && editingId === id) input.checked = service.spellcheckEnabled;
+  } finally {
+    maintenancePending = false;
+    syncMaintenanceControls();
+    await releaseCover("maintenance");
   }
 }
 

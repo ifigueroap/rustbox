@@ -40,6 +40,8 @@ fn main() {
             "report_find_result",
             "reset_service_zoom",
             "reload_service",
+            "maintain_service",
+            "set_service_spellcheck",
             "open_external",
             "check_for_updates",
             "set_update_auto_check",

@@ -3104,9 +3104,13 @@ name = "rustbox"
 version = "0.11.1" # x-release-please-version
 dependencies = [
  "auto-launch",
+ "block2",
  "chrono",
  "gtk",
  "notify-rust",
+ "objc2",
+ "objc2-foundation",
+ "objc2-web-kit",
  "open",
  "png 0.18.1",
  "semver",

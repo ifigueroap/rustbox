@@ -43,6 +43,8 @@
     "allow-find-in-service",
     "allow-reset-service-zoom",
     "allow-reload-service",
+    "allow-maintain-service",
+    "allow-set-service-spellcheck",
     "allow-open-external",
     "allow-check-for-updates",
     "allow-set-update-auto-check",
