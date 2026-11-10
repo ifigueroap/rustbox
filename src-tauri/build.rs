@@ -17,6 +17,7 @@ fn main() {
             "set_service_notifications",
             "set_service_notify_in_dnd",
             "set_do_not_disturb",
+            "set_dnd_schedule",
             "set_close_to_tray",
             "quit_app",
             "set_theme",

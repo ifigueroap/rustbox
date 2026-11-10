@@ -73,6 +73,7 @@ pub struct WorkspaceDto {
     pub icon: Option<String>,
     pub color: String,
     pub dnd: bool,
+    pub dnd_schedule: crate::dnd_schedule::Schedule,
     pub order: u32,
     /// Combined unread of the services in this workspace, 0 while silenced.
     pub unread: u32,
@@ -97,6 +98,7 @@ pub struct Snapshot {
     pub sidebar_collapsed: bool,
     pub workspace_rail_hidden: bool,
     pub do_not_disturb: bool,
+    pub dnd_schedule: crate::dnd_schedule::Schedule,
     pub close_to_tray: bool,
     pub tray_available: bool,
     pub theme: Theme,
@@ -181,7 +183,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
             let count = unread.get(&service.id).copied().unwrap_or(0);
             let workspace_dnd = config.workspace_silenced(service);
             let shown = policy::notifications_shown(
-                config.do_not_disturb,
+                config.effective_do_not_disturb(),
                 workspace_dnd,
                 service.notifications_enabled,
             );
@@ -224,7 +226,8 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         sessions_dir: state.sessions_dir.display().to_string(),
         sidebar_collapsed: config.sidebar_collapsed,
         workspace_rail_hidden: config.workspace_rail_hidden,
-        do_not_disturb: config.do_not_disturb,
+        do_not_disturb: config.effective_do_not_disturb(),
+        dnd_schedule: config.dnd_schedule.clone(),
         close_to_tray: config.close_to_tray,
         tray_available: app.tray_by_id("rustbox").is_some(),
         theme: config.theme,
@@ -257,7 +260,8 @@ fn workspace_dto(
         name: workspace.name.clone(),
         icon: workspace.icon.clone(),
         color: workspace.color.clone(),
-        dnd: workspace.dnd,
+        dnd: workspace.effective_dnd(crate::dnd_schedule::local_now()),
+        dnd_schedule: workspace.dnd_schedule.clone(),
         order: workspace.order,
         unread: visible,
         raw_unread: raw,
@@ -280,7 +284,7 @@ pub fn workspace_totals(
         let count = unread.get(&service.id).copied().unwrap_or(0);
         raw = raw.saturating_add(count);
         if policy::notifications_shown(
-            config.do_not_disturb,
+            config.effective_do_not_disturb(),
             config.workspace_silenced(service),
             service.notifications_enabled,
         ) {
@@ -288,7 +292,15 @@ pub fn workspace_totals(
         }
     }
     // A silenced workspace hides its badge rather than greying a number.
-    (if workspace.dnd { 0 } else { visible }, raw, members.len())
+    (
+        if workspace.effective_dnd(crate::dnd_schedule::local_now()) {
+            0
+        } else {
+            visible
+        },
+        raw,
+        members.len(),
+    )
 }
 
 pub fn visible_unread_total(app: &AppHandle) -> u32 {
@@ -302,7 +314,7 @@ pub fn visible_unread_total(app: &AppHandle) -> u32 {
             let count = unread.get(&service.id).copied().unwrap_or(0);
             let workspace_dnd = config.workspace_silenced(service);
             if policy::notifications_shown(
-                config.do_not_disturb,
+                config.effective_do_not_disturb(),
                 workspace_dnd,
                 service.notifications_enabled,
             ) {
@@ -922,10 +934,10 @@ fn notifications_visible(state: &RuntimeState, service_id: &str) -> bool {
         .iter()
         .find(|service| service.id == service_id)
     else {
-        return !config.do_not_disturb;
+        return !config.effective_do_not_disturb();
     };
     policy::notifications_shown(
-        config.do_not_disturb,
+        config.effective_do_not_disturb(),
         config.workspace_silenced(service),
         service.notifications_enabled,
     )
@@ -941,10 +953,10 @@ fn native_notification_allowed(state: &RuntimeState, service_id: &str) -> bool {
         .iter()
         .find(|service| service.id == service_id)
     else {
-        return !config.do_not_disturb;
+        return !config.effective_do_not_disturb();
     };
     policy::notification_allowed(
-        config.do_not_disturb,
+        config.effective_do_not_disturb(),
         config.workspace_silenced(service),
         service.notifications_enabled,
         service.notify_in_dnd,
@@ -955,10 +967,10 @@ fn service_sound_muted(app: &AppHandle, id: &str) -> bool {
     let state = app.state::<RuntimeState>();
     let config = lock(&state.config);
     let Some(service) = config.services.iter().find(|service| service.id == id) else {
-        return config.do_not_disturb;
+        return config.effective_do_not_disturb();
     };
     policy::sound_muted_allowing_bypass(
-        config.do_not_disturb,
+        config.effective_do_not_disturb(),
         config.workspace_silenced(service),
         service.sound_enabled,
         service.notify_in_dnd,

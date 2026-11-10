@@ -67,7 +67,7 @@ pub fn request_quit(app: &AppHandle) {
 
 pub fn install(app: &AppHandle) -> Result<(), String> {
     let locale = crate::i18n::ui_locale();
-    let dnd_on = services::lock(&app.state::<RuntimeState>().config).do_not_disturb;
+    let dnd_on = services::lock(&app.state::<RuntimeState>().config).effective_do_not_disturb();
     let close_on = services::lock(&app.state::<RuntimeState>().config).close_to_tray;
     let show_item = MenuItemBuilder::with_id("tray-show", crate::i18n::tray_show(locale))
         .build(app)
@@ -147,7 +147,7 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                 let _ = hide(app);
             }
             "tray-dnd" => {
-                let next = !flag(app, |config| config.do_not_disturb);
+                let next = !flag(app, |config| config.effective_do_not_disturb());
                 let _ = store_do_not_disturb(app, next);
             }
             "tray-close" => {
@@ -200,7 +200,13 @@ fn build_workspace_items(app: &AppHandle) -> Result<Vec<(String, CheckMenuItem<W
         config
             .workspaces
             .iter()
-            .map(|workspace| (workspace.id.clone(), workspace.name.clone(), workspace.dnd))
+            .map(|workspace| {
+                (
+                    workspace.id.clone(),
+                    workspace.name.clone(),
+                    workspace.effective_dnd(crate::dnd_schedule::local_now()),
+                )
+            })
             .collect()
     };
     let mut items = Vec::with_capacity(workspaces.len());
@@ -249,7 +255,7 @@ pub fn sync(app: &AppHandle) {
     relabel(&menu, locale);
     let _ = menu
         .dnd
-        .set_checked(flag(app, |config| config.do_not_disturb));
+        .set_checked(flag(app, |config| config.effective_do_not_disturb()));
     let _ = menu
         .close_to_tray
         .set_checked(flag(app, |config| config.close_to_tray));
@@ -278,7 +284,13 @@ fn sync_workspace_items(app: &AppHandle, menu: &TrayMenu) {
         config
             .workspaces
             .iter()
-            .map(|workspace| (workspace.id.clone(), workspace.name.clone(), workspace.dnd))
+            .map(|workspace| {
+                (
+                    workspace.id.clone(),
+                    workspace.name.clone(),
+                    workspace.effective_dnd(crate::dnd_schedule::local_now()),
+                )
+            })
             .collect()
     };
     let ids: Vec<String> = current.iter().map(|(id, _, _)| id.clone()).collect();
@@ -331,7 +343,7 @@ fn workspace_flag(app: &AppHandle, workspace_id: &str) -> bool {
         .workspaces
         .iter()
         .find(|workspace| workspace.id == workspace_id)
-        .is_some_and(|workspace| workspace.dnd)
+        .is_some_and(|workspace| workspace.effective_dnd(crate::dnd_schedule::local_now()))
 }
 
 pub fn store_workspace_dnd(
@@ -410,7 +422,7 @@ pub fn should_hide_on_close(app: &AppHandle) -> bool {
 
 pub fn store_do_not_disturb(app: &AppHandle, enabled: bool) -> Result<(), String> {
     services::mutate(app, |config| {
-        config.do_not_disturb = enabled;
+        config.request_dnd(enabled);
         Ok(())
     })?;
     services::apply_sound_policy(app);

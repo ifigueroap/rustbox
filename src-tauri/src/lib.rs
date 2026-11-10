@@ -1,6 +1,7 @@
 mod backup;
 mod backup_commands;
 mod config;
+mod dnd_schedule;
 mod i18n;
 #[cfg(target_os = "linux")]
 mod linux_host;
@@ -15,9 +16,38 @@ mod zoom;
 use config::{LanguagePreference, NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
 use i18n::Locale;
 use services::{RuntimeState, Snapshot};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 use updates::UpdateStatus;
+
+#[tauri::command]
+fn set_dnd_schedule(
+    app: tauri::AppHandle,
+    workspace_id: Option<String>,
+    schedule: dnd_schedule::Schedule,
+) -> Result<Snapshot, String> {
+    let schedule = dnd_schedule::validate(schedule)?;
+    services::mutate(&app, |config| {
+        if let Some(id) = workspace_id {
+            let workspace = config
+                .workspaces
+                .iter_mut()
+                .find(|w| w.id == id)
+                .ok_or("workspace not found")?;
+            workspace.set_schedule(schedule, dnd_schedule::local_now())?;
+        } else {
+            config.do_not_disturb = config.effective_do_not_disturb();
+            config.dnd_schedule = schedule;
+            config.dnd_override = None;
+        }
+        Ok(())
+    })?;
+    services::apply_sound_policy(&app);
+    tray::sync(&app);
+    let snapshot = services::snapshot(&app);
+    let _ = app.emit("app-snapshot", snapshot.clone());
+    Ok(snapshot)
+}
 
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> Snapshot {
@@ -501,6 +531,31 @@ pub fn run() {
             idle.package_managed = updates::package_managed(std::env::consts::OS, kind);
             updates::set_status(idle);
             spawn_update_schedule(app.handle().clone());
+            let schedule_app = app.handle().clone();
+            std::thread::spawn(move || {
+                let mut previous = None;
+                loop {
+                    let snapshot = services::snapshot(&schedule_app);
+                    let current = (
+                        snapshot.do_not_disturb,
+                        snapshot
+                            .workspaces
+                            .iter()
+                            .map(|w| (w.id.clone(), w.dnd))
+                            .collect::<Vec<_>>(),
+                    );
+                    if previous.as_ref() != Some(&current) {
+                        let app = schedule_app.clone();
+                        let _ = schedule_app.run_on_main_thread(move || {
+                            services::apply_sound_policy(&app);
+                            tray::sync(&app);
+                            let _ = app.emit("app-snapshot", services::snapshot(&app));
+                        });
+                        previous = Some(current);
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(15));
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -520,6 +575,7 @@ pub fn run() {
             set_service_notifications,
             set_service_notify_in_dnd,
             set_do_not_disturb,
+            set_dnd_schedule,
             set_close_to_tray,
             quit_app,
             set_theme,
@@ -586,7 +642,7 @@ pub(crate) async fn run_update_check(
         (
             config.updates.skipped_version.clone(),
             config.updates.notified_version.clone(),
-            config.do_not_disturb,
+            config.effective_do_not_disturb(),
             config.updates.auto_check,
             config.updates.last_checked_at.clone(),
         )
