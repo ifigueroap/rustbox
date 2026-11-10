@@ -2730,6 +2730,42 @@ mod tests {
     }
 
     #[test]
+    fn notification_clicks_need_no_new_config_fields_or_session_migration() {
+        let dir = std::env::temp_dir().join(format!("rustbox-click-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("config.json");
+        let session = dir.join("sessions").join("mail").join("sentinel");
+        std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+        std::fs::write(&session, "test session").unwrap();
+        // A config written before notification activation: no new settings
+        // are required, and workspace membership/last selection must survive.
+        std::fs::write(
+            &path,
+            r##"{
+            "version": 1, "schemaVersion": 2,
+            "activeWorkspaceId": "personal", "activeServiceId": "mail",
+            "workspaces": [
+                {"id":"work","name":"Work","color":"#123456","order":0},
+                {"id":"personal","name":"Personal","color":"#654321","order":1}
+            ],
+            "services": [{
+                "id":"mail","name":"Mail","url":"https://example.com/",
+                "workspaces":["work","personal"], "notificationsEnabled":true
+            }]
+        }"##,
+        )
+        .unwrap();
+        let loaded = Config::load_or_default(&path);
+        assert_eq!(loaded.services.len(), 1);
+        assert_eq!(loaded.services[0].id, "mail");
+        assert_eq!(loaded.services[0].workspaces, ["work", "personal"]);
+        assert_eq!(loaded.workspaces.len(), 2);
+        assert_eq!(loaded.active_workspace_id.as_deref(), Some("personal"));
+        assert_eq!(loaded.active_service_id.as_deref(), Some("mail"));
+        assert_eq!(std::fs::read_to_string(session).unwrap(), "test session");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn icon_bytes_must_match_the_extension() {
         assert_eq!(
             accept_icon_bytes(
