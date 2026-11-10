@@ -1086,7 +1086,7 @@ fn svg_markup(bytes: &[u8]) -> bool {
         && !lower.contains("<script")
 }
 
-fn normalize_icon(icon: Option<&str>) -> Result<Option<String>, String> {
+pub fn normalize_icon(icon: Option<&str>) -> Result<Option<String>, String> {
     let Some(icon) = icon.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
@@ -1131,7 +1131,7 @@ fn normalize_color(color: Option<&str>) -> String {
     }
 }
 
-fn normalize_user_agent(raw: Option<&str>) -> Result<Option<String>, String> {
+pub fn normalize_user_agent(raw: Option<&str>) -> Result<Option<String>, String> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };

@@ -1,3 +1,5 @@
+mod backup;
+mod backup_commands;
 mod config;
 mod i18n;
 #[cfg(target_os = "linux")]
@@ -445,6 +447,8 @@ pub fn run() {
                 let _ = tray::reveal(&app);
             });
         }))
+        .manage(backup_commands::Pending::default())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -500,6 +504,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            backup_commands::export_config,
+            backup_commands::prepare_config_import,
+            backup_commands::apply_config_import,
             get_state,
             list_presets,
             add_preset,

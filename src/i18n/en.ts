@@ -1,5 +1,18 @@
 /** English catalog. Keys are the contract for every other language. */
 export const en = {
+  "backup.title": "Import & export",
+  "backup.hint": "Back up configuration and icons. Sessions and logins are excluded.",
+  "backup.export": "Export…",
+  "backup.import": "Import…",
+  "backup.choice": "Merge adds missing services and workspaces, keeping current settings. Replace restores all configuration. Session folders are kept.",
+  "backup.merge": "Merge",
+  "backup.replace": "Replace",
+  "backup.confirmTitle": "Replace configuration?",
+  "backup.confirm": "Your current config.json will be backed up to config.json.bak. Services and settings will be replaced; saved sessions will be kept.",
+  "backup.error": "Could not complete the backup operation. Check that the file is a supported Rustbox export, icons and URLs are valid, and the location is accessible.",
+  "backup.exported": "Configuration exported.",
+  "backup.imported": "Configuration imported. Sessions were kept. New machines require signing in again.",
+
   "common.dismiss": "Dismiss",
   "common.close": "Close",
   "common.cancel": "Cancel",

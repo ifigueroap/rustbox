@@ -45,6 +45,9 @@
     "allow-set-update-auto-check",
     "allow-skip-update",
     "allow-install-update",
-    "allow-relaunch-app"
+    "allow-relaunch-app",
+    "allow-export-config",
+    "allow-prepare-config-import",
+    "allow-apply-config-import"
   ]
 }

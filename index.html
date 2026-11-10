@@ -415,6 +415,16 @@
           </section>
 
           <section class="settings-section">
+            <h3 data-i18n="backup.title">Import &amp; export</h3>
+            <p class="field-hint" data-i18n="backup.hint">Back up configuration and icons. Sessions and logins are excluded.</p>
+            <div class="settings-row">
+              <button id="config-export" class="settings-action" type="button" data-i18n="backup.export">Export…</button>
+              <button id="config-import" class="settings-action" type="button" data-i18n="backup.import">Import…</button>
+            </div>
+            <p id="backup-status" class="settings-status" role="status"></p>
+          </section>
+
+          <section class="settings-section">
             <h3 data-i18n="settings.about">About</h3>
             <div class="settings-row">
               <div class="settings-copy">
@@ -430,6 +440,18 @@
             </div>
           </section>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="import-choice" aria-labelledby="import-title" aria-describedby="import-message">
+      <form class="manager-card" method="dialog">
+        <header class="manager-head"><h2 id="import-title" data-i18n="backup.title">Import &amp; export</h2></header>
+        <div class="dialog-body"><p id="import-message" data-i18n="backup.choice">Merge adds missing services and workspaces, keeping current settings. Replace restores all configuration. Session folders are kept.</p></div>
+        <footer class="dialog-footer">
+          <button type="submit" value="cancel" data-i18n="common.cancel">Cancel</button>
+          <button type="submit" value="merge" data-i18n="backup.merge">Merge</button>
+          <button type="submit" value="replace" class="danger" data-i18n="backup.replace">Replace</button>
+        </footer>
       </form>
     </dialog>
 

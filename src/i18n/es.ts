@@ -6,6 +6,19 @@ type SameShape<T> = {
 
 /** Neutral Latin American Spanish. */
 export const es = {
+  "backup.title": "Importar y exportar",
+  "backup.hint": "Guarda una copia de la configuración y los iconos. No incluye sesiones ni accesos a cuentas.",
+  "backup.export": "Exportar…",
+  "backup.import": "Importar…",
+  "backup.choice": "Combinar agrega los servicios y espacios que faltan y conserva los ajustes actuales. Reemplazar restaura toda la configuración. Se conservan las carpetas de sesiones.",
+  "backup.merge": "Combinar",
+  "backup.replace": "Reemplazar",
+  "backup.confirmTitle": "¿Reemplazar la configuración?",
+  "backup.confirm": "Se guardará una copia del config.json actual en config.json.bak. Se reemplazarán los servicios y ajustes; se conservarán las sesiones guardadas.",
+  "backup.error": "No se pudo completar la operación. Comprueba que el archivo sea una exportación compatible de Rustbox, que los iconos y las URL sean válidos y que tengas acceso a la ubicación.",
+  "backup.exported": "Configuración exportada.",
+  "backup.imported": "Configuración importada. Se conservaron las sesiones. En un equipo nuevo tendrás que iniciar sesión de nuevo.",
+
   "common.dismiss": "Descartar",
   "common.close": "Cerrar",
   "common.cancel": "Cancelar",
