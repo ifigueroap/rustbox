@@ -9,6 +9,7 @@ import {
   translate,
 } from "../src/i18n";
 import { es } from "../src/i18n/es";
+import { en } from "../src/i18n/en";
 import { applyShellSnapshot, mountShell } from "../src/shell";
 import { service, snapshot, workspace } from "./fixtures";
 import { shellHtml } from "./html";
@@ -18,6 +19,13 @@ beforeEach(() => {
 });
 
 describe("translate", () => {
+  it("keeps all English and Spanish keys and placeholders in sync", () => {
+    expect(Object.keys(es).sort()).toEqual(Object.keys(en).sort());
+    for (const key of Object.keys(en)) {
+      const placeholders = (value: unknown) => JSON.stringify(value).match(/\{\w+\}/g)?.sort() ?? [];
+      expect(placeholders(es[key as keyof typeof es]), key).toEqual(placeholders(en[key as keyof typeof en]));
+    }
+  });
   it("interpolates placeholders and picks a plural", () => {
     expect(t("count.servicesInWorkspace", { count: 7 })).toBe("7 services in this workspace");
     expect(t("count.servicesInWorkspace", { count: 1 })).toBe("1 service in this workspace");

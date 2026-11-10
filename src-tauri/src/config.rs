@@ -21,6 +21,14 @@ fn default_color() -> String {
     "#8d8478".to_string()
 }
 
+fn default_zoom() -> f64 {
+    crate::zoom::DEFAULT
+}
+
+fn is_default_zoom(value: &f64) -> bool {
+    (*value - crate::zoom::DEFAULT).abs() < f64::EPSILON
+}
+
 /// Workspace layout version written next to the legacy `version` field.
 ///
 /// `version` stays at 1 on purpose: an older build rejects any other value,
@@ -160,7 +168,7 @@ impl Workspace {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
     pub id: String,
@@ -194,6 +202,11 @@ pub struct Service {
     /// Shown in every workspace, including ones created later.
     #[serde(default)]
     pub all_workspaces: bool,
+    /// Page zoom, re-applied whenever this service's webview is created. One
+    /// of `zoom::STEPS`. Missing on older files, which means 1.0, and left
+    /// out of the saved file again while it stays at 1.0.
+    #[serde(default = "default_zoom", skip_serializing_if = "is_default_zoom")]
+    pub zoom: f64,
 }
 
 impl Service {
@@ -235,7 +248,7 @@ impl Default for UpdateSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     #[serde(default = "default_version")]
@@ -574,6 +587,7 @@ impl Config {
             notify_in_dnd: false,
             workspaces: workspace.into_iter().collect(),
             all_workspaces: false,
+            zoom: default_zoom(),
         };
         self.services.push(service.clone());
         Ok(service)
@@ -597,6 +611,7 @@ impl Config {
             notify_in_dnd: false,
             workspaces,
             all_workspaces,
+            zoom: default_zoom(),
         };
         self.services.push(service.clone());
         Ok(service)
@@ -935,6 +950,7 @@ impl Config {
             .collect();
         let first = self.workspaces[0].id.clone();
         for service in &mut self.services {
+            service.zoom = crate::zoom::clamp(service.zoom);
             service.workspaces.retain(|id| known.contains(id));
             service.workspaces.dedup();
             if service.all_workspaces {
@@ -1469,6 +1485,106 @@ mod tests {
     fn missing_sidebar_flag_stays_expanded() {
         let config: Config = serde_json::from_str(r#"{"version":1,"services":[]}"#).unwrap();
         assert!(!config.sidebar_collapsed);
+    }
+
+    /// A config written before zoom existed has no `zoom` key on its
+    /// services, and no `workspaces` key either, like every other config from
+    /// before the workspaces upgrade. Both must still load, with every
+    /// service and session intact and zoom defaulting to 1.0.
+    #[test]
+    fn an_old_config_without_zoom_or_workspaces_still_loads_every_service() {
+        let json = r#"{
+            "version": 1,
+            "services": [
+                {
+                    "id": "11111111-1111-1111-1111-111111111111",
+                    "name": "Slack",
+                    "url": "https://app.slack.com/",
+                    "useChromeUserAgent": true,
+                    "soundEnabled": true,
+                    "notificationsEnabled": true
+                },
+                {
+                    "id": "22222222-2222-2222-2222-222222222222",
+                    "name": "Discord",
+                    "url": "https://discord.com/app",
+                    "useChromeUserAgent": true,
+                    "soundEnabled": true,
+                    "notificationsEnabled": true
+                }
+            ]
+        }"#;
+        let mut config: Config = serde_json::from_str(json).unwrap();
+        config.normalize();
+        assert_eq!(config.services.len(), 2, "no service is dropped");
+        assert_eq!(
+            config.services[0].id,
+            "11111111-1111-1111-1111-111111111111"
+        );
+        assert_eq!(
+            config.services[1].id,
+            "22222222-2222-2222-2222-222222222222"
+        );
+        for service in &config.services {
+            assert_eq!(service.zoom, 1.0, "a missing zoom field defaults to 1.0");
+        }
+        assert_eq!(config.workspaces.len(), 1, "one workspace is still created");
+
+        // A zoom at the default is left out of the file again, the same way
+        // other optional fields that are at their default are.
+        let saved = serde_json::to_string(&config).unwrap();
+        assert!(!saved.contains("\"zoom\""));
+    }
+
+    #[test]
+    fn a_non_default_zoom_round_trips_through_disk() {
+        let dir = std::env::temp_dir().join(format!("rustbox-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        let mut config = sample_config();
+        config.services[0].zoom = 1.25;
+        config.save(&path).unwrap();
+        let loaded = Config::load_or_default(&path);
+        assert_eq!(loaded.services[0].zoom, 1.25);
+        assert_eq!(loaded.services[1].zoom, 1.0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_zoom_preserves_an_existing_workspace_layout_and_settings() {
+        let mut original = sample_config();
+        original.sidebar_collapsed = true;
+        original.services[0].sound_enabled = false;
+        original.services[0].all_workspaces = true;
+        original.normalize();
+        let json = serde_json::to_string(&original).unwrap();
+        assert!(!json.contains("\"zoom\""));
+        let mut loaded: Config = serde_json::from_str(&json).unwrap();
+        loaded.normalize();
+        assert_eq!(loaded, original);
+    }
+
+    #[test]
+    fn numeric_zoom_is_normalized_without_dropping_the_service() {
+        let mut config = sample_config();
+        let ids: Vec<_> = config
+            .services
+            .iter()
+            .map(|service| service.id.clone())
+            .collect();
+        config.services[0].zoom = 99.0;
+        config.services[1].zoom = -1.0;
+        config.normalize();
+        assert_eq!(config.services[0].zoom, 3.0);
+        assert_eq!(config.services[1].zoom, 0.5);
+        assert_eq!(
+            config
+                .services
+                .iter()
+                .map(|service| service.id.clone())
+                .collect::<Vec<_>>(),
+            ids
+        );
     }
 
     // ---- Workspaces -------------------------------------------------------

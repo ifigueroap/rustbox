@@ -37,6 +37,19 @@ pub fn shell_width(sidebar_collapsed: bool, rail_visible: bool) -> f64 {
     sidebar_width(sidebar_collapsed) + rail
 }
 
+/// Matches `--find-bar-height` in the shell stylesheet. The find bar is a
+/// shell-drawn strip, not part of the service page, so the active service's
+/// webview is shrunk and pushed down by this many logical pixels while it is
+/// open rather than painted over.
+pub const FIND_BAR_HEIGHT: f64 = 44.0;
+
+/// Extra vertical offset above the service webview while the find bar is
+/// open, so the shell's strip has somewhere to paint instead of being covered
+/// by the native child webview.
+pub fn find_bar_offset(open: bool) -> f64 {
+    if open { FIND_BAR_HEIGHT } else { 0.0 }
+}
+
 /// Page audio is muted when the service itself is muted, when Do not disturb
 /// is on, or when every workspace that lists it is in Do not disturb.
 pub fn sound_muted(do_not_disturb: bool, workspace_dnd: bool, sound_enabled: bool) -> bool {
@@ -325,6 +338,13 @@ mod tests {
         assert!(!workspace_rail_visible(false, 1));
         assert!(!workspace_rail_visible(false, 0));
         assert!(!workspace_rail_visible(true, 4));
+    }
+
+    #[test]
+    fn the_find_bar_offset_only_applies_while_open() {
+        assert_eq!(find_bar_offset(false), 0.0);
+        assert_eq!(find_bar_offset(true), 44.0);
+        assert_eq!(find_bar_offset(true), FIND_BAR_HEIGHT);
     }
 
     #[test]

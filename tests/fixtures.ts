@@ -23,6 +23,7 @@ export interface TestService {
   workspaceSilenced: boolean;
   rawUnread: number;
   unread: number;
+  zoom?: number;
 }
 
 export interface TestWorkspace {
@@ -42,6 +43,7 @@ export interface TestSnapshot {
   workspaces: TestWorkspace[];
   activeWorkspaceId: string | null;
   activeId: string | null;
+  findServiceId?: string | null;
   lastServiceId: string | null;
   chromeUserAgent: string;
   configPath: string;

@@ -28,6 +28,7 @@ pub struct RuntimeState {
     pub notify_times: Mutex<HashMap<String, VecDeque<Instant>>>,
     pub workspace_icons: Mutex<HashMap<String, String>>,
     pub ops: Mutex<()>,
+    pub page_tools: Mutex<crate::page_tools::PageToolsState>,
 }
 
 #[derive(Clone, Serialize)]
@@ -61,6 +62,7 @@ pub struct ServiceDto {
     /// (Do not disturb, workspace silencing, or Badges off). Drives the
     /// sidebar, workspace rail, and tray; never the desk dashboard.
     pub unread: u32,
+    pub zoom: f64,
 }
 
 #[derive(Clone, Serialize)]
@@ -85,6 +87,7 @@ pub struct Snapshot {
     pub workspaces: Vec<WorkspaceDto>,
     pub active_workspace_id: Option<String>,
     pub active_id: Option<String>,
+    pub find_service_id: Option<String>,
     /// The service that was open when the app last exited, so the shell can
     /// reopen it. `active_id` stays null until that webview is created.
     pub last_service_id: Option<String>,
@@ -160,6 +163,7 @@ impl RuntimeState {
             notify_times: Mutex::new(HashMap::new()),
             workspace_icons: Mutex::new(HashMap::new()),
             ops: Mutex::new(()),
+            page_tools: Mutex::new(Default::default()),
         })
     }
 }
@@ -199,6 +203,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 workspace_silenced: workspace_dnd,
                 raw_unread: count,
                 unread: if shown { count } else { 0 },
+                zoom: service.zoom,
             }
         })
         .collect();
@@ -212,6 +217,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         workspaces,
         active_workspace_id: config.active_workspace_id(),
         active_id,
+        find_service_id: lock(&state.page_tools).find_service_id.clone(),
         last_service_id: config.active_service_id.clone(),
         chrome_user_agent: policy::chrome_user_agent(),
         config_path: state.config_path.display().to_string(),
@@ -330,6 +336,9 @@ where
 pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
     let _ops = lock(&state.ops);
+    if *lock(&state.active_id) != id {
+        crate::page_tools::clear_find(app);
+    }
     match id {
         Some(id) => {
             let service = {
@@ -355,6 +364,8 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
             remember_open_service(app, None);
         }
     }
+    drop(_ops);
+    sync_bounds(app)?;
     Ok(())
 }
 
@@ -385,6 +396,25 @@ pub fn apply_shortcut(
     shift: bool,
     alt: bool,
 ) -> Result<bool, String> {
+    if key == "Escape" && !ctrl_or_meta && !shift && !alt {
+        crate::page_tools::set_find_open(app, false)?;
+        let _ = app.emit_to("main", "app-snapshot", snapshot(app));
+        return Ok(false);
+    }
+    if shortcuts::is_find_shortcut(key, ctrl_or_meta, shift, alt) {
+        crate::page_tools::set_find_open(app, true)?;
+        let _ = app.emit_to("main", "app-snapshot", snapshot(app));
+        let _ = app.emit_to("main", "open-find", ());
+        return Ok(false);
+    }
+    if let Some(action) = crate::zoom::parse_zoom_shortcut(key, ctrl_or_meta, alt) {
+        let id = lock(&app.state::<RuntimeState>().active_id).clone();
+        if let Some(id) = id {
+            crate::page_tools::change_zoom(app, &id, action)?;
+            let _ = app.emit_to("main", "app-snapshot", snapshot(app));
+        }
+        return Ok(false);
+    }
     if shortcuts::is_settings_shortcut(key, ctrl_or_meta, shift, alt) {
         let _ = app.emit("open-settings", ());
         return Ok(false);
@@ -497,6 +527,14 @@ pub fn reload_service(app: &AppHandle, id: &str) -> Result<(), String> {
         drop(_ops);
         return set_active(app, Some(service.id));
     };
+    if lock(&state.page_tools).find_service_id.as_deref() == Some(id) {
+        crate::page_tools::clear_find(app);
+    }
+    webview
+        .set_zoom(service.zoom)
+        .map_err(|err| err.to_string())?;
+    drop(_ops);
+    sync_bounds(app)?;
     hard_reload(&webview)
 }
 
@@ -960,8 +998,9 @@ fn initialization_script(muted: bool, preset: Option<&str>) -> String {
     let preset =
         serde_json::to_string(preset.unwrap_or_default()).unwrap_or_else(|_| "\"\"".to_string());
     format!(
-        "window.__rustboxServicePreset = {preset};\n{}\nwindow.__rustboxSetSound({enabled});",
-        include_str!("inject.js")
+        "window.__rustboxServicePreset = {preset};\n{}\n{}\nwindow.__rustboxSetSound({enabled});",
+        include_str!("inject.js"),
+        include_str!("find.js")
     )
 }
 
@@ -990,11 +1029,13 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
     let popup_home = url.clone();
     let service_id = service.id.clone();
     let title_app = app.clone();
+    let load_app = app.clone();
 
     let muted = service_sound_muted(app, &service.id);
     let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .disable_drag_drop_handler()
         .initialization_script(initialization_script(muted, service.preset.as_deref()))
+        .initialization_script_for_all_frames(include_str!("page_shortcuts.js"))
         .on_navigation(|target| policy::allow_main_navigation(target))
         .on_new_window(move |target, _features| {
             match policy::popup_decision(&popup_home, &target) {
@@ -1009,8 +1050,14 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
         .on_document_title_changed(move |_window, title| {
             note_title(&title_app, &service_id, &title);
         })
+        .on_page_load(move |webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                crate::page_tools::restore_zoom(&load_app, &webview);
+                let _ = load_app.emit_to("main", "find-page-loaded", webview.label());
+            }
+        })
         .background_color(Color(20, 18, 16, 255))
-        .zoom_hotkeys_enabled(true)
+        .zoom_hotkeys_enabled(false)
         .devtools(cfg!(debug_assertions));
 
     builder = isolate_session(builder, app, service)?;
@@ -1018,9 +1065,12 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
         builder = builder.user_agent(&agent);
     }
 
-    window
+    let webview = window
         .add_child(builder, position, size)
         .map_err(|err| format!("could not open {}: {err}", service.name))?;
+    webview
+        .set_zoom(service.zoom)
+        .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -1125,6 +1175,13 @@ fn hard_reload(webview: &tauri::Webview) -> Result<(), String> {
 }
 
 fn close_webview(app: &AppHandle, id: &str) -> Result<(), String> {
+    if lock(&app.state::<RuntimeState>().page_tools)
+        .find_service_id
+        .as_deref()
+        == Some(id)
+    {
+        crate::page_tools::clear_find(app);
+    }
     if let Some(webview) = app.get_webview(&label_for(id)) {
         webview.close().map_err(|err| err.to_string())?;
     }
@@ -1146,9 +1203,13 @@ fn content_bounds(
     let scale = window.scale_factor().map_err(|err| err.to_string())?;
     let physical = window.inner_size().map_err(|err| err.to_string())?;
     let logical: LogicalSize<f64> = physical.to_logical(scale);
+    let top = policy::find_bar_offset(lock(&state.page_tools).find_service_id.is_some());
     Ok((
-        LogicalPosition::new(sidebar, 0.0),
-        LogicalSize::new((logical.width - sidebar).max(0.0), logical.height.max(0.0)),
+        LogicalPosition::new(sidebar, top),
+        LogicalSize::new(
+            (logical.width - sidebar).max(0.0),
+            (logical.height - top).max(0.0),
+        ),
     ))
 }
 

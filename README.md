@@ -171,6 +171,10 @@ Adding the same preset twice creates a second isolated account (`WhatsApp` and `
 
 ### Keyboard
 
+With a service open, **Ctrl/Cmd+F** opens a compact find strip above its page. The strip reserves 44 logical pixels by moving and shrinking the native service webview. Type to search, use **Enter** / **Shift+Enter** or the arrows for the next / previous match, and **Escape** or Close to clear highlights and return focus to the service. It shows the current match and total, or **No matches**. Switching services, opening a shell dialog, or reloading from the service menu closes the strip. Search text is not saved.
+
+**Ctrl/Cmd+plus** (or **=**), **Ctrl/Cmd+minus**, and **Ctrl/Cmd+0** control the active service's native page zoom from **50% to 300%**. A brief percentage appears in the sidebar. Each service remembers its level across page loads, webview recreation, and restarts. **Reset zoom** in its sidebar context menu returns it to 100%. Rustbox owns these zoom chords and disables the webview's additional zoom-by-hotkey handler.
+
 These chords work from the desk and from inside a service. On macOS, use Command instead of Ctrl. They follow the current sidebar order and are not saved separately.
 
 | Shortcut | Action |
@@ -181,9 +185,13 @@ These chords work from the desk and from inside a service. On macOS, use Command
 | Ctrl+Alt+1 … Ctrl+Alt+9 | Switch to that workspace, first through ninth in the rail |
 | Ctrl+Shift+D | Open the desk |
 | Ctrl+, | Open Settings |
+| Ctrl+F | Find in the active service page |
+| Ctrl+plus / Ctrl+= | Zoom in the active service |
+| Ctrl+minus | Zoom out the active service |
+| Ctrl+0 | Reset the active service to 100% |
 | Ctrl+Q | Quit Rustbox |
 
-A number past the end of the list does nothing. Ctrl+0 is left for the service page's own zoom. The service chords only ever reach services in the active workspace, so switching workspaces and then pressing Ctrl+1 always lands in the sidebar you can see.
+A service or workspace number past the end of the list does nothing. Find and zoom require an active service; Ctrl+0 resets that service's remembered zoom. The service chords only ever reach services in the active workspace, so switching workspaces and then pressing Ctrl+1 always lands in the sidebar you can see.
 
 ### Tray
 
@@ -198,7 +206,7 @@ The dialog shows the live paths. They follow the bundle id `app.rustbox.desktop`
 | Config | `~/.config/app.rustbox.desktop/config.json` | `%APPDATA%\app.rustbox.desktop\config.json` | `~/Library/Application Support/app.rustbox.desktop/config.json` |
 | Sessions | `~/.local/share/app.rustbox.desktop/sessions/<id>/` | `%APPDATA%\app.rustbox.desktop\sessions\<id>\` | `~/Library/Application Support/app.rustbox.desktop/sessions/<id>/` |
 
-`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, the language preference (`system`, `en`, or `es`), per-service sound and notification switches, the workspace list with its names, icons, colors, and Do not disturb switches, which workspace and service were last active, whether the workspace rail is shown, Do not disturb, whether closing the window hides to the tray, and an `updates` object (`autoCheck`, `lastCheckedAt`, `skippedVersion`, `notifiedVersion`). The config `version` stays `1`. A file from before updates existed loads unchanged and checks automatically. A chosen icon is stored as `local:<id>.<ext>` plus the file under the data directory's `icons` folder, not as a path on disk. On Linux and Windows, cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. On macOS, WKWebView cannot use that directory. Each service gets a website data store id from its service id, which WebKit honors on macOS 14 and later and ignores on older systems by sharing one store. Rustbox still creates the sessions folder. Removing a service deletes that folder and does not call WebKit's data-store removal, so the WebKit store can remain under `~/Library/WebKit/`. The portable Windows `.exe`, a Just me install, an All users install, the Linux AppImage, and the macOS app use these same per-user directories, not a folder next to the program file. Installing or upgrading does not wipe them.
+`config.json` stores names, URLs, order, icons, user-agent settings, whether the sidebar is collapsed, the appearance preference, the language preference (`system`, `en`, or `es`), per-service sound and notification switches, optional per-service `zoom` (a numeric scale from `0.5` to `3.0`, default `1.0`, omitted when it is `1.0`), the workspace list with its names, icons, colors, and Do not disturb switches, which workspace and service were last active, whether the workspace rail is shown, Do not disturb, whether closing the window hides to the tray, and an `updates` object (`autoCheck`, `lastCheckedAt`, `skippedVersion`, `notifiedVersion`). The config `version` stays `1`. Services without `zoom` still load at 100%; their ids, sessions, workspace membership, and other settings are preserved. Hand-edited numeric zoom values snap to the nearest supported step when loaded. A file from before updates existed loads unchanged and checks automatically. A chosen icon is stored as `local:<id>.<ext>` plus the file under the data directory's `icons` folder, not as a path on disk. On Linux and Windows, cookies, `localStorage`, and cache live in the session directory for that service id, not in the shared webview profile. On macOS, WKWebView cannot use that directory. Each service gets a website data store id from its service id, which WebKit honors on macOS 14 and later and ignores on older systems by sharing one store. Rustbox still creates the sessions folder. Removing a service deletes that folder and does not call WebKit's data-store removal, so the WebKit store can remain under `~/Library/WebKit/`. The portable Windows `.exe`, a Just me install, an All users install, the Linux AppImage, and the macOS app use these same per-user directories, not a folder next to the program file. Installing or upgrading does not wipe them.
 
 ### User agent
 
@@ -332,6 +340,9 @@ To add a language:
 The tray menu is rebuilt from the active locale when the setting changes, and again when the shell resolves `system` from `navigator.language`.
 
 ## Known limitations
+
+- **Find and zoom have no interactive platform verification yet.** The DOM search, shell controls, shortcut forwarding, config compatibility, and zoom decisions have automated tests. Native strip placement, focus transfer, range scrolling/highlight rendering, and `Webview::set_zoom` still need desktop checks on Linux WebKitGTK 4.1 (including Hyprland), Windows WebView2, and macOS WKWebView. Full native compilation could not run in the feature's development environment because GTK/GLib development tools were absent.
+- **Find searches loaded page text.** It is case-insensitive and literal, and can span inline elements. It excludes hidden content, editable fields, iframe contents, shadow DOM, and canvas text. Virtualized or unloaded messages are unavailable until the site renders them. Typing or stepping through matches rescans the current DOM; counts do not update continuously while idle. Engines with CSS Custom Highlight support show all matches; older engines or pages blocking the highlight stylesheet use the selected match only.
 
 - **macOS builds are produced and not run.** CI compiles the app, runs `cargo test`, and uploads a universal `.dmg` and `.app.tar.gz`. Nobody has launched that bundle on a Mac from this repository. Tray clicks, close-to-tray, the Dock icon, single-instance focus, notifications, and the injected script inside WKWebView are untested. Signing and notarization run only when `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` are all set; otherwise the build is ad-hoc signed and must not fail for the missing secrets. An ad-hoc signature was not notarized.
 - **macOS service sessions need macOS 14.** WKWebView has no data directory. Rustbox passes a 16-byte data-store id derived from the service UUID. WebKit uses a separate store on macOS 14 and later; on older systems every service would share the default store, so the bundle's minimum version is 14.0. Removing a service does not delete that WebKit store.

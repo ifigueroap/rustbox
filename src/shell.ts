@@ -14,6 +14,7 @@ import {
   type MessageKey,
 } from "./i18n";
 import { invoke } from "./ipc";
+import { PageTools } from "./page-tools";
 import { httpUrl, renderReleaseNotes } from "./release-notes";
 
 /** Public releases index. Opened with the system browser, never inside a service webview. */
@@ -46,6 +47,7 @@ interface Service {
   workspaceSilenced: boolean;
   rawUnread: number;
   unread: number;
+  zoom?: number;
 }
 
 interface Workspace {
@@ -74,6 +76,7 @@ interface Snapshot {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   activeId: string | null;
+  findServiceId?: string | null;
   lastServiceId: string | null;
   chromeUserAgent: string;
   configPath: string;
@@ -163,6 +166,7 @@ let appVersion = "";
 let updateStatus: UpdateStatus = idleUpdate("");
 /** Set once Download and install has finished for this version. */
 let updateInstalledVersion: string | null = null;
+let pageTools: PageTools<Snapshot> | null = null;
 let serviceMenu: Menu | null = null;
 let serviceMenuItems: (CheckMenuItem | MenuItem | PredefinedMenuItem)[] = [];
 let workspaceMenu: Menu | null = null;
@@ -526,6 +530,8 @@ export function mountShell(): void {
   workspaceSavePending = false;
   shellChain = Promise.resolve();
   abandonConfirmDialog();
+  pageTools?.dispose();
+  pageTools = new PageTools<Snapshot>(applySnapshot, (error) => showError(errorText(error)));
   wireEvents();
 }
 
@@ -823,6 +829,7 @@ function applySnapshot(snapshot: Snapshot): void {
   shell.classList.toggle("rail-hidden", !workspaceRailVisible());
   applyTheme();
   render();
+  pageTools?.sync(snapshot);
   void hydrateLocalIcons().then((changed) => {
     if (changed) render();
   });
@@ -2787,6 +2794,13 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
         applySnapshot(await invoke<Snapshot>("reload_service", { id: service.id }));
       }),
     }));
+    add(await MenuItem.new({
+      text: t("zoom.reset"),
+      enabled: (service.zoom ?? 1) !== 1,
+      action: () => void run(async () => {
+        applySnapshot(await invoke<Snapshot>("reset_service_zoom", { id: service.id }));
+      }),
+    }));
     add(await MenuItem.new({ text: t("service.menuCopyUrl"), action: () => void copyText(service.url) }));
     add(await MenuItem.new({
       text: t("service.menuOpenBrowser"),
@@ -2984,6 +2998,7 @@ async function boot(): Promise<void> {
  * harness can drive exactly the same code path the app uses. */
 export async function renderShell(): Promise<void> {
   mountShell();
+  await pageTools?.listen();
   await listen<UnreadEvent>("unread-count", (event) => {
     refreshUnread(event.payload.serviceId, event.payload.count, event.payload.rawCount);
   });

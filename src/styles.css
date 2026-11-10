@@ -123,6 +123,52 @@ button:disabled {
   min-width: 0;
 }
 
+/* Keep in sync with policy::FIND_BAR_HEIGHT; native service views start below
+   this strip. All offsets inherit the existing rail/sidebar variables. */
+#find-bar {
+  position: fixed;
+  top: 0;
+  left: calc(var(--sidebar-width) + var(--workspace-rail-width));
+  right: 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  z-index: 10;
+}
+#shell.rail-hidden #find-bar { left: var(--sidebar-width); }
+#find-bar[hidden], #service-zoom[hidden] { display: none; }
+#find-input {
+  width: min(260px, 40%);
+  min-width: 60px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--input);
+}
+#find-status { flex: 1; color: var(--muted); font-size: 12px; }
+#find-bar button { flex: none; padding: 4px 8px; }
+#service-zoom {
+  position: fixed;
+  bottom: 68px;
+  left: calc(var(--workspace-rail-width) + 8px);
+  width: calc(var(--sidebar-width) - 16px);
+  padding: 6px 0;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  box-shadow: 0 3px 10px var(--shadow);
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+#shell.rail-hidden #service-zoom { left: 8px; }
+
 #sidebar {
   width: var(--sidebar-width);
   flex: none;

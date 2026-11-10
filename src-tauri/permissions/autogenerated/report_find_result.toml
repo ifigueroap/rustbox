@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-report-find-result"
+description = "Enables the report_find_result command without any pre-configured scope."
+commands.allow = ["report_find_result"]
+
+[[permission]]
+identifier = "deny-report-find-result"
+description = "Denies the report_find_result command without any pre-configured scope."
+commands.deny = ["report_find_result"]

@@ -2,11 +2,13 @@ mod config;
 mod i18n;
 #[cfg(target_os = "linux")]
 mod linux_host;
+mod page_tools;
 mod policy;
 mod services;
 mod shortcuts;
 mod tray;
 mod updates;
+mod zoom;
 
 use config::{LanguagePreference, NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
 use i18n::Locale;
@@ -306,6 +308,40 @@ fn apply_service_shortcut(
     Ok(services::snapshot(&app))
 }
 
+// Only the shell can search/resize/focus views or persist zoom. Hosted pages
+// can report their own result and forward the existing keyboard shortcut.
+#[tauri::command]
+fn set_find_open(app: tauri::AppHandle, open: bool) -> Result<Snapshot, String> {
+    page_tools::set_find_open(&app, open)?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn find_in_service(
+    app: tauri::AppHandle,
+    id: String,
+    query: String,
+    direction: i32,
+    request_id: u32,
+) -> Result<(), String> {
+    page_tools::find_in_service(&app, &id, &query, direction, request_id)
+}
+
+#[tauri::command]
+fn report_find_result(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    result: page_tools::FindResult,
+) {
+    page_tools::report_find_result(&app, webview.label(), result);
+}
+
+#[tauri::command]
+fn reset_service_zoom(app: tauri::AppHandle, id: String) -> Result<Snapshot, String> {
+    page_tools::change_zoom(&app, &id, zoom::ZoomAction::Reset)?;
+    Ok(services::snapshot(&app))
+}
+
 #[tauri::command]
 fn reload_service(app: tauri::AppHandle, id: String) -> Result<Snapshot, String> {
     services::reload_service(&app, &id)?;
@@ -492,6 +528,10 @@ pub fn run() {
             reorder_workspaces,
             set_workspace_rail_hidden,
             apply_service_shortcut,
+            set_find_open,
+            find_in_service,
+            report_find_result,
+            reset_service_zoom,
             reload_service,
             open_external,
             check_for_updates,
