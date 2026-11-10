@@ -1730,6 +1730,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ids
         );
+    }
+
     /// A config written before this feature existed has neither key. Both
     /// must default to off, matching a machine with no login entry yet.
     #[test]
