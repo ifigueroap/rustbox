@@ -52,6 +52,9 @@ export interface TestSnapshot {
   workspaceRailHidden: boolean;
   doNotDisturb: boolean;
   closeToTray: boolean;
+  startAtLogin?: boolean;
+  startHidden?: boolean;
+  autostartError?: boolean;
   trayAvailable: boolean;
   theme: "auto" | "light" | "dark";
   language?: "system" | "en" | "es";

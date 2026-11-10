@@ -1,5 +1,6 @@
 mod backup;
 mod backup_commands;
+mod autostart;
 mod config;
 mod dnd_schedule;
 mod i18n;
@@ -51,6 +52,7 @@ fn set_dnd_schedule(
 
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> Snapshot {
+    reconcile_start_at_login(&app);
     services::snapshot(&app)
 }
 
@@ -199,6 +201,58 @@ fn set_do_not_disturb(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, 
 #[tauri::command]
 fn set_close_to_tray(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
     tray::store_close_to_tray(&app, enabled)?;
+    Ok(services::snapshot(&app))
+}
+
+fn reconcile_start_at_login(app: &tauri::AppHandle) {
+    let result = autostart::is_enabled().and_then(|enabled| {
+        if services::lock(&app.state::<RuntimeState>().config).start_at_login != enabled {
+            services::mutate(app, |config| {
+                config.start_at_login = enabled;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    });
+    autostart::set_error(result.is_err());
+}
+
+/// Add or remove the OS login entry. The entry's hidden-launch argument
+/// follows the already-saved `start_hidden` preference.
+#[tauri::command]
+fn set_start_at_login(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
+    let hidden = services::lock(&app.state::<RuntimeState>().config).start_hidden;
+    if enabled {
+        autostart::enable(hidden)?;
+    } else {
+        autostart::disable()?;
+    }
+    services::mutate(&app, |config| {
+        config.start_at_login = enabled;
+        Ok(())
+    })?;
+    reconcile_start_at_login(&app);
+    Ok(services::snapshot(&app))
+}
+
+/// Change whether a login-triggered launch skips showing the window. Only
+/// rewrites the OS login entry when one is already registered; otherwise
+/// just the preference is saved, ready for the next `set_start_at_login`.
+#[tauri::command]
+fn set_start_hidden(app: tauri::AppHandle, enabled: bool) -> Result<Snapshot, String> {
+    let start_at_login = autostart::is_enabled()?;
+    if enabled && app.tray_by_id("rustbox").is_none() {
+        return Err("tray unavailable".into());
+    }
+    if start_at_login {
+        autostart::enable(enabled)?;
+    }
+    services::mutate(&app, |config| {
+        config.start_at_login = start_at_login;
+        config.start_hidden = enabled;
+        Ok(())
+    })?;
+    reconcile_start_at_login(&app);
     Ok(services::snapshot(&app))
 }
 
@@ -470,6 +524,15 @@ pub fn run() {
     // this has to happen before any window or webview exists.
     #[cfg(target_os = "linux")]
     linux_host::prepare_environment();
+    // The login entry passes this so a launch at login can skip the window.
+    // A launch the user starts themselves never carries it.
+    let hidden_launch = autostart::launched_hidden(std::env::args().skip(1));
+    let mut context = tauri::generate_context!();
+    for window in &mut context.config_mut().app.windows {
+        if window.label == "main" {
+            window.visible = false;
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let app = app.clone();
@@ -481,7 +544,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             let state = RuntimeState::load(app.handle()).map_err(box_err)?;
             app.manage(state);
             let handle = app.handle().clone();
@@ -518,8 +581,28 @@ pub fn run() {
             }
             let language = services::lock(&app.state::<RuntimeState>().config).language;
             i18n::set_ui_locale(i18n::resolve_preference(language));
-            if let Err(err) = tray::install(app.handle()) {
-                eprintln!("rustbox: tray icon was not created: {err}");
+            reconcile_start_at_login(app.handle());
+            let tray_ok = match tray::install(app.handle()) {
+                Ok(()) => true,
+                Err(err) => {
+                    eprintln!("rustbox: tray icon was not created: {err}");
+                    false
+                }
+            };
+            let background_ok = !hidden_launch
+                || services::load_background_services(app.handle()).is_ok();
+            if !background_ok {
+                eprintln!("rustbox: could not load background services; showing the window");
+            }
+            // A launch at login with "start hidden" on, and a tray to bring the
+            // window back from, stays hidden. Every other launch shows the
+            // window, including a hidden launch with no tray: there would be
+            // no way to reach it otherwise.
+            if !autostart::should_start_hidden(hidden_launch, tray_ok && background_ok) {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
             let kind = updates::detect_bundle_kind();
             let can_install = updates::supports_self_update(kind);
@@ -577,6 +660,8 @@ pub fn run() {
             set_do_not_disturb,
             set_dnd_schedule,
             set_close_to_tray,
+            set_start_at_login,
+            set_start_hidden,
             quit_app,
             set_theme,
             set_language,
@@ -607,7 +692,7 @@ pub fn run() {
             import_local_icon,
             read_local_icon,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building rustbox")
         .run(|app_handle, event| {
             // A hidden window leaves the Dock icon. Clicking it asks the app

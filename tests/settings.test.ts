@@ -337,3 +337,56 @@ describe("settings dialog", () => {
     expect(settingsDialog().open).toBe(true);
   });
 });
+
+describe("login startup", () => {
+  it("enables hidden startup only with autostart and a tray", () => {
+    applyShellSnapshot(snapshot({ services: [], startAtLogin: false, startHidden: true }));
+    const hidden = document.querySelector<HTMLInputElement>("#start-hidden")!;
+    expect(hidden.checked).toBe(true);
+    expect(hidden.disabled).toBe(true);
+    applyShellSnapshot(snapshot({ services: [], startAtLogin: true, startHidden: true }));
+    expect(hidden.disabled).toBe(false);
+    applyShellSnapshot(snapshot({ services: [], startAtLogin: true, trayAvailable: false }));
+    expect(hidden.disabled).toBe(true);
+  });
+
+  it("saves both toggles and restores controls after a localized error", async () => {
+    applyShellSnapshot(snapshot({ services: [], startAtLogin: false }));
+    backend = (command, args) => {
+      if (command === "set_start_at_login") return snapshot({ services: [], startAtLogin: args.enabled as boolean });
+      if (command === "set_start_hidden") return snapshot({ services: [], startAtLogin: true, startHidden: args.enabled as boolean });
+      throw new Error("unexpected");
+    };
+    const login = document.querySelector<HTMLInputElement>("#start-at-login")!;
+    const hidden = document.querySelector<HTMLInputElement>("#start-hidden")!;
+    login.click();
+    expect(login.disabled).toBe(true);
+    await flush();
+    expect(login.checked).toBe(true);
+    expect(hidden.disabled).toBe(false);
+    hidden.click();
+    await flush();
+    expect(hidden.checked).toBe(true);
+    expect(calls.filter(call => call.command.startsWith("set_start"))).toEqual([
+      { command: "set_start_at_login", args: { enabled: true } },
+      { command: "set_start_hidden", args: { enabled: true } },
+    ]);
+    backend = () => { throw new Error("sensitive OS details"); };
+    hidden.click();
+    await flush();
+    expect(hidden.checked).toBe(true);
+    expect(hidden.disabled).toBe(false);
+    const error = document.querySelector<HTMLElement>("#startup-error")!;
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("Could not read or change");
+    expect(error.textContent).not.toContain("sensitive");
+    applyShellSnapshot(snapshot({ services: [], language: "es", autostartError: true }));
+    expect(error.textContent).toContain("No se pudo consultar o cambiar");
+  });
+
+  it("shows OS reconciliation errors in Settings", () => {
+    applyShellSnapshot(snapshot({ services: [], autostartError: true }));
+    openSettings();
+    expect(document.querySelector<HTMLElement>("#startup-error")?.hidden).toBe(false);
+  });
+});

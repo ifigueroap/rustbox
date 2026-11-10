@@ -88,6 +88,9 @@ interface Snapshot {
   doNotDisturb: boolean;
   dndSchedule?: Schedule;
   closeToTray: boolean;
+  startAtLogin?: boolean;
+  startHidden?: boolean;
+  autostartError?: boolean;
   trayAvailable: boolean;
   theme: ThemePreference;
   language?: LanguagePreference;
@@ -162,6 +165,10 @@ let globalSchedule: Schedule | undefined;
 let workspaceScheduleEditor: ReturnType<typeof scheduleEditor> | null = null;
 let initialWorkspaceSchedule = "";
 let closeToTray = true;
+let startAtLogin = false;
+let startHidden = false;
+let autostartError = false;
+let startupBusy = false;
 let trayAvailable = false;
 let themePreference: ThemePreference = "auto";
 let languagePreference: LanguagePreference = "system";
@@ -818,6 +825,9 @@ function applySnapshot(snapshot: Snapshot): void {
   doNotDisturb = snapshot.doNotDisturb;
   globalSchedule = snapshot.dndSchedule;
   closeToTray = snapshot.closeToTray;
+  startAtLogin = snapshot.startAtLogin ?? false;
+  startHidden = snapshot.startHidden ?? false;
+  autostartError = snapshot.autostartError ?? false;
   trayAvailable = snapshot.trayAvailable;
   themePreference = snapshot.theme;
   languagePreference = asLanguage(snapshot.language);
@@ -3115,6 +3125,18 @@ function paintSettingsControls(): void {
   const language = document.querySelector<HTMLSelectElement>("#language-select");
   if (language) language.value = languagePreference;
 
+  const login = document.querySelector<HTMLInputElement>("#start-at-login");
+  const hidden = document.querySelector<HTMLInputElement>("#start-hidden");
+  if (login) { login.checked = startAtLogin; login.disabled = startupBusy; }
+  if (hidden) {
+    hidden.checked = startHidden;
+    hidden.disabled = startupBusy || !startAtLogin || !trayAvailable;
+  }
+  const startupError = document.querySelector<HTMLElement>("#startup-error");
+  if (startupError) {
+    startupError.hidden = !autostartError;
+    startupError.textContent = autostartError ? t("settings.startupError") : "";
+  }
   const closeTray = document.querySelector<HTMLInputElement>("#close-tray");
   const closeHint = document.querySelector<HTMLElement>("#close-tray-hint");
   if (closeTray) {
@@ -3610,6 +3632,26 @@ function wireEvents(): void {
       applySnapshot(await invoke<Snapshot>("set_close_to_tray", { enabled: input.checked }));
     });
   });
+  for (const [id, command] of [["start-at-login", "set_start_at_login"], ["start-hidden", "set_start_hidden"]]) {
+    document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener("change", (event) => {
+      const input = event.currentTarget as HTMLInputElement;
+      const enabled = input.checked;
+      startupBusy = true;
+      paintSettingsControls();
+      void (async () => {
+        try {
+          applySnapshot(await invoke<Snapshot>(command, { enabled }));
+        } catch {
+          // The OS entry may have changed even if saving config failed.
+          try { applySnapshot(await invoke<Snapshot>("get_state")); } catch { /* Keep the last snapshot. */ }
+          autostartError = true;
+        } finally {
+          startupBusy = false;
+          paintSettingsControls();
+        }
+      })();
+    });
+  }
   const editor = must<HTMLFormElement>("#editor-form");
   editor.addEventListener("submit", (event) => {
     event.preventDefault();
