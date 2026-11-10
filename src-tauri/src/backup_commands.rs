@@ -19,11 +19,12 @@ pub async fn export_config(app: tauri::AppHandle) -> Result<bool, String> {
             let filename = crate::config::local_icon_filename(token).ok_or("icon")?;
             icons.insert(
                 token.to_string(),
-                std::fs::read(services::icons_dir(&app)?.join(filename)).map_err(|_| "read")?,
+                std::fs::read(services::icons_dir(&app).map_err(|_| "io")?.join(filename))
+                    .map_err(|_| "io")?,
             );
         }
         let doc = backup::build(config, app.package_info().version.to_string(), icons)?;
-        let bytes = serde_json::to_vec_pretty(&doc).map_err(|_| "json")?;
+        let bytes = serde_json::to_vec_pretty(&doc).map_err(|_| "shape")?;
         if bytes.len() > backup::MAX_DOCUMENT_BYTES {
             return Err("size".into());
         }
@@ -36,8 +37,8 @@ pub async fn export_config(app: tauri::AppHandle) -> Result<bool, String> {
         else {
             return Ok(false);
         };
-        let path = file.into_path().map_err(|_| "path")?;
-        std::fs::write(path, bytes).map_err(|_| "write")?;
+        let path = file.into_path().map_err(|_| "io")?;
+        std::fs::write(path, bytes).map_err(|_| "io")?;
         Ok(true)
     })
     .await
@@ -56,17 +57,17 @@ pub async fn prepare_config_import(app: tauri::AppHandle) -> Result<bool, String
         else {
             return Ok(false);
         };
-        let path = file.into_path().map_err(|_| "path")?;
-        if std::fs::metadata(&path).map_err(|_| "read")?.len() > backup::MAX_DOCUMENT_BYTES as u64 {
+        let path = file.into_path().map_err(|_| "io")?;
+        if std::fs::metadata(&path).map_err(|_| "io")?.len() > backup::MAX_DOCUMENT_BYTES as u64 {
             return Err("size".into());
         }
         use std::io::Read;
         let mut bytes = Vec::new();
         std::fs::File::open(path)
-            .map_err(|_| "read")?
+            .map_err(|_| "io")?
             .take(backup::MAX_DOCUMENT_BYTES as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| "read")?;
+            .map_err(|_| "io")?;
         let doc = backup::parse(&bytes)?;
         *services::lock(&app.state::<Pending>().0) = Some(doc);
         Ok(true)
@@ -84,7 +85,7 @@ pub async fn apply_config_import(app: tauri::AppHandle, mode: String) -> Result<
     if mode == "cancel" {
         return Ok(services::snapshot(&app));
     }
-    let mut doc = pending.ok_or("missing import")?;
+    let mut doc = pending.ok_or("pending")?;
     let state = app.state::<RuntimeState>();
     let old = services::lock(&state.config).clone();
     // Check limits before writing icons. Fresh tokens prevent collisions with
@@ -93,7 +94,7 @@ pub async fn apply_config_import(app: tauri::AppHandle, mode: String) -> Result<
     for (token, bytes) in &doc.icons {
         let filename = crate::config::local_icon_filename(token).ok_or("icon")?;
         let extension = filename.rsplit_once('.').ok_or("icon")?.1;
-        let fresh = services::import_local_icon(&app, bytes, extension)?;
+        let fresh = services::import_local_icon(&app, bytes, extension).map_err(|_| "io")?;
         for icon in doc
             .config
             .services
@@ -114,11 +115,12 @@ pub async fn apply_config_import(app: tauri::AppHandle, mode: String) -> Result<
                 &state.config_path,
                 state.config_path.with_extension("json.bak"),
             )
-            .map_err(|_| "backup")?;
+            .map_err(|_| "io")?;
         }
         *current = next;
         Ok(())
-    })?;
+    })
+    .map_err(|_| "io")?;
     // Close outdated webviews but deliberately retain every session directory.
     if mode == "replace" {
         for service in &old.services {

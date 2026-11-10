@@ -44,7 +44,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, String> {
     if bytes.len() > MAX_DOCUMENT_BYTES {
         return Err("size".into());
     }
-    let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| "json")?;
+    let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| "shape")?;
     if !raw
         .get("config")
         .and_then(|c| c.get("services"))
@@ -58,8 +58,10 @@ pub fn parse(bytes: &[u8]) -> Result<Document, String> {
 }
 
 fn validate(doc: &Document) -> Result<(), String> {
-    if doc.format != "rustbox-config"
-        || doc.version != 1
+    if doc.format != "rustbox-config" {
+        return Err("shape".into());
+    }
+    if doc.version != 1
         || doc.config.version != 1
         || doc.config.schema_version > config::CONFIG_SCHEMA_VERSION
     {
@@ -85,9 +87,9 @@ fn validate(doc: &Document) -> Result<(), String> {
         if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
             return Err("url".into());
         }
-        config::normalize_service_url(&s.url)?;
-        config::normalize_icon(s.icon.as_deref())?;
-        config::normalize_user_agent(s.user_agent.as_deref())?;
+        config::normalize_service_url(&s.url).map_err(|_| "url")?;
+        config::normalize_icon(s.icon.as_deref()).map_err(|_| "icon")?;
+        config::normalize_user_agent(s.user_agent.as_deref()).map_err(|_| "userAgent")?;
         if s.name.trim().is_empty() || s.name.trim().chars().count() > 80 {
             return Err("name".into());
         }
@@ -99,19 +101,20 @@ fn validate(doc: &Document) -> Result<(), String> {
         }
     }
     for w in &c.workspaces {
-        config::normalize_icon(w.icon.as_deref())?;
+        config::normalize_icon(w.icon.as_deref()).map_err(|_| "icon")?;
         if w.name.trim().is_empty() || w.name.trim().chars().count() > 80 {
             return Err("name".into());
         }
     }
     for token in tokens(c) {
         if !doc.icons.contains_key(token) {
-            return Err("missing icon".into());
+            return Err("icon".into());
         }
     }
     for (token, bytes) in &doc.icons {
         let filename = config::local_icon_filename(token).ok_or("icon")?;
-        config::accept_icon_bytes(bytes, filename.rsplit_once('.').ok_or("icon")?.1)?;
+        config::accept_icon_bytes(bytes, filename.rsplit_once('.').ok_or("icon")?.1)
+            .map_err(|_| "icon")?;
     }
     Ok(())
 }
@@ -183,16 +186,16 @@ mod tests {
     }
     #[test]
     fn invalid_files_and_old_versions_are_rejected() {
-        assert!(parse(b"{}").is_err());
-        assert!(parse(b"not json").is_err());
+        assert_eq!(parse(b"{}").err().as_deref(), Some("shape"));
+        assert_eq!(parse(b"not json").err().as_deref(), Some("shape"));
         for version in [0, 2] {
             let mut doc = document(populated());
             doc.version = version;
-            assert!(parse(&serde_json::to_vec(&doc).unwrap()).is_err());
+            assert_eq!(parse(&serde_json::to_vec(&doc).unwrap()).err().as_deref(), Some("version"));
         }
         let mut doc = document(populated());
         doc.format = "other".into();
-        assert!(parse(&serde_json::to_vec(&doc).unwrap()).is_err());
+        assert_eq!(parse(&serde_json::to_vec(&doc).unwrap()).err().as_deref(), Some("shape"));
     }
     #[test]
     fn validates_urls_ids_and_memberships() {
@@ -227,9 +230,9 @@ mod tests {
         assert_eq!(restored.icons[&token], bytes);
         assert_eq!(restored.config, doc.config);
         restored.icons.clear();
-        assert!(validate(&restored).is_err());
+        assert_eq!(validate(&restored).err().as_deref(), Some("icon"));
         restored.icons.insert("local:../private.png".into(), bytes);
-        assert!(validate(&restored).is_err());
+        assert_eq!(validate(&restored).err().as_deref(), Some("icon"));
     }
     #[test]
     fn export_has_no_session_fields() {

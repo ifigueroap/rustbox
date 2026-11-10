@@ -3145,6 +3145,24 @@ function openSettings(): void {
   void suspendForCover().then(reveal);
 }
 
+// Only known backup codes may select a message; never display native error details.
+const backupErrorKeys: ReadonlyMap<string, MessageKey> = new Map([
+  ["shape", "backup.error.shape"],
+  ["version", "backup.error.version"],
+  ["size", "backup.error.size"],
+  ["workspaces", "backup.error.workspaces"],
+  ["id", "backup.error.id"],
+  ["url", "backup.error.url"],
+  ["name", "backup.error.name"],
+  ["membership", "backup.error.membership"],
+  ["icon", "backup.error.icon"],
+  ["io", "backup.error.io"],
+  ["dialog", "backup.error.dialog"],
+  ["mode", "backup.error.mode"],
+  ["pending", "backup.error.pending"],
+  ["userAgent", "backup.error.userAgent"],
+]);
+
 async function configBackup(action: "export" | "import"): Promise<void> {
   const status = document.querySelector<HTMLElement>("#backup-status");
   const buttons = document.querySelectorAll<HTMLButtonElement>("#config-export, #config-import");
@@ -3182,8 +3200,9 @@ async function configBackup(action: "export" | "import"): Promise<void> {
       applySnapshot(snapshot);
       if (status) status.textContent = t("backup.imported");
     }
-  } catch {
-    if (status) status.textContent = t("backup.error");
+  } catch (error) {
+    const code = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    if (status) status.textContent = t(backupErrorKeys.get(code) ?? "backup.error");
   } finally {
     buttons.forEach((button) => { button.disabled = false; });
     await releaseCover("config-backup");
