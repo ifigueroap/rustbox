@@ -1,3 +1,4 @@
+import { scheduleEditor, type Schedule } from "./dnd-schedule";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
@@ -56,6 +57,7 @@ interface Workspace {
   icon?: string | null;
   color: string;
   dnd: boolean;
+  dndSchedule?: Schedule;
   order: number;
   unread: number;
   rawUnread: number;
@@ -84,6 +86,7 @@ interface Snapshot {
   sidebarCollapsed: boolean;
   workspaceRailHidden: boolean;
   doNotDisturb: boolean;
+  dndSchedule?: Schedule;
   closeToTray: boolean;
   trayAvailable: boolean;
   theme: ThemePreference;
@@ -155,6 +158,9 @@ let sessionsDir = "";
 let sidebarCollapsed = false;
 let workspaceRailHidden = false;
 let doNotDisturb = false;
+let globalSchedule: Schedule | undefined;
+let workspaceScheduleEditor: ReturnType<typeof scheduleEditor> | null = null;
+let initialWorkspaceSchedule = "";
 let closeToTray = true;
 let trayAvailable = false;
 let themePreference: ThemePreference = "auto";
@@ -810,6 +816,7 @@ function applySnapshot(snapshot: Snapshot): void {
   sidebarCollapsed = snapshot.sidebarCollapsed;
   workspaceRailHidden = snapshot.workspaceRailHidden;
   doNotDisturb = snapshot.doNotDisturb;
+  globalSchedule = snapshot.dndSchedule;
   closeToTray = snapshot.closeToTray;
   trayAvailable = snapshot.trayAvailable;
   themePreference = snapshot.theme;
@@ -2314,6 +2321,10 @@ function openWorkspaceEditor(workspace: Workspace | null, mode: WorkspaceEditorM
     pendingFile: null,
   };
   workspaceSavePending = false;
+  nodes.dialog.querySelector(".schedule-editor")?.remove();
+  workspaceScheduleEditor = scheduleEditor(workspace?.dndSchedule);
+  initialWorkspaceSchedule = JSON.stringify(workspaceScheduleEditor.read());
+  nodes.error.before(workspaceScheduleEditor.element);
   nodes.title.textContent = workspaceEditorTitle(workspace);
   nodes.name.value = workspace?.name ?? "";
   nodes.icon.value = workspaceDraft.icon;
@@ -2359,6 +2370,7 @@ async function saveWorkspaceEditor(): Promise<void> {
   syncWorkspaceSave();
   let snapshot: Snapshot | null = null;
   try {
+    const schedule = workspaceScheduleEditor?.read();
     let icon = nodes.icon.value.trim();
     if (draft.pendingFile) {
       const bytes = Array.from(draft.pendingFile.bytes);
@@ -2382,6 +2394,10 @@ async function saveWorkspaceEditor(): Promise<void> {
             includeServices: readWorkspaceIncludeSelection(),
           },
         });
+    if (schedule && snapshot && JSON.stringify(schedule) !== initialWorkspaceSchedule) {
+      const id = draft.id ?? snapshot.workspaces.find(w => !workspaces.some(old => old.id === w.id))?.id;
+      if (id) snapshot = await invoke<Snapshot>("set_dnd_schedule", { workspaceId: id, schedule });
+    }
   } catch (error) {
     // The save itself failed, so the dialog stays open for a retry.
     const current = document.querySelector<HTMLElement>("#workspace-error");
@@ -3136,6 +3152,22 @@ function openSettings(): void {
   const reveal = () => {
     if (!shellCovers.has("settings")) return;
     paintSettingsControls();
+    dialog.querySelector(".schedule-editor")?.remove();
+    const editor = scheduleEditor(globalSchedule);
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = t("schedule.save");
+    save.dataset.i18n = "schedule.save";
+    save.onclick = async () => {
+      try {
+        save.disabled = true;
+        applySnapshot(await invoke<Snapshot>("set_dnd_schedule", { workspaceId: null, schedule: editor.read() }));
+      } catch (error) { showError(errorText(error)); }
+      finally { save.disabled = false; }
+    };
+    editor.element.append(save);
+    dialog.querySelector(".settings-section")?.after(editor.element);
+    if (!editor.element.isConnected) dialog.querySelector(".settings-section")?.after(editor.element);
     if (!dialog.open) dialog.showModal();
   };
   if (suspendedId || !activeId) {

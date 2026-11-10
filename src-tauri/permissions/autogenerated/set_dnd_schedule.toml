@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-dnd-schedule"
+description = "Enables the set_dnd_schedule command without any pre-configured scope."
+commands.allow = ["set_dnd_schedule"]
+
+[[permission]]
+identifier = "deny-set-dnd-schedule"
+description = "Denies the set_dnd_schedule command without any pre-configured scope."
+commands.deny = ["set_dnd_schedule"]

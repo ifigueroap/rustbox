@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
 
+use crate::dnd_schedule::{self, DndOverride, Now, Schedule};
 use crate::policy::effective_user_agent;
 
 fn default_version() -> u32 {
@@ -145,10 +146,21 @@ pub struct Workspace {
     pub icon: Option<String>,
     #[serde(default = "default_color")]
     pub color: String,
-    /// Silences sound, notifications, and badges for every service that is
-    /// only shared with other silenced workspaces. Global Do not disturb wins.
+    /// The manual Do not disturb choice while no schedule governs this
+    /// workspace (schedule off, or no rules). Silences sound, notifications,
+    /// and badges for every service that is only shared with other silenced
+    /// workspaces. Global Do not disturb wins. See `effective_dnd` for the
+    /// value that actually applies once a schedule is configured.
     #[serde(default)]
     pub dnd: bool,
+    /// This workspace's own Do not disturb schedule. Empty/disabled by
+    /// default, which keeps `dnd` behaving exactly as before.
+    #[serde(default)]
+    pub dnd_schedule: Schedule,
+    /// A manual toggle made while `dnd_schedule` is active, winning over the
+    /// schedule until it expires. `None` when no override is live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dnd_override: Option<DndOverride>,
     /// Position in the rail. `Config::normalize` keeps this equal to the
     /// index in `Config::workspaces`.
     #[serde(default)]
@@ -163,8 +175,48 @@ impl Workspace {
             icon: None,
             color: default_color(),
             dnd: false,
+            dnd_schedule: Schedule::default(),
+            dnd_override: None,
             order: 0,
         }
+    }
+
+    /// The Do not disturb state that actually applies to this workspace,
+    /// combining the manual switch with its schedule and any live override.
+    pub fn effective_dnd(&self, now: Now) -> bool {
+        dnd_schedule::effective_dnd(
+            self.dnd,
+            self.dnd_override.as_ref(),
+            &self.dnd_schedule,
+            now,
+        )
+    }
+
+    /// Apply a manual Do not disturb toggle. Without an active schedule this
+    /// is exactly the old behavior (set `dnd` directly). With one, it creates
+    /// an override that wins until the schedule's next boundary.
+    pub fn request_dnd(&mut self, desired: bool, now: Now) {
+        if self.dnd_schedule.enabled && !self.dnd_schedule.rules.is_empty() {
+            if let Some(over) = dnd_schedule::make_override(&self.dnd_schedule, now, desired) {
+                self.dnd_override = Some(over);
+                return;
+            }
+        }
+        self.dnd = desired;
+        self.dnd_override = None;
+    }
+
+    /// Replace this workspace's schedule. The manual baseline is set to
+    /// whatever was perceived as active a moment ago, so turning the
+    /// schedule off (or editing it) never flips the workspace's Do not
+    /// disturb state out from under the user.
+    pub fn set_schedule(&mut self, schedule: Schedule, now: Now) -> Result<(), String> {
+        let schedule = dnd_schedule::validate(schedule)?;
+        let perceived = self.effective_dnd(now);
+        self.dnd_schedule = schedule;
+        self.dnd_override = None;
+        self.dnd = perceived;
+        Ok(())
     }
 }
 
@@ -269,9 +321,20 @@ pub struct Config {
     /// When true the sidebar is the icon rail. Names stay available as tooltips.
     #[serde(default)]
     pub sidebar_collapsed: bool,
-    /// Mutes page audio and hides badges and desktop notifications for every service.
+    /// The manual Do not disturb choice while no schedule governs it
+    /// (schedule off, or no rules). Mutes page audio and hides badges and
+    /// desktop notifications for every service. See `effective_do_not_disturb`
+    /// for the value that actually applies once a schedule is configured.
     #[serde(default)]
     pub do_not_disturb: bool,
+    /// The global Do not disturb schedule. Empty/disabled by default, which
+    /// keeps `do_not_disturb` behaving exactly as before.
+    #[serde(default)]
+    pub dnd_schedule: Schedule,
+    /// A manual toggle made while `dnd_schedule` is active, winning over the
+    /// schedule until it expires. `None` when no override is live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dnd_override: Option<DndOverride>,
     /// Closing the window hides it. Quit from the tray, or Ctrl+Q, to exit.
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
@@ -301,6 +364,8 @@ impl Default for Config {
             services: Vec::new(),
             sidebar_collapsed: false,
             do_not_disturb: false,
+            dnd_schedule: Schedule::default(),
+            dnd_override: None,
             close_to_tray: true,
             workspace_rail_hidden: false,
             theme: Theme::Auto,
@@ -400,6 +465,23 @@ impl From<&Preset> for PresetInfo {
 }
 
 impl Config {
+    pub fn effective_do_not_disturb(&self) -> bool {
+        dnd_schedule::effective_dnd(
+            self.do_not_disturb,
+            self.dnd_override.as_ref(),
+            &self.dnd_schedule,
+            dnd_schedule::local_now(),
+        )
+    }
+    pub fn request_dnd(&mut self, enabled: bool) {
+        self.do_not_disturb = enabled;
+        self.dnd_override = if self.dnd_schedule.enabled {
+            dnd_schedule::make_override(&self.dnd_schedule, dnd_schedule::local_now(), enabled)
+        } else {
+            None
+        };
+    }
+
     pub fn load_or_default(path: &Path) -> Self {
         match read_config(path) {
             ConfigRead::Missing => Self::default(),
@@ -481,6 +563,8 @@ impl Config {
             if let ConfigRead::Loaded(existing) = &current_read {
                 chosen.sidebar_collapsed = existing.sidebar_collapsed;
                 chosen.do_not_disturb = existing.do_not_disturb;
+                chosen.dnd_schedule = existing.dnd_schedule.clone();
+                chosen.dnd_override = existing.dnd_override;
                 chosen.close_to_tray = existing.close_to_tray;
                 chosen.updates = existing.updates.clone();
             }
@@ -712,13 +796,13 @@ impl Config {
         let flags: Vec<bool> = if service.all_workspaces {
             self.workspaces
                 .iter()
-                .map(|workspace| workspace.dnd)
+                .map(|workspace| workspace.effective_dnd(dnd_schedule::local_now()))
                 .collect()
         } else {
             self.workspaces
                 .iter()
                 .filter(|workspace| service.workspaces.iter().any(|id| id == &workspace.id))
-                .map(|workspace| workspace.dnd)
+                .map(|workspace| workspace.effective_dnd(dnd_schedule::local_now()))
                 .collect()
         };
         crate::policy::silenced_by_workspaces(&flags)
@@ -824,7 +908,7 @@ impl Config {
             .iter_mut()
             .find(|workspace| workspace.id == id)
             .ok_or_else(|| "workspace not found".to_string())?;
-        workspace.dnd = dnd;
+        workspace.request_dnd(dnd, dnd_schedule::local_now());
         Ok(())
     }
 
@@ -1377,6 +1461,54 @@ mod tests {
         config.add_preset("whatsapp", None).unwrap();
         config.add_preset("whatsapp", None).unwrap();
         config
+    }
+
+    #[test]
+    fn schedule_and_override_survive_serialization() {
+        let mut config = Config::default();
+        config.dnd_schedule = Schedule {
+            enabled: true,
+            rules: vec![dnd_schedule::ScheduleRule {
+                days: vec![dnd_schedule::Day::Mon],
+                start_minute: 1140,
+                end_minute: 480,
+            }],
+        };
+        let now = Now::new(
+            dnd_schedule::Moment::new(dnd_schedule::Day::Mon, 1200),
+            120000,
+        );
+        config.dnd_override = dnd_schedule::make_override(&config.dnd_schedule, now, false);
+        let reloaded: Config =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(reloaded.dnd_override, config.dnd_override);
+        assert!(!dnd_schedule::effective_dnd(
+            false,
+            reloaded.dnd_override.as_ref(),
+            &reloaded.dnd_schedule,
+            now
+        ));
+        let expired = Now {
+            unix: config.dnd_override.unwrap().expires_at_unix,
+            ..now
+        };
+        assert!(dnd_schedule::effective_dnd(
+            false,
+            reloaded.dnd_override.as_ref(),
+            &reloaded.dnd_schedule,
+            expired
+        ));
+    }
+
+    #[test]
+    fn pre_schedule_config_keeps_manual_choices() {
+        let config: Config = serde_json::from_str(r#"{"services":[],"doNotDisturb":true,"workspaces":[{"id":"old","name":"Old","dnd":true}]}"#).unwrap();
+        assert!(config.do_not_disturb);
+        assert!(!config.dnd_schedule.enabled);
+        assert!(config.dnd_override.is_none());
+        assert!(config.workspaces[0].dnd);
+        assert_eq!(config.workspaces[0].dnd_schedule, Schedule::default());
+        assert!(config.workspaces[0].dnd_override.is_none());
     }
 
     #[test]

@@ -2183,3 +2183,11 @@ button:disabled,
     margin-bottom: var(--space-4);
   }
 }
+
+.schedule-editor { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.schedule-editor summary { cursor: pointer; }
+.schedule-editor fieldset { margin: 10px 0; border: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.schedule-days { display: flex; gap: 3px; width: 100%; }
+.schedule-days button { padding: 5px; }
+.schedule-days button[aria-pressed="true"] { background: var(--copper); color: var(--brand-ink); }
+.schedule-editor input[type="time"] { width: 115px; margin: 4px; }
