@@ -237,6 +237,137 @@ mod linux {
         }
     }
 
+    // WebKitPermissionState's ABI values, available since 2.40.
+    // WebKit may normalize Denied to Prompt in JS before capture is requested;
+    // return the actual policy here and let the engine apply its rules.
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    #[repr(i32)]
+    enum QueryState {
+        Granted = 0,
+        Denied = 1,
+        Prompt = 2,
+    }
+
+    fn query_kind(name: &str) -> Option<PermissionKind> {
+        match name {
+            "microphone" | "camera" => Some(PermissionKind::Media),
+            "geolocation" => Some(PermissionKind::Location),
+            "screen" | "display-capture" => Some(PermissionKind::Screen),
+            _ => None,
+        }
+    }
+
+    fn query_state(setting: super::PermissionDecision, session_granted: bool) -> QueryState {
+        match setting {
+            super::PermissionDecision::Allow => QueryState::Granted,
+            super::PermissionDecision::Deny => QueryState::Denied,
+            super::PermissionDecision::Ask if session_granted => QueryState::Granted,
+            super::PermissionDecision::Ask => QueryState::Prompt,
+        }
+    }
+
+    fn install_query_handler(view: &webkit2gtk::WebView, app: AppHandle, service_id: String) {
+        use std::ffi::{CStr, c_char, c_void};
+        use webkit2gtk::glib::{ObjectExt, ToValue, subclass::SignalId, translate::ToGlibPtr};
+
+        // The AppImage can run WebKit < 2.40. Neither the signal nor these
+        // symbols may exist there: never introduce a hard ELF dependency,
+        // even with immediate binding (-z now). WebKit is already loaded
+        // for the view and remains loaded for the lifetime of this closure.
+        if SignalId::lookup("query-permission-state", view.type_()).is_none() {
+            return;
+        }
+        #[link(name = "dl")]
+        unsafe extern "C" {
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        }
+        type GetName = unsafe extern "C" fn(*mut c_void) -> *const c_char;
+        type Finish = unsafe extern "C" fn(*mut c_void, i32);
+        let (get_name, finish): (GetName, Finish) = unsafe {
+            let name = dlsym(
+                std::ptr::null_mut(),
+                c"webkit_permission_state_query_get_name".as_ptr(),
+            );
+            let finish = dlsym(
+                std::ptr::null_mut(),
+                c"webkit_permission_state_query_finish".as_ptr(),
+            );
+            if name.is_null() || finish.is_null() {
+                return;
+            }
+            (
+                std::mem::transmute::<*mut c_void, GetName>(name),
+                std::mem::transmute::<*mut c_void, Finish>(finish),
+            )
+        };
+        view.connect_local("query-permission-state", false, move |values| {
+            // WebKitPermissionStateQuery is a boxed type, not a GObject.
+            // Borrow it only during this synchronous signal; finish exactly
+            // once for recognized names. Policy deliberately covers all
+            // origins/frames in this service, like permission-request.
+            let handled = unsafe {
+                let query =
+                    webkit2gtk::glib::gobject_ffi::g_value_get_boxed(values[1].to_glib_none().0);
+                if query.is_null() {
+                    return Some(false.to_value());
+                }
+                let name = get_name(query);
+                if name.is_null() {
+                    return Some(false.to_value());
+                }
+                let name = CStr::from_ptr(name).to_string_lossy();
+                let state = if name == "notifications" {
+                    Some(QueryState::Granted) // inject.js Notification shim
+                } else {
+                    query_kind(&name).map(|kind| {
+                        let granted = kind == PermissionKind::Media
+                            && GRANTED.with(|cell| cell.borrow().contains(&service_id));
+                        query_state(super::decide(&app, &service_id, kind), granted)
+                    })
+                };
+                if let Some(state) = state {
+                    finish(query, state as i32);
+                    true
+                } else {
+                    false
+                }
+            };
+            Some(handled.to_value())
+        });
+    }
+
+    #[cfg(test)]
+    mod query_tests {
+        use super::*;
+        use crate::config::PermissionDecision::{Allow, Ask, Deny};
+
+        #[test]
+        fn names_map_to_service_policy() {
+            for (name, kind) in [
+                ("microphone", PermissionKind::Media),
+                ("camera", PermissionKind::Media),
+                ("geolocation", PermissionKind::Location),
+                ("screen", PermissionKind::Screen),
+                ("display-capture", PermissionKind::Screen),
+            ] {
+                assert_eq!(query_kind(name), Some(kind));
+            }
+            for name in ["notifications", "clipboard-read", "unknown", "Camera", ""] {
+                assert_eq!(query_kind(name), None);
+            }
+        }
+
+        #[test]
+        fn settings_and_session_grants_map_to_states() {
+            for granted in [false, true] {
+                assert_eq!(query_state(Allow, granted), QueryState::Granted);
+                assert_eq!(query_state(Deny, granted), QueryState::Denied);
+            }
+            assert_eq!(query_state(Ask, false), QueryState::Prompt);
+            assert_eq!(query_state(Ask, true), QueryState::Granted);
+        }
+    }
+
     pub fn install(app: &AppHandle, service_id: &str, webview: &tauri::Webview) {
         let app = app.clone();
         let service_id = service_id.to_string();
@@ -248,6 +379,7 @@ mod linux {
                 settings.set_enable_mediasource(true);
                 settings.set_enable_media_capabilities(true);
             }
+            install_query_handler(&view, app.clone(), service_id.clone());
             view.connect_permission_request(move |_view, request| {
                 handle(&app, &service_id, request)
             });
