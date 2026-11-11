@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-service-media-permission"
+description = "Enables the set_service_media_permission command without any pre-configured scope."
+commands.allow = ["set_service_media_permission"]
+
+[[permission]]
+identifier = "deny-set-service-media-permission"
+description = "Denies the set_service_media_permission command without any pre-configured scope."
+commands.deny = ["set_service_media_permission"]

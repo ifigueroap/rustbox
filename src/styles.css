@@ -225,14 +225,25 @@ button:disabled {
   background: transparent;
 }
 
-.ws:hover,
-.ws.drop-target {
+.ws:hover {
   background: var(--hover);
 }
 
 .ws.active {
   background: var(--active);
   box-shadow: inset 3px 0 0 var(--ws-color, var(--copper));
+}
+
+.ws.dragging {
+  opacity: 0.5;
+}
+
+.ws.drop-target-before {
+  box-shadow: inset 0 2px 0 0 var(--copper);
+}
+
+.ws.drop-target-after {
+  box-shadow: inset 0 -2px 0 0 var(--copper);
 }
 
 .ws-mark {
@@ -674,9 +685,22 @@ button:disabled {
   padding: 0;
 }
 
-.svc:hover,
-.svc.drop-target {
+.svc:hover {
   background: var(--hover);
+}
+
+.svc.dragging {
+  opacity: 0.5;
+}
+
+.svc.drop-target-before,
+.svc.active.drop-target-before {
+  box-shadow: inset 0 2px 0 0 var(--copper);
+}
+
+.svc.drop-target-after,
+.svc.active.drop-target-after {
+  box-shadow: inset 0 -2px 0 0 var(--copper);
 }
 
 .svc.active {
@@ -1099,7 +1123,8 @@ input.switch:disabled {
 /* The confirm dialog fills the viewport so a backdrop click lands on the
    dialog element itself (WebKit does not retarget ::backdrop clicks). The
    card in the middle is the visible prompt. */
-#confirm-dialog {
+#confirm-dialog,
+#media-permission-dialog {
   inset: 0;
   width: auto;
   height: auto;
@@ -1109,14 +1134,16 @@ input.switch:disabled {
   background: transparent;
 }
 
-#confirm-dialog[open] {
+#confirm-dialog[open],
+#media-permission-dialog[open] {
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
 }
 
-#confirm-form.manager-card {
+#confirm-form.manager-card,
+#media-permission-form.manager-card {
   gap: 0;
   padding: 0;
   overflow: hidden;
@@ -1124,20 +1151,24 @@ input.switch:disabled {
   max-height: calc(100vh - var(--space-6) * 2);
 }
 
-#confirm-form .manager-head {
+#confirm-form .manager-head,
+#media-permission-form .manager-head {
   padding: var(--space-5) var(--space-5) 0;
 }
 
-#confirm-form .dialog-body {
+#confirm-form .dialog-body,
+#media-permission-form .dialog-body {
   padding-top: var(--space-4);
 }
 
-#confirm-form .dialog-footer {
+#confirm-form .dialog-footer,
+#media-permission-form .dialog-footer {
   flex: none;
   padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
-#confirm-message {
+#confirm-message,
+#media-permission-message {
   margin: 0;
   white-space: pre-wrap;
   color: var(--text);
@@ -2211,4 +2242,14 @@ button:disabled,
 
 #hibernate-workspaces-row[hidden] {
   display: none;
+}
+
+/* Keep row gestures in the shell instead of starting scrolling or image drags. */
+.svc, .ws {
+  touch-action: none;
+  user-select: none;
+}
+.svc img, .ws img {
+  pointer-events: none;
+  -webkit-user-drag: none;
 }

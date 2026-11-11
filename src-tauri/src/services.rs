@@ -29,6 +29,7 @@ pub struct RuntimeState {
     pub workspace_icons: Mutex<HashMap<String, String>>,
     pub ops: Mutex<()>,
     pub page_tools: Mutex<crate::page_tools::PageToolsState>,
+    pub media_requests: Mutex<HashMap<String, crate::media_permission::PendingMediaRequest>>,
     hibernation: Mutex<HibernationState>,
 }
 
@@ -54,6 +55,7 @@ pub struct ServiceDto {
     pub workspaces: Vec<String>,
     pub all_workspaces: bool,
     pub never_hibernate: bool,
+    pub media_permission: crate::config::MediaPermission,
     pub hibernated: bool,
     /// True when workspace Do not disturb silences this service.
     pub workspace_silenced: bool,
@@ -177,6 +179,7 @@ impl RuntimeState {
             workspace_icons: Mutex::new(HashMap::new()),
             ops: Mutex::new(()),
             page_tools: Mutex::new(Default::default()),
+            media_requests: Mutex::new(HashMap::new()),
             hibernation: Mutex::new(HibernationState::default()),
         })
     }
@@ -219,6 +222,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 workspaces: service.workspaces.clone(),
                 all_workspaces: service.all_workspaces,
                 never_hibernate: service.never_hibernate,
+                media_permission: service.media_permission,
                 hibernated: hibernated.contains(&service.id),
                 workspace_silenced: workspace_dnd,
                 raw_unread: count,
@@ -1273,6 +1277,7 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
             })
             .map_err(|err| err.to_string())?;
     }
+    crate::media_permission::install(app, &service.id, &webview);
     let _ = webview;
     let state = app.state::<RuntimeState>();
     let mut hibernation = lock(&state.hibernation);
@@ -1392,6 +1397,9 @@ fn close_webview(app: &AppHandle, id: &str) -> Result<(), String> {
         crate::page_tools::clear_find(app);
     }
     if let Some(webview) = app.get_webview(&label_for(id)) {
+        // Nothing will ever answer a camera/microphone prompt for a webview
+        // that is about to stop existing.
+        crate::media_permission::deny_pending_for_service(app, id);
         // Release the host's GTK reference on the UI thread before Wry destroys
         // the widget. Both operations are queued in order by the dispatcher.
         #[cfg(target_os = "linux")]

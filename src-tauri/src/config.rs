@@ -58,6 +58,18 @@ pub enum LanguagePreference {
     Es,
 }
 
+/// A service's remembered microphone/camera decision on Linux and Windows.
+/// `Ask` is the default for older files; the shell prompts for each request.
+/// macOS retains the operating system permission flow.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaPermission {
+    #[default]
+    Ask,
+    Allow,
+    Deny,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Preset {
     pub id: &'static str,
@@ -266,6 +278,9 @@ pub struct Service {
     /// so old configs keep their current behavior once hibernation ships.
     #[serde(default)]
     pub never_hibernate: bool,
+    /// The remembered answer for this service's camera/microphone requests.
+    #[serde(default)]
+    pub media_permission: MediaPermission,
 }
 
 impl Service {
@@ -705,6 +720,7 @@ impl Config {
             all_workspaces: false,
             zoom: default_zoom(),
             never_hibernate: false,
+            media_permission: MediaPermission::default(),
         };
         self.services.push(service.clone());
         Ok(service)
@@ -731,6 +747,7 @@ impl Config {
             all_workspaces,
             zoom: default_zoom(),
             never_hibernate: false,
+            media_permission: MediaPermission::default(),
         };
         self.services.push(service.clone());
         Ok(service)
@@ -1976,6 +1993,57 @@ mod tests {
         assert!(!preset.notify_in_dnd);
         let custom = add_service(&mut config, "Mail", &[]);
         assert!(!custom.notify_in_dnd);
+    }
+
+    #[test]
+    fn media_permission_defaults_to_ask_and_round_trips_once_set() {
+        // A config saved before microphone/camera prompting existed has no
+        // field at all; it must load as `Ask` without granting access.
+        let bare: Config = serde_json::from_str(
+            r#"{"version":1,"services":[{"id":"a","name":"Slack","url":"https://app.slack.com/"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(bare.services.len(), 1, "migration must not drop services");
+        assert_eq!(bare.services[0].media_permission, MediaPermission::Ask);
+
+        let mut config = bare;
+        config.services[0].media_permission = MediaPermission::Allow;
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(
+            json.contains("\"mediaPermission\":\"allow\"")
+                || json.contains("\"mediaPermission\": \"allow\"")
+        );
+        let reloaded: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.services[0].media_permission, MediaPermission::Allow);
+    }
+
+    #[test]
+    fn media_permissions_survive_legacy_adoption_and_disk_storage() {
+        let dir = std::env::temp_dir().join(format!("rustbox-media-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join("legacy.json");
+        let current = dir.join("config.json");
+        std::fs::write(&legacy, r#"{"version":1,"services":[{"id":"a","name":"Slack","url":"https://app.slack.com/"}]}"#).unwrap();
+        let (mut config, _) = Config::load_adopting_legacy(&current, &[legacy]);
+        assert_eq!(config.services[0].id, "a");
+        assert_eq!(config.services[0].media_permission, MediaPermission::Ask);
+        for permission in [MediaPermission::Allow, MediaPermission::Deny, MediaPermission::Ask] {
+            config.services[0].media_permission = permission;
+            config.save(&current).unwrap();
+            let restored = Config::load_or_default(&current);
+            assert_eq!(restored.services[0].media_permission, permission);
+            assert_eq!(restored.services[0].id, "a");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn new_services_default_to_asking_for_media_permission() {
+        let mut config = config_with_workspaces(&["Work"]);
+        let preset = config.add_preset("slack", None).unwrap();
+        assert_eq!(preset.media_permission, MediaPermission::Ask);
+        let custom = add_service(&mut config, "Mail", &[]);
+        assert_eq!(custom.media_permission, MediaPermission::Ask);
     }
 
     #[test]

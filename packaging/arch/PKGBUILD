@@ -32,7 +32,9 @@ depends=(
   gst-plugins-good
 )
 optdepends=(
-  'gst-plugins-bad: extra codecs and WebRTC'
+  'gst-plugins-bad: extra codecs and WebRTC plugins'
+  'libnice: ICE transport for WebRTC calls'
+  'gst-plugin-pipewire: PipeWire camera and media capture'
   'gst-libav: H.264/AAC and other codecs for voice notes and video'
 )
 makedepends=(
