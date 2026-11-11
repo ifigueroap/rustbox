@@ -1124,7 +1124,7 @@ input.switch:disabled {
    dialog element itself (WebKit does not retarget ::backdrop clicks). The
    card in the middle is the visible prompt. */
 #confirm-dialog,
-#media-permission-dialog {
+#permission-dialog {
   inset: 0;
   width: auto;
   height: auto;
@@ -1135,7 +1135,7 @@ input.switch:disabled {
 }
 
 #confirm-dialog[open],
-#media-permission-dialog[open] {
+#permission-dialog[open] {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1143,7 +1143,7 @@ input.switch:disabled {
 }
 
 #confirm-form.manager-card,
-#media-permission-form.manager-card {
+#permission-form.manager-card {
   gap: 0;
   padding: 0;
   overflow: hidden;
@@ -1152,23 +1152,23 @@ input.switch:disabled {
 }
 
 #confirm-form .manager-head,
-#media-permission-form .manager-head {
+#permission-form .manager-head {
   padding: var(--space-5) var(--space-5) 0;
 }
 
 #confirm-form .dialog-body,
-#media-permission-form .dialog-body {
+#permission-form .dialog-body {
   padding-top: var(--space-4);
 }
 
 #confirm-form .dialog-footer,
-#media-permission-form .dialog-footer {
+#permission-form .dialog-footer {
   flex: none;
   padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
 #confirm-message,
-#media-permission-message {
+#permission-message {
   margin: 0;
   white-space: pre-wrap;
   color: var(--text);
@@ -2253,3 +2253,7 @@ button:disabled,
   pointer-events: none;
   -webkit-user-drag: none;
 }
+
+.permissions-section { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.permission-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.permission-row select { width: auto; min-width: 145px; }

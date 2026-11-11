@@ -6,5 +6,7 @@
   <string>A service you add, such as Slack, uses the microphone for calls and huddles.</string>
   <key>NSCameraUsageDescription</key>
   <string>A service you add, such as Slack, uses the camera for video calls and huddles.</string>
+  <key>NSLocationUsageDescription</key>
+  <string>A service you add can request your location to show local information.</string>
 </dict>
 </plist>

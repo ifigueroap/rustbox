@@ -58,12 +58,12 @@ pub enum LanguagePreference {
     Es,
 }
 
-/// A service's remembered microphone/camera decision on Linux and Windows.
+/// A service's remembered permission decision on Linux and Windows.
 /// `Ask` is the default for older files; the shell prompts for each request.
 /// macOS retains the operating system permission flow.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum MediaPermission {
+pub enum PermissionDecision {
     #[default]
     Ask,
     Allow,
@@ -233,7 +233,7 @@ impl Workspace {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "ServiceWire")]
 pub struct Service {
     pub id: String,
     pub name: String,
@@ -278,12 +278,107 @@ pub struct Service {
     /// so old configs keep their current behavior once hibernation ships.
     #[serde(default)]
     pub never_hibernate: bool,
-    /// The remembered answer for this service's camera/microphone requests.
+    /// Per-kind decisions; absent kinds ask. Notifications use their existing switch.
     #[serde(default)]
-    pub media_permission: MediaPermission,
+    pub permissions: std::collections::BTreeMap<PermissionKind, PermissionDecision>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceWire {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default = "default_color")]
+    pub color: String,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default = "default_true")]
+    pub use_chrome_user_agent: bool,
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Page audio for this service. Do not disturb mutes it anyway.
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
+    /// Unread badges and desktop notifications. Do not disturb hides them anyway.
+    #[serde(default = "default_true")]
+    pub notifications_enabled: bool,
+    /// Lets this service's native notifications and sound through while Do
+    /// not disturb (global or every workspace it belongs to) is active.
+    /// Badges stay governed by `notifications_enabled` and Do not disturb
+    /// regardless. Off by default so old configs keep their current behavior.
+    #[serde(default)]
+    pub notify_in_dnd: bool,
+    /// None preserves the platform default; explicit choices apply on creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spellcheck_enabled: Option<bool>,
+    /// Workspace ids this service is listed under.
+    #[serde(default)]
+    pub workspaces: Vec<String>,
+    /// Shown in every workspace, including ones created later.
+    #[serde(default)]
+    pub all_workspaces: bool,
+    /// Page zoom, re-applied whenever this service's webview is created. One
+    /// of `zoom::STEPS`. Missing on older files, which means 1.0, and left
+    /// out of the saved file again while it stays at 1.0.
+    #[serde(default = "default_zoom", skip_serializing_if = "is_default_zoom")]
+    pub zoom: f64,
+    /// Exempts this service from the idle-hibernation timer. Off by default
+    /// so old configs keep their current behavior once hibernation ships.
+    #[serde(default)]
+    pub never_hibernate: bool,
+    /// Per-kind decisions; absent kinds ask. Notifications use their existing switch.
+    #[serde(default)]
+    pub permissions: std::collections::BTreeMap<PermissionKind, PermissionDecision>,
+    #[serde(default)]
+    media_permission: Option<PermissionDecision>,
+}
+
+impl From<ServiceWire> for Service {
+    fn from(mut wire: ServiceWire) -> Self {
+        if let Some(legacy) = wire.media_permission {
+            wire.permissions
+                .entry(PermissionKind::Media)
+                .or_insert(legacy);
+        }
+        Self {
+            id: wire.id,
+            name: wire.name,
+            url: wire.url,
+            icon: wire.icon,
+            color: wire.color,
+            user_agent: wire.user_agent,
+            use_chrome_user_agent: wire.use_chrome_user_agent,
+            preset: wire.preset,
+            sound_enabled: wire.sound_enabled,
+            notifications_enabled: wire.notifications_enabled,
+            notify_in_dnd: wire.notify_in_dnd,
+            spellcheck_enabled: wire.spellcheck_enabled,
+            workspaces: wire.workspaces,
+            all_workspaces: wire.all_workspaces,
+            zoom: wire.zoom,
+            never_hibernate: wire.never_hibernate,
+            permissions: wire.permissions,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionKind {
+    Media,
+    Screen,
+    Location,
+    Clipboard,
 }
 
 impl Service {
+    pub fn permission(&self, kind: PermissionKind) -> PermissionDecision {
+        self.permissions.get(&kind).copied().unwrap_or_default()
+    }
+
     pub fn resolved_user_agent(&self) -> Option<String> {
         effective_user_agent(self.use_chrome_user_agent, self.user_agent.as_deref())
     }
@@ -720,7 +815,7 @@ impl Config {
             all_workspaces: false,
             zoom: default_zoom(),
             never_hibernate: false,
-            media_permission: MediaPermission::default(),
+            permissions: Default::default(),
         };
         self.services.push(service.clone());
         Ok(service)
@@ -747,7 +842,7 @@ impl Config {
             all_workspaces,
             zoom: default_zoom(),
             never_hibernate: false,
-            media_permission: MediaPermission::default(),
+            permissions: Default::default(),
         };
         self.services.push(service.clone());
         Ok(service)
@@ -2004,17 +2099,53 @@ mod tests {
         )
         .unwrap();
         assert_eq!(bare.services.len(), 1, "migration must not drop services");
-        assert_eq!(bare.services[0].media_permission, MediaPermission::Ask);
+        assert_eq!(
+            bare.services[0].permission(PermissionKind::Media),
+            PermissionDecision::Ask
+        );
 
         let mut config = bare;
-        config.services[0].media_permission = MediaPermission::Allow;
+        config.services[0]
+            .permissions
+            .insert(PermissionKind::Media, PermissionDecision::Allow);
         let json = serde_json::to_string(&config).unwrap();
-        assert!(
-            json.contains("\"mediaPermission\":\"allow\"")
-                || json.contains("\"mediaPermission\": \"allow\"")
-        );
+        assert!(json.contains("\"media\":\"allow\"") || json.contains("\"media\": \"allow\""));
         let reloaded: Config = serde_json::from_str(&json).unwrap();
-        assert_eq!(reloaded.services[0].media_permission, MediaPermission::Allow);
+        assert_eq!(
+            reloaded.services[0].permission(PermissionKind::Media),
+            PermissionDecision::Allow
+        );
+    }
+
+    #[test]
+    fn legacy_permission_migrates_without_overriding_explicit_map() {
+        for legacy in ["ask", "allow", "deny"] {
+            let json = format!(
+                r#"{{"version":1,"services":[{{"id":"stable","name":"Service","url":"https://example.com","mediaPermission":"{legacy}"}}]}}"#
+            );
+            let config: Config = serde_json::from_str(&json).unwrap();
+            let service = &config.services[0];
+            assert_eq!(
+                serde_json::to_value(service.permission(PermissionKind::Media)).unwrap(),
+                legacy
+            );
+            assert_eq!(
+                service.permission(PermissionKind::Screen),
+                PermissionDecision::Ask
+            );
+            let saved = serde_json::to_value(&config).unwrap();
+            assert!(saved["services"][0].get("mediaPermission").is_none());
+            assert_eq!(saved["services"][0]["permissions"]["media"], legacy);
+            assert_eq!(config.version, 1);
+        }
+        let config: Config = serde_json::from_str(r#"{"version":1,"services":[{"id":"stable","name":"Service","url":"https://example.com","mediaPermission":"allow","permissions":{"media":"deny","screen":"allow","location":"deny","clipboard":"ask"}}]}"#).unwrap();
+        assert_eq!(
+            config.services[0].permission(PermissionKind::Media),
+            PermissionDecision::Deny
+        );
+        let restored: Config =
+            serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+        assert_eq!(restored, config);
     }
 
     #[test]
@@ -2026,12 +2157,24 @@ mod tests {
         std::fs::write(&legacy, r#"{"version":1,"services":[{"id":"a","name":"Slack","url":"https://app.slack.com/"}]}"#).unwrap();
         let (mut config, _) = Config::load_adopting_legacy(&current, &[legacy]);
         assert_eq!(config.services[0].id, "a");
-        assert_eq!(config.services[0].media_permission, MediaPermission::Ask);
-        for permission in [MediaPermission::Allow, MediaPermission::Deny, MediaPermission::Ask] {
-            config.services[0].media_permission = permission;
+        assert_eq!(
+            config.services[0].permission(PermissionKind::Media),
+            PermissionDecision::Ask
+        );
+        for permission in [
+            PermissionDecision::Allow,
+            PermissionDecision::Deny,
+            PermissionDecision::Ask,
+        ] {
+            config.services[0]
+                .permissions
+                .insert(PermissionKind::Media, permission);
             config.save(&current).unwrap();
             let restored = Config::load_or_default(&current);
-            assert_eq!(restored.services[0].media_permission, permission);
+            assert_eq!(
+                restored.services[0].permission(PermissionKind::Media),
+                permission
+            );
             assert_eq!(restored.services[0].id, "a");
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -2041,9 +2184,15 @@ mod tests {
     fn new_services_default_to_asking_for_media_permission() {
         let mut config = config_with_workspaces(&["Work"]);
         let preset = config.add_preset("slack", None).unwrap();
-        assert_eq!(preset.media_permission, MediaPermission::Ask);
+        assert_eq!(
+            preset.permission(PermissionKind::Media),
+            PermissionDecision::Ask
+        );
         let custom = add_service(&mut config, "Mail", &[]);
-        assert_eq!(custom.media_permission, MediaPermission::Ask);
+        assert_eq!(
+            custom.permission(PermissionKind::Media),
+            PermissionDecision::Ask
+        );
     }
 
     #[test]

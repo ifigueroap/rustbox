@@ -108,7 +108,7 @@ export function assertPkgbuild(content, { version } = {}) {
     }
   }
   if (!/^optdepends=\(/m.test(content)) problems.push("optdepends");
-  for (const pkg of ["gst-plugins-bad", "libnice", "gst-plugin-pipewire", "gst-libav"]) {
+  for (const pkg of ["gst-plugins-bad", "libnice", "gst-plugin-pipewire", "gst-libav", "geoclue", "xdg-desktop-portal", "pipewire"]) {
     if (!new RegExp(`^\\s+'${pkg.replace(/[.+]/g, "\\$&")}: `, "m").test(content)) {
       problems.push(`optdepends ${pkg}`);
     }

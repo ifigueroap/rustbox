@@ -32,6 +32,9 @@ depends=(
   gst-plugins-good
 )
 optdepends=(
+  'geoclue: location services for WebKitGTK'
+  'xdg-desktop-portal: screen sharing portal'
+  'pipewire: screen sharing media transport'
   'gst-plugins-bad: extra codecs and WebRTC plugins'
   'libnice: ICE transport for WebRTC calls'
   'gst-plugin-pipewire: PipeWire camera and media capture'
