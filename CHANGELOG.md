@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/ifigueroap/rustbox/compare/v0.12.0...v0.12.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **linux:** keep service webview input aligned with what is drawn ([#51](https://github.com/ifigueroap/rustbox/issues/51)) ([8528428](https://github.com/ifigueroap/rustbox/commit/8528428a7a3435eeec26f499aafe7f0637443294))
+* restore sidebar drag reordering and in-app camera/microphone prompts ([#52](https://github.com/ifigueroap/rustbox/issues/52)) ([03ce02c](https://github.com/ifigueroap/rustbox/commit/03ce02cc2c579081f3bf96b010a081372c1cea42))
+
 ## [0.12.0](https://github.com/ifigueroap/rustbox/compare/v0.11.1...v0.12.0) (2026-11-10)
 
 
