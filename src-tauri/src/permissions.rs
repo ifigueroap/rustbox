@@ -1,69 +1,46 @@
-//! In-app microphone/camera prompting for a service's webview.
-//!
-//! Without this module nothing ever answers the page's `getUserMedia`
-//! request:
-//!
-//! - **Linux (WebKitGTK)**: `webkit_web_view_new` does not enable the media
-//!   stream/WebRTC settings by default, and nothing connects to the
-//!   `permission-request` signal. WebKit's documented default action for an
-//!   unhandled `WebKitUserMediaPermissionRequest` is to deny it, so a Slack
-//!   huddle never even shows a prompt; it just never gets a microphone.
-//! - **Windows (WebView2)**: with no `PermissionRequested` handler attached,
-//!   WebView2 falls back to its own native permission bar, which is the
-//!   "native dialog" this module replaces with an in-app one.
-//! - **macOS (WKWebView)**: wry's `WKUIDelegate` grants capture requests
-//!   automatically when no permission handler is installed (see
-//!   `requestMediaCapturePermissionForOrigin:` in wry's
-//!   `wry_web_view_ui_delegate.rs`), so the OS usage prompt still requires the
-//!   `NSMicrophoneUsageDescription`/`NSCameraUsageDescription` Info.plist
-//!   entries before capture can proceed. Implementing a Rustbox-styled async prompt on macOS
-//!   would mean replacing wry's `WKUIDelegate`, which wry owns; that is not
-//!   done here, so this module installs nothing on macOS.
-//!
-//! The remembered answer lives on `Service::media_permission` (`Ask`,
-//! `Allow`, or `Deny`). `Ask` is answered by emitting `media-permission-request`
-//! to the shell and holding the native request/deferral until
-//! `answer_media_permission` (see `lib.rs`) resolves it, or until the
-//! service's webview closes first, which denies it.
+//! Per-service native permissions. Requests stay on the platform UI thread;
+//! closing a service denies its pending requests. macOS keeps wry/system handling.
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::config::MediaPermission;
+use crate::config::{PermissionDecision, PermissionKind};
 use crate::services::{RuntimeState, lock};
 
 /// What the shell needs to show a prompt and later resolve it. The native
 /// request/deferral itself is never stored here: it is not `Send`, so it
 /// stays on the platform UI thread (see the `linux`/`windows` submodules
 /// below), keyed by the same request id.
-pub struct PendingMediaRequest {
+pub struct PendingPermissionRequest {
     pub service_id: String,
+    pub kind: PermissionKind,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MediaPermissionRequestEvent {
+struct PermissionRequestEvent {
     request_id: String,
     service_id: String,
     service_name: String,
+    kind: PermissionKind,
     audio: bool,
     video: bool,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MediaPermissionResolvedEvent {
+struct PermissionResolvedEvent {
     request_id: String,
 }
 
-fn decide(app: &AppHandle, service_id: &str) -> MediaPermission {
+fn decide(app: &AppHandle, service_id: &str, kind: PermissionKind) -> PermissionDecision {
     let state = app.state::<RuntimeState>();
     let config = lock(&state.config);
     config
         .services
         .iter()
         .find(|service| service.id == service_id)
-        .map(|service| service.media_permission)
+        .map(|service| service.permission(kind))
         .unwrap_or_default()
 }
 
@@ -71,7 +48,13 @@ fn decide(app: &AppHandle, service_id: &str) -> MediaPermission {
 /// the request id the caller should hold its native request/deferral under,
 /// or `None` if the service disappeared (removed) between the request
 /// firing and this call, in which case the caller should deny immediately.
-fn announce(app: &AppHandle, service_id: &str, audio: bool, video: bool) -> Option<String> {
+fn announce(
+    app: &AppHandle,
+    service_id: &str,
+    kind: PermissionKind,
+    audio: bool,
+    video: bool,
+) -> Option<String> {
     let state = app.state::<RuntimeState>();
     let service_name = lock(&state.config)
         .services
@@ -79,31 +62,33 @@ fn announce(app: &AppHandle, service_id: &str, audio: bool, video: bool) -> Opti
         .find(|service| service.id == service_id)
         .map(|service| service.name.clone())?;
     let request_id = uuid::Uuid::new_v4().to_string();
-    lock(&state.media_requests).insert(
+    lock(&state.permission_requests).insert(
         request_id.clone(),
-        PendingMediaRequest {
+        PendingPermissionRequest {
             service_id: service_id.to_string(),
+            kind,
         },
     );
     let emitted = app.emit_to(
         "main",
-        "media-permission-request",
-        MediaPermissionRequestEvent {
+        "permission-request",
+        PermissionRequestEvent {
             request_id: request_id.clone(),
             service_id: service_id.to_string(),
             service_name,
+            kind,
             audio,
             video,
         },
     );
     if emitted.is_err() {
-        lock(&state.media_requests).remove(&request_id);
+        lock(&state.permission_requests).remove(&request_id);
         return None;
     }
     Some(request_id)
 }
 
-/// `answer_media_permission` command target: resolves a pending request the
+/// `answer_permission` command target: resolves a pending request the
 /// shell's dialog just answered. A missing id (already resolved, or the
 /// service was removed first) is a no-op, not an error.
 pub fn answer(
@@ -116,7 +101,7 @@ pub fn answer(
     // Atomically claim the answer before saving. A simultaneous close can
     // deny only requests that have not already been answered. Never wait on
     // `ops` here: maintenance can hold it while awaiting the native UI thread.
-    let Some(pending) = lock(&state.media_requests).remove(request_id) else {
+    let Some(pending) = lock(&state.permission_requests).remove(request_id) else {
         return Ok(());
     };
     let service_id = pending.service_id;
@@ -127,11 +112,14 @@ pub fn answer(
                 .iter_mut()
                 .find(|service| service.id == service_id)
             {
-                service.media_permission = if allow {
-                    MediaPermission::Allow
-                } else {
-                    MediaPermission::Deny
-                };
+                service.permissions.insert(
+                    pending.kind,
+                    if allow {
+                        PermissionDecision::Allow
+                    } else {
+                        PermissionDecision::Deny
+                    },
+                );
             }
             Ok(())
         })
@@ -141,8 +129,8 @@ pub fn answer(
     resolve_native(app, request_id, allow);
     let _ = app.emit_to(
         "main",
-        "media-permission-resolved",
-        MediaPermissionResolvedEvent {
+        "permission-resolved",
+        PermissionResolvedEvent {
             request_id: request_id.to_string(),
         },
     );
@@ -150,23 +138,23 @@ pub fn answer(
 }
 
 /// Denies every request still pending for a service, without touching its
-/// `media_permission` setting. Called right before that service's webview is
+/// `permissions` settings. Called right before that service's webview is
 /// destroyed (removed, hibernated, logged out, or recreated), since nothing
 /// will ever answer a request whose webview is gone.
 pub fn deny_pending_for_service(app: &AppHandle, service_id: &str) {
     let state = app.state::<RuntimeState>();
-    let ids: Vec<String> = lock(&state.media_requests)
+    let ids: Vec<String> = lock(&state.permission_requests)
         .iter()
         .filter(|(_, pending)| pending.service_id == service_id)
         .map(|(id, _)| id.clone())
         .collect();
     for id in ids {
-        lock(&state.media_requests).remove(&id);
+        lock(&state.permission_requests).remove(&id);
         resolve_native(app, &id, false);
         let _ = app.emit_to(
             "main",
-            "media-permission-resolved",
-            MediaPermissionResolvedEvent { request_id: id },
+            "permission-resolved",
+            PermissionResolvedEvent { request_id: id },
         );
     }
     #[cfg(target_os = "linux")]
@@ -211,10 +199,12 @@ mod linux {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
+    use crate::config::PermissionKind;
     use tauri::AppHandle;
     use webkit2gtk::{
-        DeviceInfoPermissionRequest, PermissionRequest, PermissionRequestExt, SettingsExt,
-        UserMediaPermissionRequest, UserMediaPermissionRequestExt, WebViewExt,
+        DeviceInfoPermissionRequest, GeolocationPermissionRequest, PermissionRequest,
+        PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+        UserMediaPermissionRequestExt, WebViewExt,
     };
 
     // Held only on the GTK/WebKit main thread, which is also the only thread
@@ -224,7 +214,7 @@ mod linux {
     // resolved immediately, never held for an `Ask` prompt.
     thread_local! {
         static GRANTED: RefCell<std::collections::HashSet<String>> = RefCell::new(Default::default());
-        static PENDING: RefCell<HashMap<String, (String, UserMediaPermissionRequest)>> =
+        static PENDING: RefCell<HashMap<String, (String, PermissionKind, PermissionRequest)>> =
             RefCell::new(HashMap::new());
     }
 
@@ -233,11 +223,13 @@ mod linux {
     }
 
     pub fn resolve(request_id: &str, allow: bool) {
-        if let Some((service_id, request)) =
+        if let Some((service_id, kind, request)) =
             PENDING.with(|cell| cell.borrow_mut().remove(request_id))
         {
             if allow {
-                GRANTED.with(|cell| cell.borrow_mut().insert(service_id));
+                if kind == PermissionKind::Media {
+                    GRANTED.with(|cell| cell.borrow_mut().insert(service_id));
+                }
                 request.allow()
             } else {
                 request.deny()
@@ -264,24 +256,46 @@ mod linux {
 
     fn handle(app: &AppHandle, service_id: &str, request: &PermissionRequest) -> bool {
         use webkit2gtk::glib::Cast;
-        if let Some(media) = request.downcast_ref::<UserMediaPermissionRequest>() {
-            let audio = media.is_for_audio_device();
-            let video = media.is_for_video_device();
-            if !audio && !video {
-                return false;
-            }
-            match super::decide(app, service_id) {
-                super::MediaPermission::Allow => media.allow(),
-                super::MediaPermission::Deny => media.deny(),
-                super::MediaPermission::Ask => {
-                    match super::announce(app, service_id, audio, video) {
+        let media = request.downcast_ref::<UserMediaPermissionRequest>();
+        let kind = if let Some(media) = media {
+            // The safe wrapper omits this method, but the pinned v2_34+
+            // sys API exposes it (enabled by our v2_38 feature).
+            use webkit2gtk::glib::translate::ToGlibPtr;
+            let display = unsafe {
+                webkit2gtk::ffi::webkit_user_media_permission_is_for_display_device(
+                    media.to_glib_none().0,
+                ) != 0
+            };
+            Some(if display {
+                PermissionKind::Screen
+            } else {
+                PermissionKind::Media
+            })
+        } else if request
+            .downcast_ref::<GeolocationPermissionRequest>()
+            .is_some()
+        {
+            Some(PermissionKind::Location)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            let audio = media.map(|m| m.is_for_audio_device()).unwrap_or(false);
+            let video = media.map(|m| m.is_for_video_device()).unwrap_or(false);
+            match super::decide(app, service_id, kind) {
+                super::PermissionDecision::Allow => request.allow(),
+                super::PermissionDecision::Deny => request.deny(),
+                super::PermissionDecision::Ask => {
+                    match super::announce(app, service_id, kind, audio, video) {
                         Some(request_id) => {
                             PENDING.with(|cell| {
-                                cell.borrow_mut()
-                                    .insert(request_id, (service_id.to_string(), media.clone()));
+                                cell.borrow_mut().insert(
+                                    request_id,
+                                    (service_id.to_string(), kind, request.clone()),
+                                );
                             });
                         }
-                        None => media.deny(),
+                        None => request.deny(),
                     }
                 }
             }
@@ -291,9 +305,9 @@ mod linux {
             // `enumerateDevices()` labels are only useful once a media
             // permission is already granted; asking again here would be a
             // second, redundant prompt for the same access.
-            match super::decide(app, service_id) {
-                super::MediaPermission::Allow => device.allow(),
-                super::MediaPermission::Ask
+            match super::decide(app, service_id, PermissionKind::Media) {
+                super::PermissionDecision::Allow => device.allow(),
+                super::PermissionDecision::Ask
                     if GRANTED.with(|cell| cell.borrow().contains(service_id)) =>
                 {
                     device.allow()
@@ -302,7 +316,8 @@ mod linux {
             }
             return true;
         }
-        false
+        request.deny();
+        true
     }
 }
 
@@ -311,14 +326,16 @@ mod windows {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
+    use crate::config::PermissionKind;
     use tauri::AppHandle;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
-        COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
+        COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
+        COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY, ICoreWebView2_27,
         ICoreWebView2Deferral, ICoreWebView2PermissionRequestedEventArgs,
-        ICoreWebView2PermissionRequestedEventArgs3,
+        ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2ScreenCaptureStartingEventArgs,
     };
-    use webview2_com::PermissionRequestedEventHandler;
+    use webview2_com::{PermissionRequestedEventHandler, ScreenCaptureStartingEventHandler};
 
     /// Held only on the WebView2 UI thread; see the Linux module's `PENDING`
     /// for the same pattern. `args` carries `SetState`, `deferral` is what
@@ -330,9 +347,17 @@ mod windows {
 
     thread_local! {
         static PENDING: RefCell<HashMap<String, Held>> = RefCell::new(HashMap::new());
+        static SCREENS: RefCell<HashMap<String, (ICoreWebView2ScreenCaptureStartingEventArgs, ICoreWebView2Deferral)>> = RefCell::new(HashMap::new());
     }
 
     pub fn resolve(request_id: &str, allow: bool) {
+        if let Some((args, deferral)) = SCREENS.with(|cell| cell.borrow_mut().remove(request_id)) {
+            unsafe {
+                let _ = args.SetCancel(!allow);
+                let _ = deferral.Complete();
+            }
+        }
+
         if let Some(held) = PENDING.with(|cell| cell.borrow_mut().remove(request_id)) {
             let state = if allow {
                 COREWEBVIEW2_PERMISSION_STATE_ALLOW
@@ -354,6 +379,23 @@ mod windows {
             let Ok(view) = (unsafe { controller.CoreWebView2() }) else {
                 return;
             };
+            use windows_core::Interface;
+            if let Ok(screen_view) = view.cast::<ICoreWebView2_27>() {
+                let screen_app = app.clone();
+                let screen_service = service_id.clone();
+                let mut token = 0;
+                let _ = unsafe {
+                    screen_view.add_ScreenCaptureStarting(
+                        &ScreenCaptureStartingEventHandler::create(Box::new(move |_, args| {
+                            if let Some(args) = args {
+                                handle_screen(&screen_app, &screen_service, args);
+                            }
+                            Ok(())
+                        })),
+                        &mut token,
+                    )
+                };
+            }
             let mut token = Default::default();
             let _ = unsafe {
                 view.add_PermissionRequested(
@@ -368,15 +410,59 @@ mod windows {
         });
     }
 
+    fn handle_screen(
+        app: &AppHandle,
+        service_id: &str,
+        args: ICoreWebView2ScreenCaptureStartingEventArgs,
+    ) {
+        // Handled prevents duplicate frame handlers; the system source picker
+        // still chooses what is captured after Rustbox allows the request.
+        let _ = unsafe { args.SetHandled(true) };
+        match super::decide(app, service_id, PermissionKind::Screen) {
+            super::PermissionDecision::Allow => {
+                let _ = unsafe { args.SetCancel(false) };
+            }
+            super::PermissionDecision::Deny => {
+                let _ = unsafe { args.SetCancel(true) };
+            }
+            super::PermissionDecision::Ask => {
+                let Ok(deferral) = (unsafe { args.GetDeferral() }) else {
+                    let _ = unsafe { args.SetCancel(true) };
+                    return;
+                };
+                if let Some(id) =
+                    super::announce(app, service_id, PermissionKind::Screen, false, false)
+                {
+                    SCREENS.with(|cell| cell.borrow_mut().insert(id, (args, deferral)));
+                } else {
+                    let _ = unsafe { args.SetCancel(true) };
+                    let _ = unsafe { deferral.Complete() };
+                }
+            }
+        }
+    }
+
     fn handle(app: &AppHandle, service_id: &str, args: ICoreWebView2PermissionRequestedEventArgs) {
         let mut kind = Default::default();
         if unsafe { args.PermissionKind(&mut kind) }.is_err() {
+            let _ = unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY) };
             return;
         }
-        let (audio, video) = match kind {
-            k if k == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => (true, false),
-            k if k == COREWEBVIEW2_PERMISSION_KIND_CAMERA => (false, true),
-            _ => return,
+        let (kind, audio, video) = match kind {
+            k if k == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => {
+                (PermissionKind::Media, true, false)
+            }
+            k if k == COREWEBVIEW2_PERMISSION_KIND_CAMERA => (PermissionKind::Media, false, true),
+            k if k == COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION => {
+                (PermissionKind::Location, false, false)
+            }
+            k if k == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ => {
+                (PermissionKind::Clipboard, false, false)
+            }
+            _ => {
+                let _ = unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY) };
+                return;
+            }
         };
         // Rustbox owns persistence; WebView2 must not cache an ephemeral
         // answer and bypass Ask or a later settings change.
@@ -384,19 +470,19 @@ mod windows {
         if let Ok(args3) = args.cast::<ICoreWebView2PermissionRequestedEventArgs3>() {
             let _ = unsafe { args3.SetSavesInProfile(false) };
         }
-        match super::decide(app, service_id) {
-            super::MediaPermission::Allow => {
+        match super::decide(app, service_id, kind) {
+            super::PermissionDecision::Allow => {
                 let _ = unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW) };
             }
-            super::MediaPermission::Deny => {
+            super::PermissionDecision::Deny => {
                 let _ = unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY) };
             }
-            super::MediaPermission::Ask => {
+            super::PermissionDecision::Ask => {
                 let Ok(deferral) = (unsafe { args.GetDeferral() }) else {
                     let _ = unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY) };
                     return;
                 };
-                match super::announce(app, service_id, audio, video) {
+                match super::announce(app, service_id, kind, audio, video) {
                     Some(request_id) => {
                         PENDING.with(|cell| {
                             cell.borrow_mut()

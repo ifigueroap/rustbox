@@ -95,7 +95,7 @@ for dep in gst-plugins-base gst-plugins-good; do
     exit 1
   }
 done
-for dep in gst-plugins-bad libnice gst-plugin-pipewire gst-libav; do
+for dep in gst-plugins-bad libnice gst-plugin-pipewire gst-libav geoclue xdg-desktop-portal pipewire; do
   bsdtar -xOf "$PKG" .PKGINFO | grep -q "^optdepend = $dep: " || {
     echo "FAIL: .PKGINFO is missing the $dep optional dependency"
     exit 1

@@ -31,7 +31,8 @@ const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
 const PACKAGE_UPDATE_COMMAND =
   "d=$(mktemp -d) && cd \"$d\" && curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si";
 
-type MediaPermission = "ask" | "allow" | "deny";
+type PermissionKind = "media" | "screen" | "location" | "clipboard";
+type PermissionDecision = "ask" | "allow" | "deny";
 
 interface Service {
   id: string;
@@ -48,7 +49,7 @@ interface Service {
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
   neverHibernate: boolean;
-  mediaPermission: MediaPermission;
+  permissions: Partial<Record<PermissionKind, PermissionDecision>>;
   hibernated: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
@@ -238,7 +239,8 @@ interface ServiceFormSeed {
   /** Only meaningful once a service exists; absent from the "add service" seed. */
   notifyInDnd?: boolean;
   spellcheckEnabled?: boolean;
-  mediaPermission?: MediaPermission;
+  permissions?: Partial<Record<PermissionKind, PermissionDecision>>;
+  notificationsEnabled?: boolean;
 }
 
 interface ServiceForm {
@@ -540,9 +542,9 @@ export function mountShell(): void {
   const shell = document.querySelector<HTMLElement>("#shell");
   if (!shell || shell.dataset.wired === "true") return;
   cancelPointerDrag();
-  mediaPermissionQueue = [];
-  mediaPermissionCurrent = null;
-  mediaPermissionAnswering = false;
+  permissionQueue = [];
+  permissionCurrent = null;
+  permissionAnswering = false;
   languagePreference = "system";
   osLocale = "en";
   reportedLocale = null;
@@ -787,31 +789,34 @@ function wireConfirmDialog(): void {
   );
 }
 
-export interface MediaPermissionRequestPayload {
+export interface PermissionRequestPayload {
   requestId: string;
   serviceId: string;
   serviceName: string;
+  kind: PermissionKind;
   audio: boolean;
   video: boolean;
 }
 
-interface MediaPermissionResolvedPayload {
+interface PermissionResolvedPayload {
   requestId: string;
 }
 
 /** Requests the native side is waiting on. At most one is shown at a time;
  * the rest wait their turn, in case a page asks for the microphone and the
  * camera as two separate native requests (WebView2 fires one per kind). */
-let mediaPermissionQueue: MediaPermissionRequestPayload[] = [];
-let mediaPermissionCurrent: MediaPermissionRequestPayload | null = null;
-let mediaPermissionAnswering = false;
+type QueuedPermissionRequest = PermissionRequestPayload & { requestIds: string[] };
+let permissionQueue: QueuedPermissionRequest[] = [];
+let permissionCurrent: QueuedPermissionRequest | null = null;
+let permissionAnswering = false;
 
-function mediaPermissionKind(payload: MediaPermissionRequestPayload): string {
-  if (payload.audio && payload.video) return t("media.kindBoth");
-  return t(payload.video ? "media.kindVideo" : "media.kindAudio");
+function permissionAction(payload: PermissionRequestPayload): string {
+  if (payload.kind !== "media") return t(`permission.action.${payload.kind}`);
+  if (payload.audio && payload.video) return t("permission.action.media");
+  return t(payload.video ? "permission.action.camera" : "permission.action.microphone");
 }
 
-function mediaPermissionNodes(): {
+function permissionNodes(): {
   dialog: HTMLDialogElement;
   form: HTMLFormElement;
   message: HTMLElement;
@@ -819,91 +824,105 @@ function mediaPermissionNodes(): {
   allow: HTMLButtonElement;
   deny: HTMLButtonElement;
 } | null {
-  const dialog = document.querySelector<HTMLDialogElement>("#media-permission-dialog");
-  const form = document.querySelector<HTMLFormElement>("#media-permission-form");
-  const message = document.querySelector<HTMLElement>("#media-permission-message");
-  const remember = document.querySelector<HTMLInputElement>("#media-permission-remember");
-  const allow = document.querySelector<HTMLButtonElement>("#media-permission-allow");
-  const deny = document.querySelector<HTMLButtonElement>("#media-permission-deny");
+  const dialog = document.querySelector<HTMLDialogElement>("#permission-dialog");
+  const form = document.querySelector<HTMLFormElement>("#permission-form");
+  const message = document.querySelector<HTMLElement>("#permission-message");
+  const remember = document.querySelector<HTMLInputElement>("#permission-remember");
+  const allow = document.querySelector<HTMLButtonElement>("#permission-allow");
+  const deny = document.querySelector<HTMLButtonElement>("#permission-deny");
   if (!dialog || !form || !message || !remember || !allow || !deny) return null;
   return { dialog, form, message, remember, allow, deny };
 }
 
-/** `media-permission-request`: a service's page just asked for the camera or
- * microphone and the native side is holding the request open for an answer. */
-export function enqueueMediaPermissionRequest(payload: MediaPermissionRequestPayload): void {
-  mediaPermissionQueue.push(payload);
-  void presentNextMediaPermissionRequest();
+/** Native permission request held open until the shell answers. Complementary
+ * WebView2 camera/microphone events share one prompt when both are pending. */
+export function enqueuePermissionRequest(payload: PermissionRequestPayload): void {
+  const combined = payload.kind === "media" && permissionQueue.find(item =>
+    item.kind === "media" && item.serviceId === payload.serviceId &&
+    !(permissionAnswering && permissionCurrent === item) &&
+    ((payload.audio && !item.audio) || (payload.video && !item.video)));
+  if (combined) {
+    combined.audio ||= payload.audio;
+    combined.video ||= payload.video;
+    combined.requestIds.push(payload.requestId);
+    if (permissionCurrent === combined) {
+      const nodes = permissionNodes();
+      if (nodes) nodes.message.textContent = t("permission.message", {
+        name: combined.serviceName, kind: permissionAction(combined),
+      });
+    }
+  } else {
+    permissionQueue.push({ ...payload, requestIds: [payload.requestId] });
+  }
+  void presentNextPermissionRequest();
 }
 
-/** `media-permission-resolved`: the native side answered a request itself,
+/** `permission-resolved`: the native side answered a request itself,
  * which only happens when its service closed while the prompt was still up.
  * Drop it from the queue and, if it was the one on screen, dismiss and move
  * on without asking the backend again. */
-export function dismissMediaPermissionRequest(requestId: string): void {
-  mediaPermissionQueue = mediaPermissionQueue.filter((item) => item.requestId !== requestId);
-  if (mediaPermissionCurrent?.requestId !== requestId) return;
-  mediaPermissionCurrent = null;
-  const nodes = mediaPermissionNodes();
+export function dismissPermissionRequest(requestId: string): void {
+  for (const item of permissionQueue) item.requestIds = item.requestIds.filter(id => id !== requestId);
+  permissionQueue = permissionQueue.filter(item => item.requestIds.length > 0);
+  if (!permissionCurrent || permissionCurrent.requestIds.length > 0) return;
+  permissionCurrent = null;
+  const nodes = permissionNodes();
   if (nodes?.dialog.open) nodes.dialog.close();
-  void advanceMediaPermissionQueue();
+  void advancePermissionQueue();
 }
 
-async function presentNextMediaPermissionRequest(): Promise<void> {
-  if (mediaPermissionCurrent) return;
-  const next = mediaPermissionQueue[0];
+async function presentNextPermissionRequest(): Promise<void> {
+  if (permissionCurrent) return;
+  const next = permissionQueue[0];
   if (!next) return;
-  const nodes = mediaPermissionNodes();
+  const nodes = permissionNodes();
   if (!nodes) return;
-  claimCover("media-permission");
+  claimCover("permission");
   await suspendForCover();
   // The request (or the whole queue) could have been resolved elsewhere
   // while suspending the service webview took a turn.
-  if (mediaPermissionCurrent || mediaPermissionQueue[0] !== next) {
-    if (mediaPermissionQueue.length === 0) await releaseCover("media-permission");
+  if (permissionCurrent || permissionQueue[0] !== next) {
+    if (permissionQueue.length === 0) await releaseCover("permission");
     return;
   }
-  mediaPermissionCurrent = next;
-  nodes.message.textContent = t("media.permissionMessage", {
+  permissionCurrent = next;
+  nodes.message.textContent = t("permission.message", {
     name: next.serviceName,
-    kind: mediaPermissionKind(next),
+    kind: permissionAction(next),
   });
   nodes.remember.checked = false;
   if (!nodes.dialog.open) nodes.dialog.showModal();
   nodes.allow.focus();
 }
 
-async function advanceMediaPermissionQueue(): Promise<void> {
-  if (mediaPermissionQueue.length === 0) {
-    await releaseCover("media-permission");
+async function advancePermissionQueue(): Promise<void> {
+  if (permissionQueue.length === 0) {
+    await releaseCover("permission");
     return;
   }
-  await presentNextMediaPermissionRequest();
+  await presentNextPermissionRequest();
 }
 
-async function answerMediaPermission(allow: boolean): Promise<void> {
-  const current = mediaPermissionCurrent;
-  if (!current || mediaPermissionAnswering) return;
-  const nodes = mediaPermissionNodes();
+async function answerPermission(allow: boolean): Promise<void> {
+  const current = permissionCurrent;
+  if (!current || permissionAnswering) return;
+  const nodes = permissionNodes();
   const remember = nodes?.remember.checked ?? false;
-  mediaPermissionAnswering = true;
+  permissionAnswering = true;
   if (nodes) nodes.allow.disabled = nodes.deny.disabled = true;
   try {
-    const snapshot = await run(() =>
-      invoke<Snapshot>("answer_media_permission", {
-        requestId: current.requestId,
-        allow,
-        remember,
-      }),
-    );
-    if (snapshot) {
+    for (const requestId of [...current.requestIds]) {
+      const snapshot = await run(() =>
+        invoke<Snapshot>("answer_permission", { requestId, allow, remember }),
+      );
+      if (!snapshot) return;
       applySnapshot(snapshot);
-      dismissMediaPermissionRequest(current.requestId);
+      dismissPermissionRequest(requestId);
     }
     // On IPC failure leave the prompt available for retry. A native save
     // failure still resolves capture and emits its resolved event.
   } finally {
-    mediaPermissionAnswering = false;
+    permissionAnswering = false;
     if (nodes) nodes.allow.disabled = nodes.deny.disabled = false;
   }
 }
@@ -912,18 +931,18 @@ async function answerMediaPermission(allow: boolean): Promise<void> {
  * cover, suspends the active service first, and releases the cover once the
  * whole queue has drained. Escape and a backdrop click deny; closing the
  * service denies its pending requests on the native side. */
-function wireMediaPermissionDialog(): void {
-  const nodes = mediaPermissionNodes();
+function wirePermissionDialog(): void {
+  const nodes = permissionNodes();
   if (!nodes) return;
   nodes.form.addEventListener("submit", (event) => event.preventDefault());
-  nodes.allow.addEventListener("click", () => void answerMediaPermission(true));
-  nodes.deny.addEventListener("click", () => void answerMediaPermission(false));
+  nodes.allow.addEventListener("click", () => void answerPermission(true));
+  nodes.deny.addEventListener("click", () => void answerPermission(false));
   nodes.dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
-    void answerMediaPermission(false);
+    void answerPermission(false);
   });
   nodes.dialog.addEventListener("click", (event) => {
-    if (event.target === nodes.dialog) void answerMediaPermission(false);
+    if (event.target === nodes.dialog) void answerPermission(false);
   });
 }
 
@@ -2088,41 +2107,60 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   spellcheckInput.dataset.serviceSpellcheck = "true";
   spellcheck.append(spellcheckInput, caption("service.spellcheck"));
 
-  const mediaPermission = document.createElement("label");
-  mediaPermission.className = "wide";
-  const mediaPermissionInput = document.createElement("select");
-  for (const [value, key] of [
-    ["ask", "service.mediaPermissionAsk"],
-    ["allow", "service.mediaPermissionAllow"],
-    ["deny", "service.mediaPermissionDeny"],
-  ] as const) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.dataset.i18n = key;
-    option.textContent = t(key);
-    mediaPermissionInput.append(option);
+  const permissionSection = document.createElement("fieldset");
+  permissionSection.className = "wide permissions-section";
+  const permissionLegend = document.createElement("legend");
+  permissionLegend.dataset.i18n = "permission.title";
+  permissionLegend.textContent = t("permission.title");
+  permissionSection.append(permissionLegend);
+  const permissionInputs = new Map<PermissionKind, HTMLSelectElement>();
+  for (const kind of ["media", "screen", "location", "clipboard"] as const) {
+    const row = document.createElement("label");
+    row.className = "permission-row";
+    row.append(caption(`permission.label.${kind}`));
+    const select = document.createElement("select");
+    select.dataset.permissionKind = kind;
+    for (const [value, key] of [
+      ["ask", "permission.ask"],
+      ["allow", "permission.alwaysAllow"],
+      ["deny", "permission.alwaysDeny"],
+    ] as const) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.dataset.i18n = key;
+      option.textContent = t(key);
+      select.append(option);
+    }
+    permissionInputs.set(kind, select);
+    row.append(select);
+    permissionSection.append(row);
+    select.addEventListener("change", () => {
+      if (editingId) void run(async () => {
+        applySnapshot(await invoke<Snapshot>("set_service_permission", {
+          id: editingId, kind, permission: select.value as PermissionDecision,
+        }));
+      });
+    });
   }
-  mediaPermission.append(caption("service.mediaPermission"), mediaPermissionInput);
-  const mediaPermissionHint = document.createElement("p");
-  mediaPermissionHint.className = "field-hint";
-  mediaPermissionHint.dataset.i18n = "service.mediaPermissionHint";
-  mediaPermissionHint.textContent = t("service.mediaPermissionHint");
+  const notificationRow = document.createElement("label");
+  notificationRow.className = "check";
+  const notificationInput = document.createElement("input");
+  notificationInput.type = "checkbox";
+  notificationInput.dataset.permissionNotifications = "true";
+  notificationRow.append(notificationInput, caption("permission.notifications"));
+  permissionSection.append(notificationRow);
+  notificationInput.addEventListener("change", () => {
+    if (editingId) void setServiceFlag(editingId, "notifications", notificationInput.checked);
+  });
+  const permissionHint = document.createElement("p");
+  permissionHint.className = "field-hint";
+  permissionHint.dataset.i18n = "permission.hint";
+  permissionHint.textContent = t("permission.hint");
+  permissionSection.append(permissionHint);
   if (isEditor) {
-    container.append(dndBypass, dndBypassHint, spellcheck, mediaPermission, mediaPermissionHint);
+    container.append(dndBypass, dndBypassHint, spellcheck, permissionSection);
     spellcheckInput.addEventListener("change", () => {
       if (editingId) void changeSpellcheck(editingId, spellcheckInput.checked);
-    });
-    mediaPermissionInput.addEventListener("change", () => {
-      if (editingId) {
-        void run(async () => {
-          applySnapshot(
-            await invoke<Snapshot>("set_service_media_permission", {
-              id: editingId,
-              permission: mediaPermissionInput.value as MediaPermission,
-            }),
-          );
-        });
-      }
     });
     const maintenance = document.createElement("details");
     maintenance.className = "wide";
@@ -2340,7 +2378,8 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
       agent.input.value = values.userAgent;
       dndBypassInput.checked = values.notifyInDnd ?? false;
       spellcheckInput.checked = values.spellcheckEnabled ?? true;
-      mediaPermissionInput.value = values.mediaPermission ?? "ask";
+      for (const [kind, select] of permissionInputs) select.value = values.permissions?.[kind] ?? "ask";
+      notificationInput.checked = values.notificationsEnabled ?? true;
       hasInteracted = false;
       setColor(values.color || brandColor);
       allInput.checked = values.allWorkspaces;
@@ -2451,7 +2490,8 @@ async function openEditor(service: Service): Promise<void> {
     allWorkspaces: service.allWorkspaces,
     notifyInDnd: service.notifyInDnd,
     spellcheckEnabled: service.spellcheckEnabled,
-    mediaPermission: service.mediaPermission,
+    permissions: service.permissions,
+    notificationsEnabled: service.notificationsEnabled,
   });
   const error = must<HTMLElement>("#editor-error");
   error.hidden = true;
@@ -3504,11 +3544,11 @@ export async function renderShell(): Promise<void> {
   await listen("open-settings", () => {
     deferMenuAction(() => openSettings());
   });
-  await listen<MediaPermissionRequestPayload>("media-permission-request", (event) => {
-    enqueueMediaPermissionRequest(event.payload);
+  await listen<PermissionRequestPayload>("permission-request", (event) => {
+    enqueuePermissionRequest(event.payload);
   });
-  await listen<MediaPermissionResolvedPayload>("media-permission-resolved", (event) => {
-    dismissMediaPermissionRequest(event.payload.requestId);
+  await listen<PermissionResolvedPayload>("permission-resolved", (event) => {
+    dismissPermissionRequest(event.payload.requestId);
   });
 
   presets = await invoke<Preset[]>("list_presets");
@@ -4056,7 +4096,7 @@ function wireEvents(): void {
     closeIncludeServices();
   });
   wireConfirmDialog();
-  wireMediaPermissionDialog();
+  wirePermissionDialog();
   customForm = mountServiceForm(must("#custom-fields"));
   customForm.reset();
   editorForm = mountServiceForm(must("#editor-fields"));

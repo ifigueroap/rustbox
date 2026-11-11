@@ -156,6 +156,40 @@ mod tests {
         build(c, "test".into(), BTreeMap::new()).unwrap()
     }
     #[test]
+    fn permissions_and_legacy_media_round_trip_through_backups() {
+        use crate::config::{PermissionDecision, PermissionKind};
+        let mut config = populated();
+        config.services[0]
+            .permissions
+            .insert(PermissionKind::Screen, PermissionDecision::Deny);
+        config.services[0]
+            .permissions
+            .insert(PermissionKind::Location, PermissionDecision::Allow);
+        config.services[0]
+            .permissions
+            .insert(PermissionKind::Clipboard, PermissionDecision::Ask);
+        let original = document(config.clone());
+        let bytes = serde_json::to_vec(&original).unwrap();
+        assert_eq!(parse(&bytes).unwrap().config, config);
+        let mut old = serde_json::to_value(original).unwrap();
+        old["config"]["services"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("permissions");
+        old["config"]["services"][0]["mediaPermission"] = serde_json::json!("allow");
+        let migrated = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!(
+            migrated.config.services[0].permission(PermissionKind::Media),
+            PermissionDecision::Allow
+        );
+        assert_eq!(
+            migrated.config.services[0].permission(PermissionKind::Location),
+            PermissionDecision::Ask
+        );
+        assert_eq!(migrated.config.services[0].id, config.services[0].id);
+    }
+
+    #[test]
     fn merge_by_id_keeps_current_objects_and_globals() {
         let current = populated();
         let mut imported = current.clone();
@@ -189,7 +223,10 @@ mod tests {
         let current = populated();
         let mut imported = populated();
         imported.services[0].zoom = 1.25;
-        imported.services[0].media_permission = crate::config::MediaPermission::Deny;
+        imported.services[0].permissions.insert(
+            crate::config::PermissionKind::Media,
+            crate::config::PermissionDecision::Deny,
+        );
         imported.services[0].spellcheck_enabled = Some(false);
         imported.services[0].never_hibernate = true;
         imported.start_at_login = true;
@@ -212,11 +249,20 @@ mod tests {
         assert_eq!(merged.services[0], current.services[0]);
         assert_eq!(merged.services[1], imported.services[0]);
         assert_eq!(merged.workspaces[1].id, imported.workspaces[0].id);
-        assert_eq!(merged.workspaces[1].dnd_schedule, imported.workspaces[0].dnd_schedule);
+        assert_eq!(
+            merged.workspaces[1].dnd_schedule,
+            imported.workspaces[0].dnd_schedule
+        );
         assert_eq!(merged.start_at_login, current.start_at_login);
         assert_eq!(merged.start_hidden, current.start_hidden);
-        assert_eq!(merged.hibernate_after_minutes, current.hibernate_after_minutes);
-        assert_eq!(merged.hibernate_inactive_workspaces, current.hibernate_inactive_workspaces);
+        assert_eq!(
+            merged.hibernate_after_minutes,
+            current.hibernate_after_minutes
+        );
+        assert_eq!(
+            merged.hibernate_inactive_workspaces,
+            current.hibernate_inactive_workspaces
+        );
         assert_eq!(merged.dnd_schedule, current.dnd_schedule);
     }
 
@@ -227,11 +273,17 @@ mod tests {
         for version in [0, 2] {
             let mut doc = document(populated());
             doc.version = version;
-            assert_eq!(parse(&serde_json::to_vec(&doc).unwrap()).err().as_deref(), Some("version"));
+            assert_eq!(
+                parse(&serde_json::to_vec(&doc).unwrap()).err().as_deref(),
+                Some("version")
+            );
         }
         let mut doc = document(populated());
         doc.format = "other".into();
-        assert_eq!(parse(&serde_json::to_vec(&doc).unwrap()).err().as_deref(), Some("shape"));
+        assert_eq!(
+            parse(&serde_json::to_vec(&doc).unwrap()).err().as_deref(),
+            Some("shape")
+        );
     }
     #[test]
     fn validates_urls_ids_and_memberships() {

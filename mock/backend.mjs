@@ -44,6 +44,7 @@ function makeService(name, preset, workspaceIds, extra = {}) {
     neverHibernate: false,
     hibernated: false,
     notificationsEnabled: true,
+    permissions: {},
     workspaces: workspaceIds,
     allWorkspaces: false,
     workspaceSilenced: false,
@@ -251,6 +252,11 @@ window.__TAURI_INTERNALS__ = {
         state.hibernateAfterMinutes = args.afterMinutes;
         state.hibernateInactiveWorkspaces = args.inactiveWorkspaces;
         return Promise.resolve(snapshot());
+      case "set_service_permission": {
+        const service = state.services.find((item) => item.id === args.id);
+        if (service) service.permissions[args.kind] = args.permission;
+        return Promise.resolve(snapshot());
+      }
       case "set_service_never_hibernate": {
         const service = state.services.find((item) => item.id === args.id);
         if (service) service.neverHibernate = Boolean(args.enabled);
