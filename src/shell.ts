@@ -17,6 +17,7 @@ import {
 import { invoke } from "./ipc";
 import { PageTools } from "./page-tools";
 import { httpUrl, renderReleaseNotes } from "./release-notes";
+import { moveAdjacent, reorderByDrop } from "./reorder";
 
 /** Public releases index. Opened with the system browser, never inside a service webview. */
 const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
@@ -29,6 +30,8 @@ const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
  */
 const PACKAGE_UPDATE_COMMAND =
   "d=$(mktemp -d) && cd \"$d\" && curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si";
+
+type MediaPermission = "ask" | "allow" | "deny";
 
 interface Service {
   id: string;
@@ -45,6 +48,7 @@ interface Service {
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
   neverHibernate: boolean;
+  mediaPermission: MediaPermission;
   hibernated: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
@@ -192,8 +196,6 @@ let serviceMenuItems: (CheckMenuItem | MenuItem | PredefinedMenuItem)[] = [];
 let workspaceMenu: Menu | null = null;
 let workspaceMenuItems: (MenuItem | PredefinedMenuItem)[] = [];
 let pendingPreset: Preset | null = null;
-let draggingId: string | null = null;
-let draggingWorkspaceId: string | null = null;
 let suspendedId: string | null = null;
 let editingId: string | null = null;
 let deskShowAll = false;
@@ -236,6 +238,7 @@ interface ServiceFormSeed {
   /** Only meaningful once a service exists; absent from the "add service" seed. */
   notifyInDnd?: boolean;
   spellcheckEnabled?: boolean;
+  mediaPermission?: MediaPermission;
 }
 
 interface ServiceForm {
@@ -536,6 +539,10 @@ function paintAvatar(node: HTMLElement, target: IconTarget): void {
 export function mountShell(): void {
   const shell = document.querySelector<HTMLElement>("#shell");
   if (!shell || shell.dataset.wired === "true") return;
+  cancelPointerDrag();
+  mediaPermissionQueue = [];
+  mediaPermissionCurrent = null;
+  mediaPermissionAnswering = false;
   languagePreference = "system";
   osLocale = "en";
   reportedLocale = null;
@@ -778,6 +785,146 @@ function wireConfirmDialog(): void {
     },
     true,
   );
+}
+
+export interface MediaPermissionRequestPayload {
+  requestId: string;
+  serviceId: string;
+  serviceName: string;
+  audio: boolean;
+  video: boolean;
+}
+
+interface MediaPermissionResolvedPayload {
+  requestId: string;
+}
+
+/** Requests the native side is waiting on. At most one is shown at a time;
+ * the rest wait their turn, in case a page asks for the microphone and the
+ * camera as two separate native requests (WebView2 fires one per kind). */
+let mediaPermissionQueue: MediaPermissionRequestPayload[] = [];
+let mediaPermissionCurrent: MediaPermissionRequestPayload | null = null;
+let mediaPermissionAnswering = false;
+
+function mediaPermissionKind(payload: MediaPermissionRequestPayload): string {
+  if (payload.audio && payload.video) return t("media.kindBoth");
+  return t(payload.video ? "media.kindVideo" : "media.kindAudio");
+}
+
+function mediaPermissionNodes(): {
+  dialog: HTMLDialogElement;
+  form: HTMLFormElement;
+  message: HTMLElement;
+  remember: HTMLInputElement;
+  allow: HTMLButtonElement;
+  deny: HTMLButtonElement;
+} | null {
+  const dialog = document.querySelector<HTMLDialogElement>("#media-permission-dialog");
+  const form = document.querySelector<HTMLFormElement>("#media-permission-form");
+  const message = document.querySelector<HTMLElement>("#media-permission-message");
+  const remember = document.querySelector<HTMLInputElement>("#media-permission-remember");
+  const allow = document.querySelector<HTMLButtonElement>("#media-permission-allow");
+  const deny = document.querySelector<HTMLButtonElement>("#media-permission-deny");
+  if (!dialog || !form || !message || !remember || !allow || !deny) return null;
+  return { dialog, form, message, remember, allow, deny };
+}
+
+/** `media-permission-request`: a service's page just asked for the camera or
+ * microphone and the native side is holding the request open for an answer. */
+export function enqueueMediaPermissionRequest(payload: MediaPermissionRequestPayload): void {
+  mediaPermissionQueue.push(payload);
+  void presentNextMediaPermissionRequest();
+}
+
+/** `media-permission-resolved`: the native side answered a request itself,
+ * which only happens when its service closed while the prompt was still up.
+ * Drop it from the queue and, if it was the one on screen, dismiss and move
+ * on without asking the backend again. */
+export function dismissMediaPermissionRequest(requestId: string): void {
+  mediaPermissionQueue = mediaPermissionQueue.filter((item) => item.requestId !== requestId);
+  if (mediaPermissionCurrent?.requestId !== requestId) return;
+  mediaPermissionCurrent = null;
+  const nodes = mediaPermissionNodes();
+  if (nodes?.dialog.open) nodes.dialog.close();
+  void advanceMediaPermissionQueue();
+}
+
+async function presentNextMediaPermissionRequest(): Promise<void> {
+  if (mediaPermissionCurrent) return;
+  const next = mediaPermissionQueue[0];
+  if (!next) return;
+  const nodes = mediaPermissionNodes();
+  if (!nodes) return;
+  claimCover("media-permission");
+  await suspendForCover();
+  // The request (or the whole queue) could have been resolved elsewhere
+  // while suspending the service webview took a turn.
+  if (mediaPermissionCurrent || mediaPermissionQueue[0] !== next) {
+    if (mediaPermissionQueue.length === 0) await releaseCover("media-permission");
+    return;
+  }
+  mediaPermissionCurrent = next;
+  nodes.message.textContent = t("media.permissionMessage", {
+    name: next.serviceName,
+    kind: mediaPermissionKind(next),
+  });
+  nodes.remember.checked = false;
+  if (!nodes.dialog.open) nodes.dialog.showModal();
+  nodes.allow.focus();
+}
+
+async function advanceMediaPermissionQueue(): Promise<void> {
+  if (mediaPermissionQueue.length === 0) {
+    await releaseCover("media-permission");
+    return;
+  }
+  await presentNextMediaPermissionRequest();
+}
+
+async function answerMediaPermission(allow: boolean): Promise<void> {
+  const current = mediaPermissionCurrent;
+  if (!current || mediaPermissionAnswering) return;
+  const nodes = mediaPermissionNodes();
+  const remember = nodes?.remember.checked ?? false;
+  mediaPermissionAnswering = true;
+  if (nodes) nodes.allow.disabled = nodes.deny.disabled = true;
+  try {
+    const snapshot = await run(() =>
+      invoke<Snapshot>("answer_media_permission", {
+        requestId: current.requestId,
+        allow,
+        remember,
+      }),
+    );
+    if (snapshot) {
+      applySnapshot(snapshot);
+      dismissMediaPermissionRequest(current.requestId);
+    }
+    // On IPC failure leave the prompt available for retry. A native save
+    // failure still resolves capture and emits its resolved event.
+  } finally {
+    mediaPermissionAnswering = false;
+    if (nodes) nodes.allow.disabled = nodes.deny.disabled = false;
+  }
+}
+
+/** Shown over any child webview, exactly like `confirmDialog`: claims its own
+ * cover, suspends the active service first, and releases the cover once the
+ * whole queue has drained. Escape and a backdrop click deny; closing the
+ * service denies its pending requests on the native side. */
+function wireMediaPermissionDialog(): void {
+  const nodes = mediaPermissionNodes();
+  if (!nodes) return;
+  nodes.form.addEventListener("submit", (event) => event.preventDefault());
+  nodes.allow.addEventListener("click", () => void answerMediaPermission(true));
+  nodes.deny.addEventListener("click", () => void answerMediaPermission(false));
+  nodes.dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    void answerMediaPermission(false);
+  });
+  nodes.dialog.addEventListener("click", (event) => {
+    if (event.target === nodes.dialog) void answerMediaPermission(false);
+  });
 }
 
 /** Native menu actions run while the menu is still tearing down. Opening a
@@ -1066,12 +1213,179 @@ function refreshOpenCopy(): void {
   if (document.querySelector<HTMLDialogElement>("#update-dialog")?.open) paintUpdateDialog();
 }
 
+/**
+ * Pointer-based row reordering, shared by the sidebar service list and the
+ * workspace rail.
+ *
+ * HTML5 drag-and-drop depends on a native OS drag session. The existing
+ * handlers supplied no transfer data and relied on dragover/drop reaching
+ * the shell, a fragile path with WebKitGTK on Wayland and child webviews.
+ * Pointer capture keeps the gesture in this webview without that handshake.
+ */
+const POINTER_DRAG_THRESHOLD_PX = 6;
+
+interface PointerDragSession {
+  pointerId: number;
+  id: string;
+  button: HTMLButtonElement;
+  container: HTMLElement;
+  itemSelector: string;
+  startX: number;
+  startY: number;
+  dragging: boolean;
+  targetId: string | null;
+  placeAfter: boolean;
+  onReorder: (draggedId: string, targetId: string, placeAfter: boolean) => void;
+}
+
+let pointerDrag: PointerDragSession | null = null;
+
+function clearDropIndicators(container: HTMLElement, itemSelector: string): void {
+  container.querySelectorAll(itemSelector).forEach((node) => {
+    node.classList.remove("drop-target-before", "drop-target-after");
+  });
+}
+
+/** Which row the pointer is over, and whether the dragged row should land
+ * before or after it (split at the row's vertical midpoint). Falls back to
+ * the last row, after it, once the pointer passes the bottom of the list. */
+function updatePointerDragTarget(session: PointerDragSession, clientY: number): void {
+  clearDropIndicators(session.container, session.itemSelector);
+  const rows = Array.from(
+    session.container.querySelectorAll<HTMLElement>(session.itemSelector),
+  ).filter((row) => row.dataset.dragId && row.dataset.dragId !== session.id);
+  if (rows.length === 0) {
+    session.targetId = null;
+    return;
+  }
+  let chosen = rows[rows.length - 1];
+  let placeAfter = true;
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (clientY <= rect.top + rect.height / 2) {
+      chosen = row;
+      placeAfter = false;
+      break;
+    }
+    if (clientY <= rect.bottom) {
+      chosen = row;
+      placeAfter = true;
+      break;
+    }
+  }
+  chosen.classList.add(placeAfter ? "drop-target-after" : "drop-target-before");
+  session.targetId = chosen.dataset.dragId ?? null;
+  session.placeAfter = placeAfter;
+}
+
+function finishPointerDrag(session: PointerDragSession): void {
+  pointerDrag = null;
+  clearDropIndicators(session.container, session.itemSelector);
+  session.button.classList.remove("dragging");
+  if (session.dragging) {
+    // The browser still dispatches a trailing `click` on this element once
+    // pointer capture releases, even after a real drag; swallow just that
+    // one so a drag never also activates the row.
+    session.button.dataset.suppressClick = "1";
+    setTimeout(() => delete session.button.dataset.suppressClick, 0);
+    if (session.targetId) session.onReorder(session.id, session.targetId, session.placeAfter);
+  }
+}
+
+/** Cancels the row reorder in progress, if any, without applying it. Bound to
+ * Escape in the shell's global keydown handler. */
+function cancelPointerDrag(): void {
+  const session = pointerDrag;
+  if (!session) return;
+  pointerDrag = null;
+  clearDropIndicators(session.container, session.itemSelector);
+  session.button.classList.remove("dragging");
+  if (session.dragging) {
+    session.button.dataset.suppressClick = "1";
+    setTimeout(() => delete session.button.dataset.suppressClick, 0);
+  }
+  if (typeof session.button.releasePointerCapture === "function") {
+    try {
+      session.button.releasePointerCapture(session.pointerId);
+    } catch {
+      /* Already released. */
+    }
+  }
+}
+
+/** Wires one row for pointer-driven reordering within `container`. `onReorder`
+ * receives the dragged id, the id it was dropped on, and whether it landed
+ * after (rather than before) that id; the caller turns that into a full
+ * permutation with `reorderByDrop` and sends it to the backend. */
+function attachPointerReorder(
+  button: HTMLButtonElement,
+  id: string,
+  container: HTMLElement,
+  itemSelector: string,
+  onReorder: (draggedId: string, targetId: string, placeAfter: boolean) => void,
+): void {
+  button.dataset.dragId = id;
+  button.draggable = false;
+  button.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || pointerDrag) return;
+    button.setPointerCapture?.(event.pointerId);
+    pointerDrag = {
+      pointerId: event.pointerId,
+      id,
+      button,
+      container,
+      itemSelector,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+      targetId: null,
+      placeAfter: false,
+      onReorder,
+    };
+  });
+  button.addEventListener("pointermove", (event) => {
+    const session = pointerDrag;
+    if (!session || session.button !== button || session.pointerId !== event.pointerId) return;
+    if (!session.dragging) {
+      const moved = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
+      if (moved < POINTER_DRAG_THRESHOLD_PX) return;
+      session.dragging = true;
+      button.classList.add("dragging");
+      if (typeof button.setPointerCapture === "function") button.setPointerCapture(event.pointerId);
+    }
+    event.preventDefault();
+    updatePointerDragTarget(session, event.clientY);
+  });
+  button.addEventListener("pointerup", (event) => {
+    const session = pointerDrag;
+    if (!session || session.button !== button || session.pointerId !== event.pointerId) return;
+    finishPointerDrag(session);
+  });
+  button.addEventListener("pointercancel", (event) => {
+    const session = pointerDrag;
+    if (!session || session.button !== button || session.pointerId !== event.pointerId) return;
+    cancelPointerDrag();
+  });
+  button.addEventListener("lostpointercapture", () => {
+    if (pointerDrag?.button === button) cancelPointerDrag();
+  });
+  // A drag that just finished leaves one synthetic click behind; let every
+  // other click (a real one, with no preceding drag) through unchanged.
+  button.addEventListener("click", (event) => {
+    if (button.dataset.suppressClick !== "1") return;
+    delete button.dataset.suppressClick;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  });
+}
+
 /** The static children of the rail (`#workspace-list`, `#workspace-add`) live
  * in index.html. They are never removed: the rail is only hidden, and only the
  * rows inside `#workspace-list` are rebuilt. Replacing the rail's children
  * used to delete them for good, so the next render threw "Missing
  * #workspace-list" and took the sidebar and desk down with it. */
 function renderWorkspaceRail(): void {
+  cancelPointerDrag();
   const rail = must<HTMLElement>("#workspace-rail");
   const shell = must<HTMLElement>("#shell");
   const visible = workspaceRailVisible();
@@ -1102,7 +1416,6 @@ function renderWorkspaceRail(): void {
     button.setAttribute("aria-selected", workspace.id === activeWorkspaceId ? "true" : "false");
     button.setAttribute("role", "option");
     button.dataset.workspaceId = workspace.id;
-    button.draggable = true;
     const hint = index < 9 ? ` (Ctrl+Alt+${index + 1})` : "";
     button.title = `${workspaceTitle(workspace)}${hint}`;
 
@@ -1128,36 +1441,18 @@ function renderWorkspaceRail(): void {
       button.append(flag);
     }
 
+    attachPointerReorder(button, workspace.id, list, ".ws", (draggedId, targetId, placeAfter) => {
+      const ids = reorderByDrop(workspaces.map((item) => item.id), draggedId, targetId, placeAfter);
+      void run(async () => {
+        applySnapshot(await invoke<Snapshot>("reorder_workspaces", { ids }));
+      });
+    });
     button.addEventListener("click", () => {
       void switchWorkspace(workspace.id);
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       void openWorkspaceMenu(workspace.id, event.clientX, event.clientY);
-    });
-    button.addEventListener("dragstart", () => {
-      draggingWorkspaceId = workspace.id;
-    });
-    button.addEventListener("dragend", () => {
-      draggingWorkspaceId = null;
-      list.querySelectorAll(".drop-target").forEach((node) => node.classList.remove("drop-target"));
-    });
-    button.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      button.classList.add("drop-target");
-    });
-    button.addEventListener("dragleave", () => button.classList.remove("drop-target"));
-    button.addEventListener("drop", (event) => {
-      event.preventDefault();
-      button.classList.remove("drop-target");
-      const moving = draggingWorkspaceId;
-      if (!moving || moving === workspace.id) return;
-      const ids = workspaces.map((item) => item.id).filter((id) => id !== moving);
-      const index = ids.indexOf(workspace.id);
-      ids.splice(index, 0, moving);
-      void run(async () => {
-        applySnapshot(await invoke<Snapshot>("reorder_workspaces", { ids }));
-      });
     });
     list.append(button);
   }
@@ -1442,36 +1737,18 @@ function renderSidebar(): void {
     button.title = serviceTitle(service);
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", service.id === activeId ? "true" : "false");
-    button.draggable = true;
+    attachPointerReorder(button, service.id, list, ".svc", (draggedId, targetId, placeAfter) => {
+      const ids = reorderByDrop(services.map((item) => item.id), draggedId, targetId, placeAfter);
+      void run(async () => {
+        applySnapshot(await invoke<Snapshot>("reorder_services", { ids }));
+      });
+    });
     button.addEventListener("click", () => {
       void activate(service.id);
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       void openServiceMenu(service.id, event.clientX, event.clientY);
-    });
-    button.addEventListener("dragstart", () => {
-      draggingId = service.id;
-    });
-    button.addEventListener("dragend", () => {
-      draggingId = null;
-      list.querySelectorAll(".drop-target").forEach((node) => node.classList.remove("drop-target"));
-    });
-    button.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      button.classList.add("drop-target");
-    });
-    button.addEventListener("dragleave", () => button.classList.remove("drop-target"));
-    button.addEventListener("drop", (event) => {
-      event.preventDefault();
-      button.classList.remove("drop-target");
-      if (!draggingId || draggingId === service.id) return;
-      const ids = services.map((item) => item.id).filter((item) => item !== draggingId);
-      const index = ids.indexOf(service.id);
-      ids.splice(index, 0, draggingId);
-      void run(async () => {
-        applySnapshot(await invoke<Snapshot>("reorder_services", { ids }));
-      });
     });
 
     const avatar = document.createElement("span");
@@ -1810,10 +2087,42 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   spellcheckInput.type = "checkbox";
   spellcheckInput.dataset.serviceSpellcheck = "true";
   spellcheck.append(spellcheckInput, caption("service.spellcheck"));
+
+  const mediaPermission = document.createElement("label");
+  mediaPermission.className = "wide";
+  const mediaPermissionInput = document.createElement("select");
+  for (const [value, key] of [
+    ["ask", "service.mediaPermissionAsk"],
+    ["allow", "service.mediaPermissionAllow"],
+    ["deny", "service.mediaPermissionDeny"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.dataset.i18n = key;
+    option.textContent = t(key);
+    mediaPermissionInput.append(option);
+  }
+  mediaPermission.append(caption("service.mediaPermission"), mediaPermissionInput);
+  const mediaPermissionHint = document.createElement("p");
+  mediaPermissionHint.className = "field-hint";
+  mediaPermissionHint.dataset.i18n = "service.mediaPermissionHint";
+  mediaPermissionHint.textContent = t("service.mediaPermissionHint");
   if (isEditor) {
-    container.append(dndBypass, dndBypassHint, spellcheck);
+    container.append(dndBypass, dndBypassHint, spellcheck, mediaPermission, mediaPermissionHint);
     spellcheckInput.addEventListener("change", () => {
       if (editingId) void changeSpellcheck(editingId, spellcheckInput.checked);
+    });
+    mediaPermissionInput.addEventListener("change", () => {
+      if (editingId) {
+        void run(async () => {
+          applySnapshot(
+            await invoke<Snapshot>("set_service_media_permission", {
+              id: editingId,
+              permission: mediaPermissionInput.value as MediaPermission,
+            }),
+          );
+        });
+      }
     });
     const maintenance = document.createElement("details");
     maintenance.className = "wide";
@@ -2031,6 +2340,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
       agent.input.value = values.userAgent;
       dndBypassInput.checked = values.notifyInDnd ?? false;
       spellcheckInput.checked = values.spellcheckEnabled ?? true;
+      mediaPermissionInput.value = values.mediaPermission ?? "ask";
       hasInteracted = false;
       setColor(values.color || brandColor);
       allInput.checked = values.allWorkspaces;
@@ -2141,6 +2451,7 @@ async function openEditor(service: Service): Promise<void> {
     allWorkspaces: service.allWorkspaces,
     notifyInDnd: service.notifyInDnd,
     spellcheckEnabled: service.spellcheckEnabled,
+    mediaPermission: service.mediaPermission,
   });
   const error = must<HTMLElement>("#editor-error");
   error.hidden = true;
@@ -2872,6 +3183,17 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
     }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
+      text: t("service.menuMoveUp"),
+      enabled: canMoveService(service.id, -1),
+      action: () => void moveService(service.id, -1),
+    }));
+    add(await MenuItem.new({
+      text: t("service.menuMoveDown"),
+      enabled: canMoveService(service.id, 1),
+      action: () => void moveService(service.id, 1),
+    }));
+    add(await PredefinedMenuItem.new({ item: "Separator" }));
+    add(await MenuItem.new({
       text: t("service.menuReload"),
       action: () => void run(async () => {
         applySnapshot(await invoke<Snapshot>("reload_service", { id: service.id }));
@@ -2978,6 +3300,23 @@ async function setServiceFlag(
           ? "set_service_never_hibernate"
           : "set_service_notify_in_dnd";
   const snapshot = await run(() => invoke<Snapshot>(command, { id, enabled }));
+  if (snapshot) applySnapshot(snapshot);
+}
+
+/** Keyboard/menu alternative to dragging a sidebar row: moves `id` one step
+ * within the services currently shown (the active workspace's filtered
+ * view), and sends the backend the resulting full permutation. */
+function canMoveService(id: string, delta: -1 | 1): boolean {
+  const ids = visibleServices().map((item) => item.id);
+  const index = ids.indexOf(id);
+  return index !== -1 && index + delta >= 0 && index + delta < ids.length;
+}
+
+async function moveService(id: string, delta: -1 | 1): Promise<void> {
+  const visibleIds = visibleServices().map((item) => item.id);
+  const fullIds = services.map((item) => item.id);
+  const ids = moveAdjacent(fullIds, visibleIds, id, delta);
+  const snapshot = await run(() => invoke<Snapshot>("reorder_services", { ids }));
   if (snapshot) applySnapshot(snapshot);
 }
 
@@ -3164,6 +3503,12 @@ export async function renderShell(): Promise<void> {
   });
   await listen("open-settings", () => {
     deferMenuAction(() => openSettings());
+  });
+  await listen<MediaPermissionRequestPayload>("media-permission-request", (event) => {
+    enqueueMediaPermissionRequest(event.payload);
+  });
+  await listen<MediaPermissionResolvedPayload>("media-permission-resolved", (event) => {
+    dismissMediaPermissionRequest(event.payload.requestId);
   });
 
   presets = await invoke<Preset[]>("list_presets");
@@ -3711,6 +4056,7 @@ function wireEvents(): void {
     closeIncludeServices();
   });
   wireConfirmDialog();
+  wireMediaPermissionDialog();
   customForm = mountServiceForm(must("#custom-fields"));
   customForm.reset();
   editorForm = mountServiceForm(must("#editor-fields"));
@@ -3813,6 +4159,12 @@ function wireEvents(): void {
   window.addEventListener(
     "keydown",
     (event) => {
+      if (event.key === "Escape" && pointerDrag) {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelPointerDrag();
+        return;
+      }
       if (isSettingsShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();

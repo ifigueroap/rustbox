@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-answer-media-permission"
+description = "Enables the answer_media_permission command without any pre-configured scope."
+commands.allow = ["answer_media_permission"]
+
+[[permission]]
+identifier = "deny-answer-media-permission"
+description = "Denies the answer_media_permission command without any pre-configured scope."
+commands.deny = ["answer_media_permission"]

@@ -55,7 +55,7 @@ describe("Arch PKGBUILD rendering", () => {
 
   it("offers the extra GStreamer codec sets without requiring them", () => {
     const optdepends = template.match(/^optdepends=\(\n([\s\S]*?)^\)$/m)?.[1] ?? "";
-    for (const dep of ["gst-plugins-bad", "gst-libav"]) {
+    for (const dep of ["gst-plugins-bad", "libnice", "gst-plugin-pipewire", "gst-libav"]) {
       // `name: description` is the makepkg form pacman shows next to the
       // package, so each entry has to carry a reason.
       expect(optdepends).toMatch(

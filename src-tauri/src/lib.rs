@@ -8,6 +8,7 @@ mod hibernate;
 mod i18n;
 #[cfg(target_os = "linux")]
 mod linux_host;
+mod media_permission;
 mod page_tools;
 mod maintenance;
 mod maintenance_native;
@@ -20,7 +21,10 @@ mod tray;
 mod updates;
 mod zoom;
 
-use config::{LanguagePreference, NewService, NewWorkspace, ServiceUpdate, Theme, WorkspaceUpdate};
+use config::{
+    LanguagePreference, MediaPermission, NewService, NewWorkspace, ServiceUpdate, Theme,
+    WorkspaceUpdate,
+};
 use i18n::Locale;
 use services::{RuntimeState, Snapshot};
 use tauri::{Emitter, Manager, WindowEvent};
@@ -687,6 +691,8 @@ pub fn run() {
             set_service_notify_in_dnd,
             set_hibernation_settings,
             set_service_never_hibernate,
+            set_service_media_permission,
+            answer_media_permission,
             set_do_not_disturb,
             set_dnd_schedule,
             set_close_to_tray,
@@ -892,5 +898,37 @@ fn set_service_never_hibernate(
         service.never_hibernate = enabled;
         Ok(())
     })?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_service_media_permission(
+    app: tauri::AppHandle,
+    id: String,
+    permission: MediaPermission,
+) -> Result<Snapshot, String> {
+    services::mutate(&app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|service| service.id == id)
+            .ok_or_else(|| "service not found".to_string())?;
+        service.media_permission = permission;
+        Ok(())
+    })?;
+    Ok(services::snapshot(&app))
+}
+
+/// Resolves a prompt the shell just showed for `media-permission-request`.
+/// See `media_permission::answer`; a request id that is already resolved
+/// (or whose service was removed) is a no-op, not an error.
+#[tauri::command]
+fn answer_media_permission(
+    app: tauri::AppHandle,
+    request_id: String,
+    allow: bool,
+    remember: bool,
+) -> Result<Snapshot, String> {
+    media_permission::answer(&app, &request_id, allow, remember)?;
     Ok(services::snapshot(&app))
 }

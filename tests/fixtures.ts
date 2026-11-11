@@ -22,6 +22,7 @@ export interface TestService {
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
   neverHibernate: boolean;
+  mediaPermission: "ask" | "allow" | "deny";
   hibernated: boolean;
   workspaces: string[];
   allWorkspaces: boolean;
@@ -120,6 +121,7 @@ export function service(
     notifyInDnd: false,
     spellcheckEnabled: true,
     neverHibernate: false,
+    mediaPermission: "ask",
     hibernated: false,
     workspaces: workspaceIds,
     allWorkspaces: false,

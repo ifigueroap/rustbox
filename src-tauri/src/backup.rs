@@ -189,6 +189,7 @@ mod tests {
         let current = populated();
         let mut imported = populated();
         imported.services[0].zoom = 1.25;
+        imported.services[0].media_permission = crate::config::MediaPermission::Deny;
         imported.services[0].spellcheck_enabled = Some(false);
         imported.services[0].never_hibernate = true;
         imported.start_at_login = true;
