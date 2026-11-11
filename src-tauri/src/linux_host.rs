@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
+use gtk::glib;
 use gtk::prelude::*;
 use tauri::{LogicalPosition, Webview};
 use webkit2gtk::WebViewExt;
@@ -58,6 +59,46 @@ fn dmabuf_fallback(configured: Option<&OsStr>, appimage: Option<&OsStr>) -> Opti
     }
 }
 
+// GtkFixed's default allocation uses each child's preferred size (WebKit can
+// report 1×1), before a size-allocate signal handler can correct it. That sends
+// two viewport sizes to WebKit on resize/switch. Own the allocation vfunc so children
+// receive only the final bounds; retain GtkFixed and the windowed EventBoxes
+// for the local coordinate space required by accelerated drawing and input.
+mod fixed_host {
+    use super::*;
+    use gtk::subclass::prelude::*;
+
+    #[derive(Default)]
+    pub struct FixedHost;
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for FixedHost {
+        const NAME: &'static str = "RustboxFixedHost";
+        type Type = super::FixedHost;
+        type ParentType = gtk::Fixed;
+    }
+
+    impl ObjectImpl for FixedHost {}
+    impl WidgetImpl for FixedHost {
+        fn size_allocate(&self, allocation: &gtk::Allocation) {
+            self.obj().set_allocation(allocation);
+            HOST.with(|slot| {
+                if let Some(host) = slot.borrow().as_ref() {
+                    allocate(host, allocation);
+                }
+            });
+        }
+    }
+    impl ContainerImpl for FixedHost {}
+    impl FixedImpl for FixedHost {}
+}
+
+glib::wrapper! {
+    pub struct FixedHost(ObjectSubclass<fixed_host::FixedHost>)
+        @extends gtk::Fixed, gtk::Container, gtk::Widget,
+        @implements gtk::Buildable;
+}
+
 struct Host {
     fixed: gtk::Fixed,
     /// Widgets that should fill the window (the shell, and anything Tauri put
@@ -98,16 +139,9 @@ pub fn install(window: &tauri::Window) {
         return;
     };
 
-    let fixed = gtk::Fixed::new();
+    let fixed: gtk::Fixed = glib::Object::new::<FixedHost>().upcast();
     fixed.set_hexpand(true);
     fixed.set_vexpand(true);
-    fixed.connect_size_allocate(|_, allocation| {
-        HOST.with(|slot| {
-            if let Some(host) = slot.borrow().as_ref() {
-                allocate(host, allocation);
-            }
-        });
-    });
 
     let backdrop: Vec<gtk::Widget> = vbox.children();
     for child in &backdrop {
@@ -235,6 +269,26 @@ fn attach(fixed: &gtk::Fixed, view: &webkit2gtk::WebView, x: i32, y: i32) -> Ser
             parent.remove(view);
         }
     }
+    if std::env::var_os("RUSTBOX_GEOMETRY_TRACE").is_some() {
+        view.connect_size_allocate(|_, a| {
+            eprintln!(
+                "geometry: view {} {} {} {}",
+                a.x(),
+                a.y(),
+                a.width(),
+                a.height()
+            )
+        });
+        container.connect_size_allocate(|_, a| {
+            eprintln!(
+                "geometry: container {} {} {} {}",
+                a.x(),
+                a.y(),
+                a.width(),
+                a.height()
+            )
+        });
+    }
     container.add(view);
     fixed.put(&container, x, y);
     // An empty EventBox still receives input. Mirror Tauri's view visibility
@@ -266,9 +320,8 @@ fn place_service(fixed: &gtk::Fixed, service: &ServiceHost, x: i32, y: i32) {
     fixed.queue_allocate();
 }
 
-/// GtkFixed normally uses each child's natural size, which WebKit can retain
-/// from its previous viewport. Allocate exact bounds after that default pass,
-/// using GTK's current logical allocation rather than a cached window size.
+/// Allocate each child once with the current logical viewport. In particular,
+/// never let GtkFixed allocate WebKit's preferred size before these bounds.
 fn allocate(host: &Host, allocation: &gtk::Allocation) {
     let width = allocation.width();
     let height = allocation.height();
@@ -294,6 +347,39 @@ fn px(value: f64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a GTK display; run under xvfb-run with --ignored --test-threads=1"]
+    fn gtk_host_allocates_only_the_final_viewport() {
+        gtk::init().expect("GTK display");
+        let fixed: gtk::Fixed = glib::Object::new::<FixedHost>().upcast();
+        let child = gtk::DrawingArea::new();
+        let allocations = std::rc::Rc::new(RefCell::new(Vec::new()));
+        let recorded = allocations.clone();
+        child.connect_size_allocate(move |_, a| {
+            recorded.borrow_mut().push((a.width(), a.height()));
+        });
+        fixed.put(&child, 0, 0);
+        child.show();
+        fixed.show();
+        HOST.with(|slot| {
+            *slot.borrow_mut() = Some(Host {
+                fixed: fixed.clone(),
+                backdrop: vec![child.upcast()],
+                services: HashMap::new(),
+            });
+        });
+        for (width, height) in [(1200, 800), (900, 600), (800, 540), (1200, 800)] {
+            fixed.size_allocate(&gtk::Allocation::new(0, 0, width, height));
+        }
+        HOST.with(|slot| {
+            slot.borrow_mut().take();
+        });
+        assert_eq!(
+            *allocations.borrow(),
+            [(1200, 800), (900, 600), (800, 540), (1200, 800)]
+        );
+    }
 
     #[test]
     fn service_geometry_preserves_sidebar_and_find_strip() {
