@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/ifigueroap/rustbox/compare/v0.12.1...v0.13.0) (2026-11-11)
+
+
+### Features
+
+* add per-service permission settings for media, screen, location and clipboard ([#54](https://github.com/ifigueroap/rustbox/issues/54)) ([b96fae1](https://github.com/ifigueroap/rustbox/commit/b96fae133c97db0e217b7103abad776002fc1efd))
+
 ## [0.12.1](https://github.com/ifigueroap/rustbox/compare/v0.12.0...v0.12.1) (2026-11-11)
 
 
