@@ -804,10 +804,10 @@ pub fn sync_bounds(app: &AppHandle) -> Result<(), String> {
     let (position, size) = content_bounds(app, &window)?;
     #[cfg(target_os = "linux")]
     {
-        let scale = window.scale_factor().map_err(|err| err.to_string())?;
-        let physical = window.inner_size().map_err(|err| err.to_string())?;
-        let logical: LogicalSize<f64> = physical.to_logical(scale);
-        crate::linux_host::sync(logical, position, size);
+        // GTK's allocation is authoritative on Linux, including after monitor
+        // scale changes. Only the shell-owned sidebar/find offsets are shared.
+        let _ = size;
+        crate::linux_host::sync(position);
         Ok(())
     }
     #[cfg(not(target_os = "linux"))]
@@ -1294,7 +1294,8 @@ fn place_webview(
     // current frame back, and on a brand-new webview that frame is still 0×0.
     #[cfg(target_os = "linux")]
     {
-        return crate::linux_host::place(webview, position, size, muted);
+        let _ = size;
+        return crate::linux_host::place(webview, position, muted);
     }
     #[cfg(not(target_os = "linux"))]
     {

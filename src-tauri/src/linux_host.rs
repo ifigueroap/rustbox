@@ -4,14 +4,15 @@
 //! position passed to `add_child` is ignored and the box splits its height
 //! across the shell and the services. This module moves the shell and each
 //! service onto one `GtkFixed`, which is what WebKitGTK needs for absolute
-//! positions.
+//! positions. Each service has a windowed container: GTK moves that window,
+//! while WebKit always renders and receives input at its local origin.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
 use gtk::prelude::*;
-use tauri::{LogicalPosition, LogicalSize, Webview};
+use tauri::{LogicalPosition, Webview};
 use webkit2gtk::WebViewExt;
 
 /// WebKitGTK 2.42 and later draw through DMA-BUF by default, and its renderer
@@ -62,7 +63,18 @@ struct Host {
     /// Widgets that should fill the window (the shell, and anything Tauri put
     /// beside it, such as a menu bar).
     backdrop: Vec<gtk::Widget>,
-    services: HashMap<String, gtk::Widget>,
+    services: HashMap<String, ServiceHost>,
+}
+
+/// Keep WebKit's allocation at (0, 0), including after reparenting, sidebar
+/// changes and find-bar changes. A windowless GtkFixed gives WebKit a nonzero
+/// allocation in the same parent window as the full-size shell. A windowed
+/// EventBox instead owns the offset and provides a local GdkWindow coordinate
+/// space for both WebKit's accelerated drawing and pointer events.
+struct ServiceHost {
+    container: gtk::EventBox,
+    view: webkit2gtk::WebView,
+    position: Cell<(i32, i32)>,
 }
 
 thread_local! {
@@ -86,27 +98,27 @@ pub fn install(window: &tauri::Window) {
         return;
     };
 
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let physical = window
-        .inner_size()
-        .unwrap_or(tauri::PhysicalSize::new(1200, 800));
-    let logical: LogicalSize<f64> = physical.to_logical(scale);
-    let width = px_size(logical.width);
-    let height = px_size(logical.height);
-
     let fixed = gtk::Fixed::new();
     fixed.set_hexpand(true);
     fixed.set_vexpand(true);
+    fixed.connect_size_allocate(|_, allocation| {
+        HOST.with(|slot| {
+            if let Some(host) = slot.borrow().as_ref() {
+                allocate(host, allocation);
+            }
+        });
+    });
 
     let backdrop: Vec<gtk::Widget> = vbox.children();
     for child in &backdrop {
         vbox.remove(child);
         fixed.put(child, 0, 0);
-        child.set_size_request(width, height);
     }
 
+    let overlay = host_container(&fixed);
     parent.remove(&vbox);
-    parent.add(&fixed);
+    parent.add(&overlay);
+    overlay.show();
     fixed.show();
     for child in &backdrop {
         child.show();
@@ -121,17 +133,30 @@ pub fn install(window: &tauri::Window) {
     });
 }
 
-pub fn place(
-    webview: &Webview,
-    position: LogicalPosition<f64>,
-    size: LogicalSize<f64>,
-    muted: bool,
-) -> Result<(), String> {
+fn host_container(fixed: &gtk::Fixed) -> gtk::Overlay {
+    // GtkFixed measures the extents of its children. Their natural sizes
+    // must not become the toplevel's minimum size, otherwise a window can
+    // grow but never shrink (especially visible at GDK_SCALE=2).
+    // Overlay children do not contribute to the preferred size. Explicitly
+    // allocate the host to the available area, even below its natural size.
+    let overlay = gtk::Overlay::new();
+    overlay.add(&gtk::DrawingArea::new());
+    overlay.add_overlay(fixed);
+    overlay.connect_get_child_position(|overlay, _| {
+        Some(gtk::Allocation::new(
+            0,
+            0,
+            overlay.allocated_width(),
+            overlay.allocated_height(),
+        ))
+    });
+    overlay
+}
+
+pub fn place(webview: &Webview, position: LogicalPosition<f64>, muted: bool) -> Result<(), String> {
     let label = webview.label().to_string();
     let x = px(position.x);
     let y = px(position.y);
-    let width = px_size(size.width);
-    let height = px_size(size.height);
     webview
         .with_webview(move |platform| {
             let view = platform.inner();
@@ -142,20 +167,19 @@ pub fn place(
                     eprintln!("rustbox: linux host is not installed");
                     return;
                 };
-                attach(&host.fixed, &view, x, y, width, height);
-                host.services.insert(label, view.upcast());
+                let service = host
+                    .services
+                    .entry(label)
+                    .or_insert_with(|| attach(&host.fixed, &view, x, y));
+                place_service(&host.fixed, service, x, y);
             });
         })
         .map_err(|err| err.to_string())
 }
 
-pub fn sync(shell: LogicalSize<f64>, position: LogicalPosition<f64>, size: LogicalSize<f64>) {
-    let shell_w = px_size(shell.width);
-    let shell_h = px_size(shell.height);
+pub fn sync(position: LogicalPosition<f64>) {
     let x = px(position.x);
     let y = px(position.y);
-    let width = px_size(size.width);
-    let height = px_size(size.height);
     HOST.with(|slot| {
         let host_slot = slot.borrow();
         let Some(host) = host_slot.as_ref() else {
@@ -163,11 +187,9 @@ pub fn sync(shell: LogicalSize<f64>, position: LogicalPosition<f64>, size: Logic
         };
         for widget in &host.backdrop {
             host.fixed.move_(widget, 0, 0);
-            widget.set_size_request(shell_w, shell_h);
         }
-        for widget in host.services.values() {
-            host.fixed.move_(widget, x, y);
-            widget.set_size_request(width, height);
+        for service in host.services.values() {
+            place_service(&host.fixed, service, x, y);
         }
     });
 }
@@ -178,13 +200,10 @@ pub fn set_muted(label: &str, muted: bool) -> bool {
         let Some(host) = host_slot.as_ref() else {
             return false;
         };
-        let Some(widget) = host.services.get(label) else {
+        let Some(service) = host.services.get(label) else {
             return false;
         };
-        let Ok(view) = widget.clone().downcast::<webkit2gtk::WebView>() else {
-            return false;
-        };
-        view.set_is_muted(muted);
+        service.view.set_is_muted(muted);
         true
     })
 }
@@ -194,38 +213,117 @@ pub fn set_muted(label: &str, muted: bool) -> bool {
 pub fn forget(label: &str) {
     HOST.with(|slot| {
         if let Some(host) = slot.borrow_mut().as_mut() {
-            host.services.remove(label);
+            if let Some(service) = host.services.remove(label) {
+                // Wry still owns the view and will destroy it after this call.
+                // Do not leave an empty event window over the shell on wake.
+                service.container.remove(&service.view);
+                host.fixed.remove(&service.container);
+            }
         }
     });
 }
 
-fn attach(fixed: &gtk::Fixed, view: &webkit2gtk::WebView, x: i32, y: i32, width: i32, height: i32) {
-    let fixed_widget: gtk::Widget = fixed.clone().upcast();
-    let already = view.parent().is_some_and(|parent| parent == fixed_widget);
-    if !already {
-        if let Some(parent) = view.parent() {
-            if let Ok(container) = parent.downcast::<gtk::Container>() {
-                container.remove(view);
-            }
+fn attach(fixed: &gtk::Fixed, view: &webkit2gtk::WebView, x: i32, y: i32) -> ServiceHost {
+    // Configure the parent before adding it to the realized host. Removing
+    // the view from Tauri's GtkBox unrealizes it; its next realization must
+    // use the new parent window, rather than retain the shell's origin.
+    let container = gtk::EventBox::new();
+    container.set_visible_window(true);
+    container.set_above_child(false);
+    if let Some(parent) = view.parent() {
+        if let Ok(parent) = parent.downcast::<gtk::Container>() {
+            parent.remove(view);
         }
-        fixed.put(view, x, y);
-    } else {
-        fixed.move_(view, x, y);
     }
-    view.set_size_request(width, height);
+    container.add(view);
+    fixed.put(&container, x, y);
+    // An empty EventBox still receives input. Mirror Tauri's view visibility
+    // so a hidden/background service cannot intercept the active view or
+    // shell. Weak references avoid a view/container reference cycle.
+    let weak_container = container.downgrade();
+    view.connect_show(move |_| {
+        if let Some(container) = weak_container.upgrade() {
+            container.show();
+        }
+    });
+    let weak_container = container.downgrade();
+    view.connect_hide(move |_| {
+        if let Some(container) = weak_container.upgrade() {
+            container.hide();
+        }
+    });
+    container.set_visible(view.is_visible());
+    ServiceHost {
+        container,
+        view: view.clone(),
+        position: Cell::new((x, y)),
+    }
+}
+
+fn place_service(fixed: &gtk::Fixed, service: &ServiceHost, x: i32, y: i32) {
+    service.position.set((x, y));
+    fixed.move_(&service.container, x, y);
+    fixed.queue_allocate();
+}
+
+/// GtkFixed normally uses each child's natural size, which WebKit can retain
+/// from its previous viewport. Allocate exact bounds after that default pass,
+/// using GTK's current logical allocation rather than a cached window size.
+fn allocate(host: &Host, allocation: &gtk::Allocation) {
+    let width = allocation.width();
+    let height = allocation.height();
+    for widget in &host.backdrop {
+        widget.size_allocate(&gtk::Allocation::new(0, 0, width, height));
+    }
+    for service in host.services.values() {
+        let (x, y) = service.position.get();
+        service
+            .container
+            .size_allocate(&service_allocation(width, height, x, y));
+    }
+}
+
+fn service_allocation(width: i32, height: i32, x: i32, y: i32) -> gtk::Allocation {
+    gtk::Allocation::new(x, y, (width - x).max(1), (height - y).max(1))
 }
 
 fn px(value: f64) -> i32 {
     value.round() as i32
 }
 
-fn px_size(value: f64) -> i32 {
-    value.round().max(1.0) as i32
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_geometry_preserves_sidebar_and_find_strip() {
+        for (x, y) in [(228, 0), (276, 44), (72, 44), (120, 0)] {
+            let a = service_allocation(1200, 800, x, y);
+            assert_eq!((a.x(), a.y()), (x, y));
+            assert_eq!((a.width(), a.height()), (1200 - x, 800 - y));
+        }
+        let a = service_allocation(100, 20, 228, 44);
+        assert_eq!((a.width(), a.height()), (1, 1));
+    }
+
+    #[test]
+    fn service_geometry_tracks_the_current_gtk_viewport() {
+        // GTK supplies logical dimensions even on a scaled display. Repeated
+        // allocations must use the current dimensions, not the old page size.
+        for (width, height) in [(1200, 800), (800, 540), (900, 550), (1200, 800)] {
+            let a = service_allocation(width, height, 228, 44);
+            assert_eq!(a.x() + a.width(), width);
+            assert_eq!(a.y() + a.height(), height);
+        }
+        let a = service_allocation(0, 0, 0, 0);
+        assert_eq!((a.width(), a.height()), (1, 1));
+    }
+
+    #[test]
+    fn gtk_positions_round_to_logical_widget_coordinates() {
+        assert_eq!(px(72.4), 72);
+        assert_eq!(px(72.6), 73);
+    }
 
     #[test]
     fn an_unset_dmabuf_switch_gets_the_software_renderer_in_the_appimage() {
