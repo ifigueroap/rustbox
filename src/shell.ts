@@ -1242,6 +1242,20 @@ function refreshOpenCopy(): void {
  * Pointer capture keeps the gesture in this webview without that handshake.
  */
 const POINTER_DRAG_THRESHOLD_PX = 6;
+const AUTO_SCROLL_EDGE_PX = 40;
+const AUTO_SCROLL_MAX_PX_PER_FRAME = 14;
+
+/** `requestAnimationFrame` falls back to `setTimeout` where it is missing
+ * (jsdom in tests); both return a `number` handle through the DOM lib
+ * typings, so the two loops below can share one handle type. */
+function scheduleFrame(callback: () => void): number {
+  if (typeof window.requestAnimationFrame === "function") return window.requestAnimationFrame(callback);
+  return window.setTimeout(callback, 16);
+}
+function cancelFrame(handle: number): void {
+  if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(handle);
+  else window.clearTimeout(handle);
+}
 
 interface PointerDragSession {
   pointerId: number;
@@ -1251,9 +1265,13 @@ interface PointerDragSession {
   itemSelector: string;
   startX: number;
   startY: number;
+  lastClientX: number;
+  lastClientY: number;
   dragging: boolean;
   targetId: string | null;
   placeAfter: boolean;
+  ghost: HTMLElement | null;
+  scrollFrame: number | null;
   onReorder: (draggedId: string, targetId: string, placeAfter: boolean) => void;
 }
 
@@ -1263,6 +1281,72 @@ function clearDropIndicators(container: HTMLElement, itemSelector: string): void
   container.querySelectorAll(itemSelector).forEach((node) => {
     node.classList.remove("drop-target-before", "drop-target-after");
   });
+}
+
+/** A floating clone of the row that tracks the pointer, so the drag has a
+ * visible payload instead of just dimming the row in place. The clone keeps
+ * the row's classes (`.svc`/`.ws`, `.active`, …) so its normal background and
+ * shape still apply; only rules that require the `#shell` ancestor (the
+ * collapsed sidebar's icon-only layout) need the `.drag-ghost.collapsed`
+ * overrides in styles.css, since the clone is appended to `body`, not `#shell`. */
+function createDragGhost(button: HTMLButtonElement): HTMLElement {
+  const rect = button.getBoundingClientRect();
+  const ghost = button.cloneNode(true) as HTMLElement;
+  ghost.classList.remove("dragging");
+  ghost.classList.add("drag-ghost");
+  ghost.classList.toggle("collapsed", document.querySelector("#shell")?.classList.contains("sidebar-collapsed") ?? false);
+  ghost.style.position = "fixed";
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  ghost.style.margin = "0";
+  ghost.tabIndex = -1;
+  ghost.setAttribute("aria-hidden", "true");
+  document.body.append(ghost);
+  return ghost;
+}
+
+function moveDragGhost(session: PointerDragSession, clientX: number, clientY: number): void {
+  if (!session.ghost) return;
+  const dx = clientX - session.startX;
+  const dy = clientY - session.startY;
+  session.ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+
+/** Scrolls `session.container` while the pointer sits near its top or bottom
+ * edge, so a long sidebar can be reordered without releasing the drag to
+ * scroll manually. Runs every frame while dragging and is a no-op away from
+ * the edges; `finishPointerDrag`/`cancelPointerDrag` cancel the loop. */
+function autoScrollStep(session: PointerDragSession): void {
+  if (pointerDrag !== session || !session.dragging) {
+    session.scrollFrame = null;
+    return;
+  }
+  const rect = session.container.getBoundingClientRect();
+  const y = session.lastClientY;
+  let delta = 0;
+  if (y < rect.top + AUTO_SCROLL_EDGE_PX) {
+    delta = -Math.ceil(((rect.top + AUTO_SCROLL_EDGE_PX - y) / AUTO_SCROLL_EDGE_PX) * AUTO_SCROLL_MAX_PX_PER_FRAME);
+  } else if (y > rect.bottom - AUTO_SCROLL_EDGE_PX) {
+    delta = Math.ceil(((y - (rect.bottom - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX) * AUTO_SCROLL_MAX_PX_PER_FRAME);
+  }
+  if (delta !== 0) {
+    session.container.scrollTop += delta;
+    updatePointerDragTarget(session, y);
+  }
+  session.scrollFrame = scheduleFrame(() => autoScrollStep(session));
+}
+
+/** Tears down the ghost and auto-scroll loop; shared by a committed drop and
+ * a cancelled drag. */
+function teardownDragVisuals(session: PointerDragSession): void {
+  if (session.scrollFrame !== null) {
+    cancelFrame(session.scrollFrame);
+    session.scrollFrame = null;
+  }
+  session.ghost?.remove();
+  session.ghost = null;
 }
 
 /** Which row the pointer is over, and whether the dragged row should land
@@ -1301,6 +1385,7 @@ function finishPointerDrag(session: PointerDragSession): void {
   pointerDrag = null;
   clearDropIndicators(session.container, session.itemSelector);
   session.button.classList.remove("dragging");
+  teardownDragVisuals(session);
   if (session.dragging) {
     // The browser still dispatches a trailing `click` on this element once
     // pointer capture releases, even after a real drag; swallow just that
@@ -1319,6 +1404,7 @@ function cancelPointerDrag(): void {
   pointerDrag = null;
   clearDropIndicators(session.container, session.itemSelector);
   session.button.classList.remove("dragging");
+  teardownDragVisuals(session);
   if (session.dragging) {
     session.button.dataset.suppressClick = "1";
     setTimeout(() => delete session.button.dataset.suppressClick, 0);
@@ -1356,23 +1442,32 @@ function attachPointerReorder(
       itemSelector,
       startX: event.clientX,
       startY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
       dragging: false,
       targetId: null,
       placeAfter: false,
+      ghost: null,
+      scrollFrame: null,
       onReorder,
     };
   });
   button.addEventListener("pointermove", (event) => {
     const session = pointerDrag;
     if (!session || session.button !== button || session.pointerId !== event.pointerId) return;
+    session.lastClientX = event.clientX;
+    session.lastClientY = event.clientY;
     if (!session.dragging) {
       const moved = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
       if (moved < POINTER_DRAG_THRESHOLD_PX) return;
       session.dragging = true;
       button.classList.add("dragging");
       if (typeof button.setPointerCapture === "function") button.setPointerCapture(event.pointerId);
+      session.ghost = createDragGhost(button);
+      session.scrollFrame = scheduleFrame(() => autoScrollStep(session));
     }
     event.preventDefault();
+    moveDragGhost(session, event.clientX, event.clientY);
     updatePointerDragTarget(session, event.clientY);
   });
   button.addEventListener("pointerup", (event) => {
