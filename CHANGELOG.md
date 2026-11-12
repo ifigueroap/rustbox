@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/ifigueroap/rustbox/compare/v0.13.0...v0.14.0) (2026-11-12)
+
+
+### Features
+
+* drag-and-drop reordering for sidebar services ([#57](https://github.com/ifigueroap/rustbox/issues/57)) ([b15e83b](https://github.com/ifigueroap/rustbox/commit/b15e83b3e80bfbe68c9654d9e7fee71d0ff6ba84))
+
+
+### Bug Fixes
+
+* **linux:** report per-service media permission to navigator.permissions.query ([#56](https://github.com/ifigueroap/rustbox/issues/56)) ([4b6ccc2](https://github.com/ifigueroap/rustbox/commit/4b6ccc20e9936b0e1cc6d88357381ecf518584f5))
+* **linux:** stop webview flicker when switching services and resizing ([#58](https://github.com/ifigueroap/rustbox/issues/58)) ([c13fea9](https://github.com/ifigueroap/rustbox/commit/c13fea9484e3f848a9198b42f01dfaa091b70684))
+
 ## [0.13.0](https://github.com/ifigueroap/rustbox/compare/v0.12.1...v0.13.0) (2026-11-11)
 
 
