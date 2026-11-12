@@ -396,9 +396,11 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
                     .cloned()
                     .ok_or_else(|| "service not found".to_string())?
             };
-            hide_others(app, Some(&service.id))?;
             ensure_webview(app, &service)?;
+            // Keep the previous service mapped until its replacement is shown.
+            // Separate GTK hide/show dispatches can paint the shell in between.
             show_webview(app, &service.id)?;
+            hide_others(app, Some(&service.id))?;
             *lock(&state.active_id) = Some(service.id.clone());
             set_window_title(app, Some(&service.name));
             remember_open_service(app, Some(&service.id));
