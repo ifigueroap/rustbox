@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/ifigueroap/rustbox/compare/v0.14.0...v0.14.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* mute playing audio during Do Not Disturb and restore it after ([#60](https://github.com/ifigueroap/rustbox/issues/60)) ([cf45a8f](https://github.com/ifigueroap/rustbox/commit/cf45a8f212b7e8d2553d7cfeaeb764e485a64062))
+
 ## [0.14.0](https://github.com/ifigueroap/rustbox/compare/v0.13.0...v0.14.0) (2026-11-12)
 
 
