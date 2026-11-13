@@ -244,7 +244,7 @@ On Linux, clicking a service notification asks Rustbox to show, unminimize, and 
 
 Sessions stay with their service ids when a notification opens a service. If click-capable delivery cannot start or reports a delivery error, Rustbox tries the existing plugin notification path; that fallback has no service click action.
 
-The same script mutes `audio` and `video` elements and suspends `AudioContext` while that service's sound is off or while the service is silenced. On Linux the WebKit view is muted as well. On macOS the native WKWebView is not muted; only that script runs, and it was not exercised inside WKWebView.
+Linux and Windows mute the service at the webview engine while its sound is off or the service is silenced. Playback state is preserved, including detached audio and Web Audio, so unmuting does not need a reload. macOS and older Windows runtimes without native mute use a script fallback that restores muted media and mutes Web Audio output through a gain node without suspending contexts. This fallback has not been exercised inside WKWebView.
 
 Unread badges are parsed from the document title, which is how these apps usually report them: `(3) WhatsApp`, `Slack (12)`, `[4] Telegram`. A leading `•` with no number counts as one. The badge appears after that service's webview has been created, and it updates while the webview is hidden.
 

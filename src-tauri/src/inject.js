@@ -354,102 +354,137 @@
     /* Permission queries are optional. */
   }
 
-  const mediaTouched = new WeakMap();
-  const contexts = new Set();
-  let soundOn = true;
-
-  function muteElement(element) {
-    if (!mediaTouched.has(element)) mediaTouched.set(element, element.muted);
-    element.muted = true;
-  }
-
-  function unmuteElement(element) {
-    if (!mediaTouched.has(element)) return;
-    element.muted = mediaTouched.get(element);
-    mediaTouched.delete(element);
-  }
-
-  function eachMedia(root, visit) {
-    if (!root) return;
-    if (root.nodeType === 1 && root.matches && root.matches("audio, video")) visit(root);
-    if (root.querySelectorAll) root.querySelectorAll("audio, video").forEach(visit);
-  }
-
-  function applySound(enabled) {
-    soundOn = !!enabled;
-    eachMedia(document, soundOn ? unmuteElement : muteElement);
-    contexts.forEach((ctx) => {
-      if (!ctx || ctx.state === "closed") return;
-      if (soundOn) {
-        if (ctx.__rustboxSuspended) {
-          ctx.__rustboxSuspended = false;
-          ctx.resume();
-        }
-      } else if (ctx.state === "running") {
-        ctx.__rustboxSuspended = true;
-        ctx.suspend();
-      }
-    });
-  }
-
-  window.__rustboxSetSound = applySound;
-
-  function watchMedia(root) {
-    if (!root || typeof MutationObserver !== "function") return;
-    const observer = new MutationObserver((records) => {
-      if (soundOn) return;
-      records.forEach((record) => {
-        record.addedNodes.forEach((node) => eachMedia(node, muteElement));
-      });
-    });
-    observer.observe(root, { childList: true, subtree: true });
-  }
-
-  if (document.documentElement) watchMedia(document.documentElement);
-  else document.addEventListener("DOMContentLoaded", () => watchMedia(document.documentElement));
-
-  if (window.HTMLMediaElement && window.HTMLMediaElement.prototype) {
-    const play = window.HTMLMediaElement.prototype.play;
-    window.HTMLMediaElement.prototype.play = function rustboxPlay() {
-      if (!soundOn) muteElement(this);
-      return play.apply(this, arguments);
-    };
-  }
-
-  if (typeof window.Audio === "function") {
-    const NativeAudio = window.Audio;
-    window.Audio = function RustboxAudio() {
-      const element = new NativeAudio(...arguments);
-      if (!soundOn) muteElement(element);
-      return element;
-    };
-  }
-
-  function wrapContext(name) {
-    const Native = window[name];
-    if (typeof Native !== "function" || Native.__rustbox) return;
-    function Wrapped() {
-      const ctx = new Native(...arguments);
-      contexts.add(ctx);
-      const resume = ctx.resume.bind(ctx);
-      ctx.resume = function rustboxResume() {
-        if (!soundOn) {
-          ctx.__rustboxSuspended = true;
-          return Promise.resolve();
-        }
-        return resume.apply(ctx, arguments);
-      };
-      if (!soundOn && ctx.state !== "closed") {
-        ctx.__rustboxSuspended = true;
-        ctx.suspend();
-      }
-      return ctx;
+  // Engine muting preserves page playback state, including detached media,
+  // frames and Web Audio. WKWebView and older WebView2 runtimes use the script fallback.
+  window.__rustboxInstallSound = function installSound() {
+    if (window.__rustboxSetSound) return;
+    const mediaTouched = new Map();
+    const contexts = new Map();
+    const knownMedia = new Set();
+    const trackedMedia = new WeakSet();
+    function trackMedia(element) {
+      if (trackedMedia.has(element)) return;
+      trackedMedia.add(element);
+      knownMedia.add(new WeakRef(element));
     }
-    Wrapped.prototype = Native.prototype;
-    Wrapped.__rustbox = true;
-    window[name] = Wrapped;
-  }
+    let soundOn = true;
 
-  wrapContext("AudioContext");
-  wrapContext("webkitAudioContext");
+    function muteElement(element) {
+      trackMedia(element);
+      if (!mediaTouched.has(element)) mediaTouched.set(element, element.muted);
+      element.muted = true;
+    }
+
+    function unmuteElement(element) {
+      if (!mediaTouched.has(element)) return;
+      element.muted = mediaTouched.get(element);
+      mediaTouched.delete(element);
+    }
+
+    function eachMedia(root, visit) {
+      if (!root) return;
+      if (root.nodeType === 1 && root.matches && root.matches("audio, video")) visit(root);
+      if (root.shadowRoot) eachMedia(root.shadowRoot, visit);
+      if (root.querySelectorAll) root.querySelectorAll("*").forEach((element) => {
+        if (element.matches("audio, video")) visit(element);
+        if (element.shadowRoot) eachMedia(element.shadowRoot, visit);
+      });
+    }
+
+    function applySound(enabled) {
+      soundOn = !!enabled;
+      if (soundOn) mediaTouched.forEach((_muted, element) => unmuteElement(element));
+      else {
+        eachMedia(document, muteElement);
+        knownMedia.forEach((reference) => {
+          const element = reference.deref();
+          if (element) muteElement(element);
+          else knownMedia.delete(reference);
+        });
+      }
+      contexts.forEach((gain, ctx) => {
+        if (ctx.state === "closed") { contexts.delete(ctx); return; }
+        gain.gain.value = soundOn ? 1 : 0;
+      });
+    }
+
+    window.__rustboxSetSound = applySound;
+
+    function watchMedia(root) {
+      if (!root || typeof MutationObserver !== "function") return;
+      const observer = new MutationObserver((records) => {
+        if (soundOn) return;
+        records.forEach((record) => {
+          record.addedNodes.forEach((node) => eachMedia(node, muteElement));
+        });
+      });
+      observer.observe(root, { childList: true, subtree: true });
+    }
+
+    if (document.documentElement) watchMedia(document.documentElement);
+    else document.addEventListener("DOMContentLoaded", () => watchMedia(document.documentElement));
+
+    if (window.HTMLMediaElement && window.HTMLMediaElement.prototype) {
+      const play = window.HTMLMediaElement.prototype.play;
+      window.HTMLMediaElement.prototype.play = function rustboxPlay() {
+        trackMedia(this);
+        if (!soundOn) muteElement(this);
+        return play.apply(this, arguments);
+      };
+    }
+
+    if (typeof window.Audio === "function") {
+      const NativeAudio = window.Audio;
+      window.Audio = function RustboxAudio() {
+        const element = new NativeAudio(...arguments);
+        trackMedia(element);
+        if (!soundOn) muteElement(element);
+        return element;
+      };
+      Object.setPrototypeOf(window.Audio, NativeAudio);
+      window.Audio.prototype = NativeAudio.prototype;
+    }
+
+    // Route output through our own gain instead of suspending contexts or
+    // intercepting resume(). A page keeps control of its playback lifecycle.
+    const destinations = new WeakMap();
+    const nativeConnect = window.AudioNode?.prototype.connect;
+    const nativeDisconnect = window.AudioNode?.prototype.disconnect;
+    if (nativeConnect) {
+      window.AudioNode.prototype.connect = function(destination, ...args) {
+        const target = destinations.get(destination) || destination;
+        const result = nativeConnect.call(this, target, ...args);
+        return result === target ? destination : result;
+      };
+      window.AudioNode.prototype.disconnect = function(...args) {
+        if (args.length) args[0] = destinations.get(args[0]) || args[0];
+        return nativeDisconnect.apply(this, args);
+      };
+    }
+
+    function wrapContext(name) {
+      const Native = window[name];
+      if (typeof Native !== "function" || Native.__rustbox || !nativeConnect) return;
+      function Wrapped(...args) {
+        const ctx = new Native(...args);
+        const gain = ctx.createGain();
+        gain.gain.value = soundOn ? 1 : 0;
+        nativeConnect.call(gain, ctx.destination);
+        destinations.set(ctx.destination, gain);
+        contexts.set(ctx, gain);
+        ctx.addEventListener("statechange", () => {
+          if (ctx.state === "closed") contexts.delete(ctx);
+        });
+        return ctx;
+      }
+      Object.setPrototypeOf(Wrapped, Native);
+      Wrapped.prototype = Native.prototype;
+      Wrapped.__rustbox = true;
+      window[name] = Wrapped;
+    }
+
+    wrapContext("AudioContext");
+    wrapContext("webkitAudioContext");
+  };
+  if (!window.__rustboxNativeAudio) window.__rustboxInstallSound();
 })();

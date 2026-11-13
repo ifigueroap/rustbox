@@ -19,6 +19,20 @@ use crate::policy::{self, PopupDecision};
 use crate::shortcuts::{self, ShortcutDestination};
 use crate::updates::{self, UpdateStatus};
 
+// Probed on the setup/UI thread using the shell's WebView2 runtime, before
+// any service is built. Unsupported runtimes install the fallback at document
+// start, so contexts created by the page are tracked from the beginning.
+#[cfg(target_os = "windows")]
+static WINDOWS_NATIVE_AUDIO: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn native_audio_available() -> bool {
+    #[cfg(target_os = "windows")]
+    return WINDOWS_NATIVE_AUDIO.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(target_os = "windows"))]
+    return cfg!(target_os = "linux");
+}
+
 pub struct RuntimeState {
     pub config_path: PathBuf,
     pub sessions_dir: PathBuf,
@@ -141,6 +155,23 @@ struct UnreadEvent {
 
 impl RuntimeState {
     pub fn load(app: &AppHandle) -> Result<Self, String> {
+        // RuntimeState is loaded during setup on the UI thread; with_webview
+        // executes inline there. Every service uses this same WebView2 runtime.
+        #[cfg(target_os = "windows")]
+        if let Some(shell) = app.get_webview("main") {
+            shell
+                .with_webview(|platform| {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+                    use windows_core::Interface;
+                    let supported = unsafe { platform.controller().CoreWebView2() }
+                        .and_then(|view| view.cast::<ICoreWebView2_8>())
+                        .is_ok();
+                    WINDOWS_NATIVE_AUDIO.store(supported, std::sync::atomic::Ordering::Relaxed);
+                })
+                // A failed probe must never block startup: services then use
+                // the script fallback, which native mute also bypasses safely.
+                .unwrap_or_else(|err| eprintln!("rustbox: could not probe engine mute: {err}"));
+        }
         let config_dir = app.path().app_config_dir().map_err(|err| err.to_string())?;
         let data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
         std::fs::create_dir_all(&config_dir).map_err(|err| err.to_string())?;
@@ -1155,17 +1186,74 @@ pub fn apply_sound_policy(app: &AppHandle) {
         if let Some(webview) = app.get_webview(&label_for(&id)) {
             apply_webview_sound(&webview, muted);
         }
-        #[cfg(target_os = "linux")]
-        {
-            crate::linux_host::set_muted(&label_for(&id), muted);
-        }
     }
 }
 
 fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
-    let enabled = if muted { "false" } else { "true" };
-    if let Err(err) = webview.eval(format!("window.__rustboxSetSound?.({enabled});")) {
-        eprintln!("rustbox: could not update service sound: {err}");
+    // Native handles and the GTK host belong to the event-loop thread. In
+    // particular, callers outside the UI thread cannot use linux_host's thread local.
+    #[cfg(target_os = "windows")]
+    let fallback_webview = webview.clone();
+    #[cfg(target_os = "linux")]
+    let label = webview.label().to_string();
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if let Err(err) = webview.with_webview(move |platform| {
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::WebViewExt;
+            let view = platform.inner();
+            if !crate::linux_host::set_muted(&label, muted) {
+                view.set_is_muted(muted);
+            }
+            if std::env::var_os("RUSTBOX_AUDIO_TRACE").is_some() {
+                eprintln!("rustbox: engine audio muted={}", view.is_muted());
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
+            use windows_core::Interface;
+            let result = unsafe {
+                platform
+                    .controller()
+                    .CoreWebView2()
+                    .and_then(|view| view.cast::<ICoreWebView2_8>())
+                    .and_then(|view| {
+                        view.SetIsMuted(muted)?;
+                        if std::env::var_os("RUSTBOX_AUDIO_TRACE").is_some() {
+                            let mut actual = Default::default();
+                            view.IsMuted(&mut actual)?;
+                            eprintln!("rustbox: engine audio muted={}", actual.as_bool());
+                        }
+                        Ok(())
+                    })
+            };
+            if result.is_ok() {
+                // Recover if a transient native failure previously activated
+                // the fallback; the engine now owns muting again.
+                let _ = fallback_webview.eval("window.__rustboxSetSound?.(true);");
+            }
+            if let Err(err) = result {
+                // Older WebView2 runtimes may not expose ICoreWebView2_8.
+                // Install the reversible fallback only when native mute fails.
+                eprintln!("rustbox: engine mute unavailable, using script sound: {err}");
+                let enabled = if muted { "false" } else { "true" };
+                if let Err(err) = fallback_webview.eval(format!(
+                    "window.__rustboxInstallSound?.(); window.__rustboxSetSound?.({enabled});"
+                )) {
+                    eprintln!("rustbox: could not update fallback sound: {err}");
+                }
+            }
+        }
+    }) {
+        eprintln!("rustbox: could not queue engine sound update: {err}");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let enabled = if muted { "false" } else { "true" };
+        if let Err(err) = webview.eval(format!("window.__rustboxSetSound?.({enabled});")) {
+            eprintln!("rustbox: could not update service sound: {err}");
+        }
     }
 }
 
@@ -1174,7 +1262,8 @@ fn initialization_script(muted: bool, preset: Option<&str>) -> String {
     let preset =
         serde_json::to_string(preset.unwrap_or_default()).unwrap_or_else(|_| "\"\"".to_string());
     format!(
-        "window.__rustboxServicePreset = {preset};\n{}\n{}\nwindow.__rustboxSetSound({enabled});",
+        "window.__rustboxNativeAudio = {};\nwindow.__rustboxServicePreset = {preset};\n{}\n{}\nwindow.__rustboxSetSound?.({enabled});",
+        native_audio_available(),
         include_str!("inject.js"),
         include_str!("find.js")
     )
@@ -1244,6 +1333,9 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
             note_title(&title_app, &service_id, &title);
         })
         .on_page_load(move |webview, payload| {
+            if let Some(id) = webview.label().strip_prefix("svc-") {
+                apply_webview_sound(&webview, service_sound_muted(&load_app, id));
+            }
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 crate::page_tools::restore_zoom(&load_app, &webview);
                 let _ = load_app.emit_to("main", "find-page-loaded", webview.label());
@@ -1282,6 +1374,7 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
             })
             .map_err(|err| err.to_string())?;
     }
+    apply_webview_sound(&webview, muted);
     crate::permissions::install(app, &service.id, &webview);
     let _ = webview;
     let state = app.state::<RuntimeState>();
