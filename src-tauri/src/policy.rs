@@ -440,6 +440,25 @@ mod tests {
     }
 
     #[test]
+    fn sound_policy_restores_after_dnd_cycles() {
+        for workspace in [false, true] {
+            for enabled in [false, true] {
+                for bypass in [false, true] {
+                    let before = sound_muted_allowing_bypass(false, false, enabled, bypass);
+                    assert_eq!(
+                        sound_muted_allowing_bypass(!workspace, workspace, enabled, bypass),
+                        !enabled || !bypass
+                    );
+                    assert_eq!(
+                        sound_muted_allowing_bypass(false, false, enabled, bypass),
+                        before
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn notify_in_dnd_lets_sound_through_do_not_disturb() {
         // Awake: behaves exactly like sound_muted either way.
         assert!(!sound_muted_allowing_bypass(false, false, true, false));
