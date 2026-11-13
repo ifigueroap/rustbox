@@ -168,7 +168,9 @@ impl RuntimeState {
                         .is_ok();
                     WINDOWS_NATIVE_AUDIO.store(supported, std::sync::atomic::Ordering::Relaxed);
                 })
-                .map_err(|err| err.to_string())?;
+                // A failed probe must never block startup: services then use
+                // the script fallback, which native mute also bypasses safely.
+                .unwrap_or_else(|err| eprintln!("rustbox: could not probe engine mute: {err}"));
         }
         let config_dir = app.path().app_config_dir().map_err(|err| err.to_string())?;
         let data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
