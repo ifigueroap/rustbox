@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/ifigueroap/rustbox/compare/v0.14.1...v0.15.0) (2026-11-15)
+
+
+### Features
+
+* add per-service Disable toggle ([#62](https://github.com/ifigueroap/rustbox/issues/62)) ([af4331c](https://github.com/ifigueroap/rustbox/commit/af4331cc4c6e0e656ac9375e90c8c612739f95ba))
+
 ## [0.14.1](https://github.com/ifigueroap/rustbox/compare/v0.14.0...v0.14.1) (2026-11-13)
 
 
