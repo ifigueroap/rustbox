@@ -49,6 +49,7 @@ interface Service {
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
   neverHibernate: boolean;
+  disabled: boolean;
   permissions: Partial<Record<PermissionKind, PermissionDecision>>;
   hibernated: boolean;
   workspaces: string[];
@@ -165,6 +166,10 @@ let workspaces: Workspace[] = [];
 let activeWorkspaceId: string | null = null;
 let presets: Preset[] = [];
 let activeId: string | null = null;
+/** A disabled service whose row was clicked: shows the inline Enable panel
+ * instead of a webview. Cleared on any other navigation; self-clears once
+ * the service is no longer disabled. */
+let pendingDisabledId: string | null = null;
 let chromeUserAgent = "";
 let configPath = "";
 let sessionsDir = "";
@@ -241,6 +246,7 @@ interface ServiceFormSeed {
   spellcheckEnabled?: boolean;
   permissions?: Partial<Record<PermissionKind, PermissionDecision>>;
   notificationsEnabled?: boolean;
+  disabled?: boolean;
 }
 
 interface ServiceForm {
@@ -1130,15 +1136,41 @@ async function activate(id: string): Promise<void> {
   closeEditor();
   // Explicit navigation cancels a cover that was about to restore another service.
   suspendedId = null;
+  pendingDisabledId = null;
   await onShellChain(async () => {
     const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id }));
     if (snapshot) applySnapshot(snapshot);
   });
 }
 
+/** Clicking a disabled row never creates a webview: it shows an inline panel
+ * in the stage instead, offering to enable the service. If another service is
+ * open, hide its webview first so the panel is not covered. */
+async function showDisabledPanel(id: string): Promise<void> {
+  clearError();
+  closeEditor();
+  suspendedId = null;
+  pendingDisabledId = id;
+  if (activeId) {
+    await onShellChain(async () => {
+      const snapshot = await run(() => invoke<Snapshot>("set_active_service", { id: null }));
+      if (snapshot) applySnapshot(snapshot);
+    });
+  } else {
+    render();
+  }
+}
+
+async function enableFromDisabledPanel(id: string): Promise<void> {
+  await setServiceFlag(id, "disabled", false);
+  pendingDisabledId = null;
+  await activate(id);
+}
+
 async function showDashboard(): Promise<void> {
   clearError();
   suspendedId = null;
+  pendingDisabledId = null;
   if (!activeId) {
     render();
     return;
@@ -1847,6 +1879,7 @@ function renderSidebar(): void {
     button.type = "button";
     button.className = service.id === activeId ? "svc active" : "svc";
     button.classList.toggle("hibernated", service.hibernated);
+    button.classList.toggle("disabled", service.disabled);
     button.style.setProperty("--svc", service.color);
     button.title = serviceTitle(service);
     button.setAttribute("role", "option");
@@ -1858,7 +1891,11 @@ function renderSidebar(): void {
       });
     });
     button.addEventListener("click", () => {
-      void activate(service.id);
+      if (service.disabled) {
+        void showDisabledPanel(service.id);
+      } else {
+        void activate(service.id);
+      }
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -1874,6 +1911,7 @@ function renderSidebar(): void {
     name.className = "svc-name";
     name.textContent = service.name;
     button.append(avatar, name);
+    if (service.disabled) button.append(disabledMark());
     if (service.hibernated) button.append(hibernationMark());
 
     if (service.unread > 0) {
@@ -1889,10 +1927,16 @@ function renderSidebar(): void {
 
 function renderStage(): void {
   const dashboard = must<HTMLElement>("#dashboard");
+  const panel = must<HTMLElement>("#disabled-panel");
   const status = must<HTMLElement>("#stage-status");
   const active = services.find((service) => service.id === activeId);
-  dashboard.hidden = Boolean(active);
-  if (!active) renderDashboard();
+  const pending = pendingDisabledId
+    ? services.find((service) => service.id === pendingDisabledId && service.disabled)
+    : undefined;
+  panel.hidden = !pending;
+  if (pending) renderDisabledPanel(pending);
+  dashboard.hidden = Boolean(active) || Boolean(pending);
+  if (!active && !pending) renderDashboard();
   if (active) {
     status.hidden = false;
     status.textContent = t("sidebar.opening", { name: active.name });
@@ -1900,6 +1944,16 @@ function renderStage(): void {
     status.hidden = true;
     status.textContent = "";
   }
+}
+
+function renderDisabledPanel(service: Service): void {
+  must<HTMLElement>("#disabled-panel-title").textContent = t("service.disabledPanelTitle");
+  must<HTMLElement>("#disabled-panel-body").textContent = t("service.disabledPanelBody", {
+    name: service.name,
+  });
+  const enable = must<HTMLButtonElement>("#disabled-panel-enable");
+  enable.textContent = t("service.disabledEnable");
+  enable.onclick = () => void enableFromDisabledPanel(service.id);
 }
 
 function renderDashboard(): void {
@@ -1958,12 +2012,21 @@ function serviceCard(service: Service): HTMLElement {
   const card = document.createElement("article");
   card.className = "card";
   card.classList.toggle("hibernated", service.hibernated);
+  card.classList.toggle("disabled", service.disabled);
   card.dataset.serviceId = service.id;
+
+  const open = () => {
+    if (service.disabled) {
+      void showDisabledPanel(service.id);
+    } else {
+      void activate(service.id);
+    }
+  };
 
   const main = document.createElement("button");
   main.type = "button";
   main.className = "card-main";
-  main.title = t("card.openNamed", { name: service.name });
+  main.title = service.disabled ? t("service.disabledTitle") : t("card.openNamed", { name: service.name });
   if (service.hibernated) main.title += `. ${t("hibernate.state")}`;
   const avatar = document.createElement("span");
   avatar.className = "avatar";
@@ -1990,16 +2053,12 @@ function serviceCard(service: Service): HTMLElement {
   const chips = membershipChips(service);
   if (chips && deskShowAll) copy.append(chips);
   main.append(avatar, copy);
-  main.addEventListener("click", () => {
-    void activate(service.id);
-  });
+  main.addEventListener("click", open);
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
   actions.append(
-    actionButton(t("card.open"), "open", () => {
-      void activate(service.id);
-    }),
+    actionButton(t("card.open"), "open", open),
     actionButton(t("card.edit"), "", () => {
       void openEditor(service);
     }),
@@ -2166,6 +2225,23 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
     });
   }
 
+  // Also editor-only: disabling a service in the add-service form has
+  // nothing to apply to yet.
+  const disableToggle = document.createElement("label");
+  disableToggle.className = "check wide";
+  const disableInput = document.createElement("input");
+  disableInput.type = "checkbox";
+  disableToggle.append(disableInput, caption("service.disabled"));
+  const disableHint = document.createElement("p");
+  disableHint.className = "field-hint";
+  disableHint.dataset.i18n = "service.disabledHint";
+  disableHint.textContent = t("service.disabledHint");
+  if (isEditor) {
+    disableInput.addEventListener("change", () => {
+      if (editingId) void setServiceFlag(editingId, "disabled", disableInput.checked);
+    });
+  }
+
   const agent = field("service.customUa", "");
   agent.label.classList.add("wide");
   agent.input.dataset.i18nPlaceholder = "service.customUaPlaceholder";
@@ -2253,7 +2329,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
   permissionHint.textContent = t("permission.hint");
   permissionSection.append(permissionHint);
   if (isEditor) {
-    container.append(dndBypass, dndBypassHint, spellcheck, permissionSection);
+    container.append(dndBypass, dndBypassHint, disableToggle, disableHint, spellcheck, permissionSection);
     spellcheckInput.addEventListener("change", () => {
       if (editingId) void changeSpellcheck(editingId, spellcheckInput.checked);
     });
@@ -2472,6 +2548,7 @@ function mountServiceForm(container: HTMLElement): ServiceForm {
       chromeInput.checked = values.useChromeUserAgent;
       agent.input.value = values.userAgent;
       dndBypassInput.checked = values.notifyInDnd ?? false;
+      disableInput.checked = values.disabled ?? false;
       spellcheckInput.checked = values.spellcheckEnabled ?? true;
       for (const [kind, select] of permissionInputs) select.value = values.permissions?.[kind] ?? "ask";
       notificationInput.checked = values.notificationsEnabled ?? true;
@@ -2587,6 +2664,7 @@ async function openEditor(service: Service): Promise<void> {
     spellcheckEnabled: service.spellcheckEnabled,
     permissions: service.permissions,
     notificationsEnabled: service.notificationsEnabled,
+    disabled: service.disabled,
   });
   const error = must<HTMLElement>("#editor-error");
   error.hidden = true;
@@ -3219,7 +3297,7 @@ function recomputeWorkspaceUnread(): void {
  * on the backend. Sidebar/rail badges and the tray keep using
  * `service.unread` instead, which Do not disturb does zero. */
 function informationalUnread(service: Service): number {
-  return service.notificationsEnabled ? service.rawUnread : 0;
+  return service.disabled || !service.notificationsEnabled ? 0 : service.rawUnread;
 }
 
 /** Whether Home's unread pill should render muted rather than copper: while
@@ -3262,6 +3340,7 @@ function soundOff(service: Service): boolean {
 
 function serviceTitle(service: Service): string {
   const parts = [service.unread > 0 ? `${service.name} (${service.unread})` : service.name];
+  if (service.disabled) parts.push(t("service.disabledTitle"));
   if (!doNotDisturb && !service.workspaceSilenced && !service.soundEnabled) parts.push(t("service.soundOff"));
   if (!doNotDisturb && !service.workspaceSilenced && !service.notificationsEnabled) {
     parts.push(t("service.notificationsOff"));
@@ -3316,6 +3395,10 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
       checked: service.neverHibernate,
       action: () => void setServiceFlag(service.id, "neverHibernate", !service.neverHibernate),
     }));
+    add(await MenuItem.new({
+      text: service.disabled ? t("service.menuEnable") : t("service.menuDisable"),
+      action: () => void setServiceFlag(service.id, "disabled", !service.disabled),
+    }));
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
       text: t("service.menuMoveUp"),
@@ -3330,13 +3413,14 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
     add(await PredefinedMenuItem.new({ item: "Separator" }));
     add(await MenuItem.new({
       text: t("service.menuReload"),
+      enabled: !service.disabled,
       action: () => void run(async () => {
         applySnapshot(await invoke<Snapshot>("reload_service", { id: service.id }));
       }),
     }));
     add(await MenuItem.new({
       text: t("zoom.reset"),
-      enabled: (service.zoom ?? 1) !== 1,
+      enabled: !service.disabled && (service.zoom ?? 1) !== 1,
       action: () => void run(async () => {
         applySnapshot(await invoke<Snapshot>("reset_service_zoom", { id: service.id }));
       }),
@@ -3344,14 +3428,17 @@ async function openServiceMenu(serviceId: string, x: number, y: number): Promise
     add(await CheckMenuItem.new({
       text: t("service.spellcheck"),
       checked: service.spellcheckEnabled,
+      enabled: !service.disabled,
       action: () => deferMenuAction(() => void changeSpellcheck(service.id, !service.spellcheckEnabled)),
     }));
     add(await MenuItem.new({
       text: t("service.clearCache"),
+      enabled: !service.disabled,
       action: () => deferMenuAction(() => void maintainService(service, false)),
     }));
     add(await MenuItem.new({
       text: t("service.logout"),
+      enabled: !service.disabled,
       action: () => deferMenuAction(() => void maintainService(service, true)),
     }));
     add(await MenuItem.new({ text: t("service.menuCopyUrl"), action: () => void copyText(service.url) }));
@@ -3423,7 +3510,7 @@ async function changeSpellcheck(id: string, enabled: boolean): Promise<void> {
 
 async function setServiceFlag(
   id: string,
-  kind: "sound" | "notifications" | "notifyInDnd" | "neverHibernate",
+  kind: "sound" | "notifications" | "notifyInDnd" | "neverHibernate" | "disabled",
   enabled: boolean,
 ): Promise<void> {
   const command =
@@ -3433,8 +3520,11 @@ async function setServiceFlag(
         ? "set_service_notifications"
         : kind === "neverHibernate"
           ? "set_service_never_hibernate"
-          : "set_service_notify_in_dnd";
-  const snapshot = await run(() => invoke<Snapshot>(command, { id, enabled }));
+          : kind === "disabled"
+            ? "set_service_disabled"
+            : "set_service_notify_in_dnd";
+  const field = kind === "disabled" ? "disabled" : "enabled";
+  const snapshot = await run(() => invoke<Snapshot>(command, { id, [field]: enabled }));
   if (snapshot) applySnapshot(snapshot);
 }
 
@@ -3468,6 +3558,7 @@ async function switchWorkspace(id: string): Promise<void> {
   }
   clearError();
   closeEditor();
+  pendingDisabledId = null;
   const snapshot = await run(() => invoke<Snapshot>("set_active_workspace", { id }));
   if (snapshot) applySnapshot(snapshot);
 }
@@ -3653,7 +3744,7 @@ export async function renderShell(): Promise<void> {
   // it still exists and the active workspace can see it. The workspace itself
   // was restored by the backend before this runs.
   const last = services.find((service) => service.id === snapshot.lastServiceId);
-  if (!snapshot.activeId && last && serviceInWorkspace(last, activeWorkspaceId)) {
+  if (!snapshot.activeId && last && !last.disabled && serviceInWorkspace(last, activeWorkspaceId)) {
     await activate(last.id);
   }
 }
@@ -4373,5 +4464,14 @@ function hibernationMark(): HTMLElement {
   mark.textContent = "☾";
   mark.title = t("hibernate.state");
   mark.setAttribute("aria-label", t("hibernate.state"));
+  return mark;
+}
+
+function disabledMark(): HTMLElement {
+  const mark = document.createElement("span");
+  mark.className = "disabled-mark";
+  mark.textContent = "○";
+  mark.title = t("service.disabled");
+  mark.setAttribute("aria-label", t("service.disabled"));
   return mark;
 }

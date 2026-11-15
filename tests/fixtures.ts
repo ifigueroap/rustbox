@@ -22,6 +22,7 @@ export interface TestService {
   notifyInDnd: boolean;
   spellcheckEnabled: boolean;
   neverHibernate: boolean;
+  disabled: boolean;
   permissions: Partial<Record<"media" | "screen" | "location" | "clipboard", "ask" | "allow" | "deny">>;
   hibernated: boolean;
   workspaces: string[];
@@ -121,6 +122,7 @@ export function service(
     notifyInDnd: false,
     spellcheckEnabled: true,
     neverHibernate: false,
+    disabled: false,
     permissions: {},
     hibernated: false,
     workspaces: workspaceIds,

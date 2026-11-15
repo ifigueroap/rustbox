@@ -50,6 +50,22 @@ describe("Home unread counts during Do Not Disturb", () => {
     expect(document.querySelector("#service-list .badge")).toBeNull();
   });
 
+  it("hides the Home count for a disabled service even with Badges on", () => {
+    const main = workspace("Main", { order: 0 });
+    const slack = service("Slack", [main.id], {
+      preset: "slack",
+      disabled: true,
+      notificationsEnabled: true,
+      rawUnread: 5,
+      unread: 0,
+    });
+
+    applyShellSnapshot(snapshot({ workspaces: [main], services: [slack], doNotDisturb: false }));
+
+    expect(pill(slack.id).textContent).toBe("No unread");
+    expect(pill(slack.id).classList.contains("has-unread")).toBe(false);
+  });
+
   it("still hides the Home count when the service's own Badges switch is off", () => {
     const main = workspace("Main", { order: 0 });
     const slack = service("Slack", [main.id], {
