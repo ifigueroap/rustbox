@@ -194,9 +194,19 @@ export const es = {
   "service.notifyInDndHint":
     "Permite que las notificaciones y el sonido de este servicio pasen mientras No molestar está activo. Las insignias siguen ocultas.",
   "service.notifyInDndBadge": "Omite No molestar",
+  "service.disabled": "Deshabilitado",
+  "service.disabledHint":
+    "Detiene su vista web, su carga en segundo plano y sus notificaciones. Su sesión sigue guardada, así que las cookies se conservan para cuando lo vuelvas a habilitar.",
+  "service.disabledTitle": "Deshabilitado — haz clic para habilitar",
+  "service.disabledPanelTitle": "Este servicio está deshabilitado",
+  "service.disabledPanelBody":
+    "{name} está deshabilitado. Su sesión sigue guardada. Habilítalo para volver a cargar su vista web.",
+  "service.disabledEnable": "Habilitar",
   "service.menuSound": "Sonido",
   "service.menuNotifications": "Notificaciones",
   "service.menuNotifyInDnd": "Notificar en No molestar",
+  "service.menuDisable": "Deshabilitar",
+  "service.menuEnable": "Habilitar",
   "service.menuMoveUp": "Subir",
   "service.menuMoveDown": "Bajar",
   "service.spellcheck": "Revisión ortográfica",

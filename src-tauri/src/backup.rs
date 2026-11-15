@@ -229,6 +229,7 @@ mod tests {
         );
         imported.services[0].spellcheck_enabled = Some(false);
         imported.services[0].never_hibernate = true;
+        imported.services[0].disabled = true;
         imported.start_at_login = true;
         imported.start_hidden = true;
         imported.hibernate_after_minutes = 15;

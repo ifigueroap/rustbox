@@ -281,6 +281,11 @@ pub struct Service {
     /// Per-kind decisions; absent kinds ask. Notifications use their existing switch.
     #[serde(default)]
     pub permissions: std::collections::BTreeMap<PermissionKind, PermissionDecision>,
+    /// Keeps the service listed (and its session on disk) but stops its
+    /// webview, background load, notifications, hibernation candidacy, and
+    /// shortcut cycling. Off by default so old configs keep every service enabled.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -334,6 +339,11 @@ struct ServiceWire {
     pub permissions: std::collections::BTreeMap<PermissionKind, PermissionDecision>,
     #[serde(default)]
     media_permission: Option<PermissionDecision>,
+    /// Keeps the service listed (and its session on disk) but stops its
+    /// webview, background load, notifications, hibernation candidacy, and
+    /// shortcut cycling. Off by default so old configs keep every service enabled.
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 impl From<ServiceWire> for Service {
@@ -361,6 +371,7 @@ impl From<ServiceWire> for Service {
             zoom: wire.zoom,
             never_hibernate: wire.never_hibernate,
             permissions: wire.permissions,
+            disabled: wire.disabled,
         }
     }
 }
@@ -816,6 +827,7 @@ impl Config {
             zoom: default_zoom(),
             never_hibernate: false,
             permissions: Default::default(),
+            disabled: false,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -843,6 +855,7 @@ impl Config {
             zoom: default_zoom(),
             never_hibernate: false,
             permissions: Default::default(),
+            disabled: false,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -1199,10 +1212,11 @@ impl Config {
             self.active_workspace_id = Some(self.workspaces[0].id.clone());
         }
 
-        let open_ok = self
-            .active_service_id
-            .as_deref()
-            .is_some_and(|id| self.services.iter().any(|service| service.id == id));
+        let open_ok = self.active_service_id.as_deref().is_some_and(|id| {
+            self.services
+                .iter()
+                .any(|service| service.id == id && !service.disabled)
+        });
         if !open_ok {
             self.active_service_id = None;
         }
@@ -1955,6 +1969,42 @@ mod tests {
         assert!(!legacy.services[0].never_hibernate);
     }
 
+    /// A config written before the disable toggle existed has no `disabled`
+    /// field on any service. It must still load, keeping every service enabled.
+    #[test]
+    fn a_config_without_disabled_loads_with_every_service_enabled() {
+        let json = r#"{
+            "version": 1,
+            "services": [
+                {"id": "a", "name": "WhatsApp", "url": "https://web.whatsapp.com/"}
+            ]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.services.len(), 1);
+        assert!(!config.services[0].disabled);
+    }
+
+    #[test]
+    fn disabled_roundtrips_through_save_and_load() {
+        let mut config = Config::default();
+        let service = config.add_preset("whatsapp", None).unwrap();
+        config.services[0].disabled = true;
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["services"][0]["disabled"], true);
+        let loaded: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded.services[0].id, service.id);
+        assert!(loaded.services[0].disabled);
+
+        // An old config that never writes `disabled` keeps loading enabled.
+        let mut legacy = serde_json::to_value(&config).unwrap();
+        legacy["services"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("disabled");
+        let legacy: Config = serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.services[0].disabled);
+    }
+
     // ---- Workspaces -------------------------------------------------------
 
     fn config_with_workspaces(names: &[&str]) -> Config {
@@ -2492,6 +2542,16 @@ mod tests {
 
         // A stale id in a hand-edited file is dropped rather than restored.
         config.active_service_id = Some("gone".into());
+        config.normalize();
+        assert_eq!(config.active_service_id, None);
+    }
+
+    #[test]
+    fn a_disabled_open_service_is_forgotten_on_normalize() {
+        let mut config = sample_config();
+        let id = config.services[0].id.clone();
+        config.services[0].disabled = true;
+        config.active_service_id = Some(id);
         config.normalize();
         assert_eq!(config.active_service_id, None);
     }

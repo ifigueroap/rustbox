@@ -188,9 +188,19 @@ export const en = {
   "service.notifyInDndHint":
     "Lets this service's notifications and sound through while Do not disturb is on. Badges stay hidden.",
   "service.notifyInDndBadge": "Bypasses Do not disturb",
+  "service.disabled": "Disabled",
+  "service.disabledHint":
+    "Stops its webview, background loading, and notifications. Its session stays saved, so cookies are kept for whenever you turn it back on.",
+  "service.disabledTitle": "Disabled — click to enable",
+  "service.disabledPanelTitle": "This service is disabled",
+  "service.disabledPanelBody":
+    "{name} is disabled. Its session is still saved. Enable it to load its webview again.",
+  "service.disabledEnable": "Enable",
   "service.menuSound": "Sound",
   "service.menuNotifications": "Notifications",
   "service.menuNotifyInDnd": "Notify in Do not disturb",
+  "service.menuDisable": "Disable",
+  "service.menuEnable": "Enable",
   "service.menuMoveUp": "Move up",
   "service.menuMoveDown": "Move down",
   "service.spellcheck": "Spellcheck",

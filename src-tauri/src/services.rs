@@ -69,6 +69,9 @@ pub struct ServiceDto {
     pub workspaces: Vec<String>,
     pub all_workspaces: bool,
     pub never_hibernate: bool,
+    /// Webview, background load, notifications, hibernation, and shortcut
+    /// cycling are all suppressed while true. The session on disk is kept.
+    pub disabled: bool,
     pub permissions: std::collections::BTreeMap<
         crate::config::PermissionKind,
         crate::config::PermissionDecision,
@@ -232,11 +235,12 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
         .map(|service| {
             let count = unread.get(&service.id).copied().unwrap_or(0);
             let workspace_dnd = config.workspace_silenced(service);
-            let shown = policy::notifications_shown(
-                config.effective_do_not_disturb(),
-                workspace_dnd,
-                service.notifications_enabled,
-            );
+            let shown = !service.disabled
+                && policy::notifications_shown(
+                    config.effective_do_not_disturb(),
+                    workspace_dnd,
+                    service.notifications_enabled,
+                );
             ServiceDto {
                 id: service.id.clone(),
                 name: service.name.clone(),
@@ -256,6 +260,7 @@ pub fn snapshot(app: &AppHandle) -> Snapshot {
                 workspaces: service.workspaces.clone(),
                 all_workspaces: service.all_workspaces,
                 never_hibernate: service.never_hibernate,
+                disabled: service.disabled,
                 permissions: service.permissions.clone(),
                 hibernated: hibernated.contains(&service.id),
                 workspace_silenced: workspace_dnd,
@@ -344,11 +349,13 @@ pub fn workspace_totals(
     for service in &members {
         let count = unread.get(&service.id).copied().unwrap_or(0);
         raw = raw.saturating_add(count);
-        if policy::notifications_shown(
-            config.effective_do_not_disturb(),
-            config.workspace_silenced(service),
-            service.notifications_enabled,
-        ) {
+        if !service.disabled
+            && policy::notifications_shown(
+                config.effective_do_not_disturb(),
+                config.workspace_silenced(service),
+                service.notifications_enabled,
+            )
+        {
             visible = visible.saturating_add(count);
         }
     }
@@ -374,11 +381,13 @@ pub fn visible_unread_total(app: &AppHandle) -> u32 {
         .map(|service| {
             let count = unread.get(&service.id).copied().unwrap_or(0);
             let workspace_dnd = config.workspace_silenced(service);
-            if policy::notifications_shown(
-                config.effective_do_not_disturb(),
-                workspace_dnd,
-                service.notifications_enabled,
-            ) {
+            if !service.disabled
+                && policy::notifications_shown(
+                    config.effective_do_not_disturb(),
+                    workspace_dnd,
+                    service.notifications_enabled,
+                )
+            {
                 count
             } else {
                 0
@@ -427,14 +436,21 @@ pub fn set_active(app: &AppHandle, id: Option<String>) -> Result<(), String> {
                     .cloned()
                     .ok_or_else(|| "service not found".to_string())?
             };
-            ensure_webview(app, &service)?;
-            // Keep the previous service mapped until its replacement is shown.
-            // Separate GTK hide/show dispatches can paint the shell in between.
-            show_webview(app, &service.id)?;
-            hide_others(app, Some(&service.id))?;
-            *lock(&state.active_id) = Some(service.id.clone());
-            set_window_title(app, Some(&service.name));
-            remember_open_service(app, Some(&service.id));
+            if service.disabled {
+                hide_others(app, None)?;
+                *lock(&state.active_id) = None;
+                set_window_title(app, None);
+                remember_open_service(app, None);
+            } else {
+                ensure_webview(app, &service)?;
+                // Keep the previous service mapped until its replacement is shown.
+                // Separate GTK hide/show dispatches can paint the shell in between.
+                show_webview(app, &service.id)?;
+                hide_others(app, Some(&service.id))?;
+                *lock(&state.active_id) = Some(service.id.clone());
+                set_window_title(app, Some(&service.name));
+                remember_open_service(app, Some(&service.id));
+            }
         }
         None => {
             hide_others(app, None)?;
@@ -535,6 +551,7 @@ pub fn apply_shortcut(
             Some(workspace_id) => config
                 .services_in_workspace(&workspace_id)
                 .iter()
+                .filter(|service| !service.disabled)
                 .map(|service| service.id.clone())
                 .collect(),
             None => Vec::new(),
@@ -612,6 +629,9 @@ pub fn reload_service(app: &AppHandle, id: &str) -> Result<(), String> {
             .cloned()
             .ok_or_else(|| "service not found".to_string())?
     };
+    if service.disabled {
+        return Err("service is disabled".to_string());
+    }
     let label = label_for(&service.id);
     if app.get_webview(&label).is_none() {
         return set_active(app, Some(service.id));
@@ -670,6 +690,58 @@ pub fn recreate_if_active(app: &AppHandle, id: &str) -> Result<(), String> {
         set_window_title(app, Some(&service.name));
     }
     Ok(())
+}
+
+/// Disabling tears the webview down (the session directory is untouched) and,
+/// if it was the open service, switches to another enabled one in the active
+/// workspace or the desk. Enabling only flips the flag: like waking a
+/// hibernated service, the webview is created lazily the next time it is
+/// activated.
+pub fn set_service_disabled(app: &AppHandle, id: &str, disabled: bool) -> Result<(), String> {
+    if disabled {
+        close_service_webview(app, id)?;
+    }
+    mutate(app, |config| {
+        let service = config
+            .services
+            .iter_mut()
+            .find(|service| service.id == id)
+            .ok_or_else(|| "service not found".to_string())?;
+        service.disabled = disabled;
+        Ok(())
+    })?;
+    if !disabled {
+        return Ok(());
+    }
+    let state = app.state::<RuntimeState>();
+    let mut hibernation = lock(&state.hibernation);
+    hibernation.hibernated.remove(id);
+    hibernation.background_since.remove(id);
+    drop(hibernation);
+    let was_active = lock(&state.active_id).as_deref() == Some(id);
+    if was_active {
+        let fallback = {
+            let config = lock(&state.config);
+            fallback_active_service(&config, id)
+        };
+        set_active(app, fallback)?;
+    }
+    Ok(())
+}
+
+/// Another enabled service in the current workspace, so disabling the open
+/// one does not strand the window on a service with no webview. `None` when
+/// none remain, which lands on the desk.
+fn fallback_active_service(config: &Config, disabled_id: &str) -> Option<String> {
+    let workspace = config.active_workspace_id();
+    let members: Vec<&Service> = match &workspace {
+        Some(workspace_id) => config.services_in_workspace(workspace_id),
+        None => config.services.iter().collect(),
+    };
+    members
+        .into_iter()
+        .find(|service| service.id != disabled_id && !service.disabled)
+        .map(|service| service.id.clone())
 }
 
 pub fn clear_runtime_service(app: &AppHandle, id: &str) {
@@ -913,6 +985,13 @@ pub fn forward_notification(
     };
     let state = app.state::<RuntimeState>();
     if lock(&state.hibernation).hibernated.contains(service_id) {
+        return Ok(());
+    }
+    if lock(&state.config)
+        .services
+        .iter()
+        .any(|service| service.id == service_id && service.disabled)
+    {
         return Ok(());
     }
     let name = {
@@ -1283,10 +1362,14 @@ fn allow_notification(state: &RuntimeState, service_id: &str) -> bool {
     true
 }
 
-/// Hidden login launches still load every service for notifications and badges.
+/// Hidden login launches still load every enabled service for notifications
+/// and badges. A disabled service stays unloaded, same as at a normal launch.
 pub fn load_background_services(app: &AppHandle) -> Result<(), String> {
     let services = lock(&app.state::<RuntimeState>().config).services.clone();
     for service in services {
+        if service.disabled {
+            continue;
+        }
         ensure_webview(app, &service)?;
         if let Some(webview) = app.get_webview(&label_for(&service.id)) {
             let window = main_window(app)?;
@@ -1301,6 +1384,9 @@ pub fn load_background_services(app: &AppHandle) -> Result<(), String> {
 }
 
 fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
+    if service.disabled {
+        return Err("service is disabled".to_string());
+    }
     let label = label_for(&service.id);
     if app.get_webview(&label).is_some() {
         return Ok(());
@@ -1716,6 +1802,53 @@ mod tests {
         // One service is one webview; the label never mentions a workspace.
         assert_eq!(label_for("abc"), "svc-abc");
     }
+
+    #[test]
+    fn a_disabled_service_contributes_no_badge_but_is_still_a_member() {
+        let mut config = config_with(&["Work"]);
+        let work = config.workspaces[0].id.clone();
+        let service = add(&mut config, "Slack", &[&work], false);
+        config.services[0].disabled = true;
+        let mut unread = HashMap::new();
+        unread.insert(service, 5);
+        let (visible, _, count) = workspace_totals(&config, &unread, &config.workspaces[0]);
+        assert_eq!(visible, 0, "a disabled service shows no badge");
+        assert_eq!(count, 1, "it still counts as a member of the workspace");
+    }
+
+    #[test]
+    fn fallback_picks_another_enabled_service_in_the_active_workspace() {
+        let mut config = config_with(&["Work", "Teaching"]);
+        let work = config.workspaces[0].id.clone();
+        let teaching = config.workspaces[1].id.clone();
+        let disabled_one = add(&mut config, "Slack", &[&work], false);
+        let other_workspace = add(&mut config, "Zulip", &[&teaching], false);
+        let fallback_target = add(&mut config, "Mail", &[&work], false);
+        config.active_workspace_id = Some(work);
+        config
+            .services
+            .iter_mut()
+            .find(|s| s.id == disabled_one)
+            .unwrap()
+            .disabled = true;
+        let _ = other_workspace;
+
+        assert_eq!(
+            fallback_active_service(&config, &disabled_one),
+            Some(fallback_target)
+        );
+    }
+
+    #[test]
+    fn fallback_is_none_when_no_other_enabled_service_remains() {
+        let mut config = config_with(&["Work"]);
+        let work = config.workspaces[0].id.clone();
+        let only = add(&mut config, "Slack", &[&work], false);
+        config.active_workspace_id = Some(work);
+        config.services[0].disabled = true;
+
+        assert_eq!(fallback_active_service(&config, &only), None);
+    }
 }
 
 /// Only called while the caller owns RuntimeState::ops. Never block the UI
@@ -1839,6 +1972,7 @@ fn hibernate_idle(app: &AppHandle) {
         let candidates: Vec<_> = config
             .services
             .iter()
+            .filter(|service| !service.disabled)
             .map(|service| crate::hibernate::Candidate {
                 id: &service.id,
                 background_since: hibernation.background_since.get(&service.id).copied(),

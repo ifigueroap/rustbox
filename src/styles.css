@@ -2268,12 +2268,26 @@ button:disabled,
 .card.hibernated .unread-pill {
   opacity: 0.5;
 }
-.hibernation-mark {
+.hibernation-mark,
+.disabled-mark {
   color: var(--muted);
   font-size: 0.85em;
   flex-shrink: 0;
 }
-.sidebar-collapsed .svc .hibernation-mark {
+
+/* A disabled service stays listed but visually recedes; its own avatar
+ * color is kept legible enough to still identify the row. */
+.svc.disabled .avatar,
+.card.disabled .avatar {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.svc.disabled .svc-name,
+.card.disabled strong {
+  opacity: 0.6;
+}
+.sidebar-collapsed .svc .hibernation-mark,
+.sidebar-collapsed .svc .disabled-mark {
   position: absolute;
   left: 3px;
   bottom: 3px;

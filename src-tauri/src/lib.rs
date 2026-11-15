@@ -1,6 +1,6 @@
+mod autostart;
 mod backup;
 mod backup_commands;
-mod autostart;
 mod click_focus;
 mod config;
 mod dnd_schedule;
@@ -620,8 +620,8 @@ pub fn run() {
                     false
                 }
             };
-            let background_ok = !hidden_launch
-                || services::load_background_services(app.handle()).is_ok();
+            let background_ok =
+                !hidden_launch || services::load_background_services(app.handle()).is_ok();
             if !background_ok {
                 eprintln!("rustbox: could not load background services; showing the window");
             }
@@ -691,6 +691,7 @@ pub fn run() {
             set_service_notify_in_dnd,
             set_hibernation_settings,
             set_service_never_hibernate,
+            set_service_disabled,
             set_service_permission,
             answer_permission,
             set_do_not_disturb,
@@ -898,6 +899,17 @@ fn set_service_never_hibernate(
         service.never_hibernate = enabled;
         Ok(())
     })?;
+    Ok(services::snapshot(&app))
+}
+
+#[tauri::command]
+fn set_service_disabled(
+    app: tauri::AppHandle,
+    id: String,
+    disabled: bool,
+) -> Result<Snapshot, String> {
+    services::set_service_disabled(&app, &id, disabled)?;
+    tray::sync(&app);
     Ok(services::snapshot(&app))
 }
 
