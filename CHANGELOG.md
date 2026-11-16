@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/ifigueroap/rustbox/compare/v0.15.0...v0.15.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* avoid Windows startup deadlock when applying webview sound ([#64](https://github.com/ifigueroap/rustbox/issues/64)) ([3b89166](https://github.com/ifigueroap/rustbox/commit/3b891668d074c7a2c5c2dd3e7307650b5f237d0f))
+
 ## [0.15.0](https://github.com/ifigueroap/rustbox/compare/v0.14.1...v0.15.0) (2026-11-15)
 
 
