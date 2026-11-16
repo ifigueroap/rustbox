@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import { assertPkgbuild } from "./render-arch-pkgbuild.mjs";
+import { assertBinPkgbuild, assertPkgbuild } from "./render-arch-pkgbuild.mjs";
 
 const tauri = JSON.parse(
   fs.readFileSync("src-tauri/tauri.conf.json", "utf8"),
@@ -10,6 +10,7 @@ const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
 const cargoToml = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
 const cargoLock = fs.readFileSync("src-tauri/Cargo.lock", "utf8");
 const pkgbuild = fs.readFileSync("packaging/arch/PKGBUILD", "utf8");
+const binPkgbuild = fs.readFileSync("packaging/arch/rustbox-bin/PKGBUILD", "utf8");
 
 const cargoVersion = cargoToml.match(/^version = "([^"]+)"/m)?.[1];
 const lockMatch = cargoLock.match(
@@ -17,6 +18,7 @@ const lockMatch = cargoLock.match(
 );
 const cargoLockVersion = lockMatch?.[1];
 const pkgbuildVersion = pkgbuild.match(/^pkgver=([^ ]+)/m)?.[1];
+const binPkgbuildVersion = binPkgbuild.match(/^pkgver=([^ ]+)/m)?.[1];
 
 const versions = {
   "src-tauri/tauri.conf.json": tauri,
@@ -26,6 +28,7 @@ const versions = {
   "src-tauri/Cargo.toml": cargoVersion,
   "src-tauri/Cargo.lock rustbox": cargoLockVersion,
   "packaging/arch/PKGBUILD": pkgbuildVersion,
+  "packaging/arch/rustbox-bin/PKGBUILD": binPkgbuildVersion,
 };
 
 const unique = new Set(Object.values(versions));
@@ -45,6 +48,7 @@ const lockMarked =
     cargoLock,
   );
 const pkgbuildMarked = /^pkgver=[^ ]+ # x-release-please-version/m.test(pkgbuild);
+const binPkgbuildMarked = /^pkgver=[^ ]+ # x-release-please-version/m.test(binPkgbuild);
 
 if (!tomlMarked || !lockMarked) {
   console.error(
@@ -53,9 +57,9 @@ if (!tomlMarked || !lockMarked) {
   process.exit(1);
 }
 
-if (!pkgbuildMarked) {
+if (!pkgbuildMarked || !binPkgbuildMarked) {
   console.error(
-    "packaging/arch/PKGBUILD needs an `x-release-please-version` comment on the pkgver line.",
+    "packaging/arch/PKGBUILD and packaging/arch/rustbox-bin/PKGBUILD need an `x-release-please-version` comment on the pkgver line.",
   );
   process.exit(1);
 }
@@ -64,6 +68,7 @@ if (!pkgbuildMarked) {
 // should not reach `master` in the first place.
 try {
   assertPkgbuild(pkgbuild, { version: pkgbuildVersion });
+  assertBinPkgbuild(binPkgbuild, { version: binPkgbuildVersion });
 } catch (error) {
   console.error(error.message ?? String(error));
   process.exit(1);

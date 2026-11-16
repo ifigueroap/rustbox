@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rustbox
+GenericName=Web app shell
+Comment=Host multiple web apps in one window
+Exec=rustbox
+Icon=rustbox
+Terminal=false
+Categories=Network;InstantMessaging;
+Keywords=chat;messaging;workspace;webview;
+StartupNotify=true

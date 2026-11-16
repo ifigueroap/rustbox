@@ -59,10 +59,24 @@ jobs:
           bash -n /tmp/PKGBUILD.rendered
           grep -qx 'pkgver=0.0.1 # x-release-please-version' /tmp/PKGBUILD.rendered
           grep -qx 'pkgrel=1' /tmp/PKGBUILD.rendered
+          node scripts/render-arch-pkgbuild.mjs \
+            --version 0.0.1 \
+            --sha256-file README.md \
+            --template packaging/arch/rustbox-bin/PKGBUILD \
+            --kind bin \
+            --out /tmp/PKGBUILD-bin.rendered
+          bash -n /tmp/PKGBUILD-bin.rendered
+          grep -qx 'pkgver=0.0.1 # x-release-please-version' /tmp/PKGBUILD-bin.rendered
+          grep -qx 'pkgrel=1' /tmp/PKGBUILD-bin.rendered
+          grep -q '^pkgname=rustbox-bin$' /tmp/PKGBUILD-bin.rendered
+          grep -q '/releases/download/v$pkgver/rustbox-linux-x64-bin.tar.gz' /tmp/PKGBUILD-bin.rendered
 
       - name: The README one-liner matches the release asset
         run: |
           set -euo pipefail
           grep -q '^pkgname=rustbox$' packaging/arch/PKGBUILD
-          grep -q 'https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD' README.md
+          grep -q '^pkgname=rustbox-bin$' packaging/arch/rustbox-bin/PKGBUILD
+          grep -q 'curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si' README.md
+          grep -q 'https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD-bin' README.md
+          grep -q 'curl -fsSL -o PKGBUILD' README.md
           grep -q 'makepkg -si' README.md

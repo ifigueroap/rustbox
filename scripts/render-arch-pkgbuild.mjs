@@ -8,17 +8,24 @@
 // resets `pkgrel`, and recomputes `sha256sums` from the tag tarball, so the
 // asset always names and checksums the tree that was released.
 //
-// The README's install one-liner downloads that asset:
+// The README's source install one-liner downloads that asset:
 //
 //   d=$(mktemp -d) && cd "$d" && \
 //     curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && \
 //     makepkg -si
+//
+// `packaging/arch/rustbox-bin/PKGBUILD` is the prebuilt recipe. The same
+// rewrite stamps it with the sha256 of `rustbox-linux-x64-bin.tar.gz`, and the
+// Publish job uploads the result as `PKGBUILD-bin`. `--kind bin` selects that
+// check; a template path containing `rustbox-bin` does too.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 export const PKGBUILD_PATH = "packaging/arch/PKGBUILD";
+export const BIN_PKGBUILD_PATH = "packaging/arch/rustbox-bin/PKGBUILD";
+export const BIN_TARBALL = "rustbox-linux-x64-bin.tar.gz";
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -71,16 +78,17 @@ export function renderPkgbuild(content, { version, sha256, pkgrel = 1 }) {
   return next;
 }
 
-/** Problems that keep the rendered PKGBUILD from being installable as-is. */
-export function assertPkgbuild(content, { version } = {}) {
-  const problems = [];
+function pkgbuildFields(content, problems) {
   const fields = {};
   for (const name of ["pkgname", "pkgver", "pkgrel", "arch", "license"]) {
     const match = content.match(new RegExp(`^${name}=(.*)$`, "m"));
     if (!match) problems.push(`missing ${name}`);
     else fields[name] = match[1].replace(/\s+#.*$/, "").replace(/^\(|\)$/g, "").trim();
   }
-  if (fields.pkgname !== "rustbox") problems.push("pkgname");
+  return fields;
+}
+
+function assertShared(content, fields, version, problems) {
   if (fields.arch !== "x86_64") problems.push("arch");
   if (fields.license !== "MIT") problems.push("license");
   if (version !== undefined && fields.pkgver !== cleanVersion(version)) {
@@ -88,10 +96,6 @@ export function assertPkgbuild(content, { version } = {}) {
   }
   if (!/^\d+$/.test(fields.pkgrel ?? "")) problems.push("pkgrel");
   if (!/^sha256sums=\('[0-9a-f]{64}'\)$/m.test(content)) problems.push("sha256sums");
-  if (!content.includes("/archive/refs/tags/v$pkgver.tar.gz")) {
-    problems.push("tag tarball source");
-  }
-  if (!/^build\(\)/m.test(content)) problems.push("build()");
   if (!/^package\(\)/m.test(content)) problems.push("package()");
   // WebKitGTK resolves its audio pipeline from GStreamer plugins at runtime and
   // aborts in WebKitWebProcess when `autoaudiosink` is missing, so the core
@@ -100,6 +104,7 @@ export function assertPkgbuild(content, { version } = {}) {
     "webkit2gtk-4.1",
     "gtk3",
     "libayatana-appindicator",
+    "xdg-utils",
     "gst-plugins-base",
     "gst-plugins-good",
   ]) {
@@ -116,10 +121,59 @@ export function assertPkgbuild(content, { version } = {}) {
   if (/^(makedepends|depends)=\(.*\b(cargo|rustup)\b/m.test(content)) {
     problems.push("cargo is provided by rust, not named as a package");
   }
+}
+
+function finish(problems, content) {
   if (problems.length > 0) {
     throw new Error(`PKGBUILD is not ready: ${problems.join(", ")}`);
   }
   return content;
+}
+
+/** Problems that keep the rendered source PKGBUILD from being installable as-is. */
+export function assertPkgbuild(content, { version } = {}) {
+  const problems = [];
+  const fields = pkgbuildFields(content, problems);
+  if (fields.pkgname !== "rustbox") problems.push("pkgname");
+  if (!/^conflicts=\(rustbox-bin\)$/m.test(content)) problems.push("conflicts rustbox-bin");
+  assertShared(content, fields, version, problems);
+  if (!content.includes("/archive/refs/tags/v$pkgver.tar.gz")) {
+    problems.push("tag tarball source");
+  }
+  if (!/^build\(\)/m.test(content)) problems.push("build()");
+  if (!content.includes("/usr/share/applications/rustbox.desktop")) problems.push("desktop");
+  return finish(problems, content);
+}
+
+/**
+ * Problems that keep the prebuilt PKGBUILD from installing the ubuntu binary
+ * over the same paths as the source package.
+ */
+export function assertBinPkgbuild(content, { version } = {}) {
+  const problems = [];
+  const fields = pkgbuildFields(content, problems);
+  if (fields.pkgname !== "rustbox-bin") problems.push("pkgname");
+  if (!/^provides=\(rustbox\)$/m.test(content)) problems.push("provides");
+  if (!/^conflicts=\(rustbox\)$/m.test(content)) problems.push("conflicts");
+  assertShared(content, fields, version, problems);
+  if (!content.includes(`/releases/download/v$pkgver/${BIN_TARBALL}`)) {
+    problems.push("release asset source");
+  }
+  if (/^build\(\)/m.test(content)) problems.push("build()");
+  if (/^makedepends=\(/m.test(content)) problems.push("makedepends");
+  const code = content
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  if (/\bnpm ci\b|\btauri build\b|\bcargo\b/.test(code)) problems.push("compiles from source");
+  if (!content.includes('"$pkgdir/usr/bin/rustbox"')) problems.push("binary path");
+  if (!content.includes('"$pkgdir/usr/share/applications/rustbox.desktop"')) problems.push("desktop");
+  for (const size of ["32x32", "64x64", "128x128", "256x256", "512x512"]) {
+    if (!content.includes(`/usr/share/icons/hicolor/${size}/apps/rustbox.png`)) {
+      problems.push(`icon ${size}`);
+    }
+  }
+  return finish(problems, content);
 }
 
 export function sha256(buffer) {
@@ -171,6 +225,18 @@ async function main() {
     if (!rendered.includes("pkgver=9.8.7 # x-release-please-version")) {
       throw new Error("the release-please marker was dropped");
     }
+    const binTemplate = fs.readFileSync(path.resolve(BIN_PKGBUILD_PATH), "utf8");
+    const binRendered = renderPkgbuild(binTemplate, {
+      version: "v9.8.7",
+      sha256: "b".repeat(64),
+    });
+    assertBinPkgbuild(binRendered, { version: "9.8.7" });
+    if (!binRendered.includes("pkgver=9.8.7 # x-release-please-version")) {
+      throw new Error("the bin release-please marker was dropped");
+    }
+    if (!binRendered.includes(`sha256sums=('${"b".repeat(64)}')`)) {
+      throw new Error("the bin checksum was not written");
+    }
     let rejected = false;
     try {
       renderPkgbuild(template, { version: "9.8.7", sha256: "nope" });
@@ -182,12 +248,16 @@ async function main() {
     return;
   }
 
+  const kind = recipeKind(args, templatePath);
+  const check = kind === "bin" ? assertBinPkgbuild : assertPkgbuild;
+
   if (args["sha256-file"]) {
-    // Offline path: the workflow downloads the tarball itself.
+    // Offline path: the workflow already has the bytes (tag tarball, or the
+    // linux bin archive produced by the build job).
     const version = args.version;
     const digest = sha256(fs.readFileSync(args["sha256-file"]));
     const rendered = renderPkgbuild(template, { version, sha256: digest });
-    assertPkgbuild(rendered, { version });
+    check(rendered, { version });
     write(rendered, args);
     return;
   }
@@ -197,8 +267,14 @@ async function main() {
   const url = args.url ?? tagTarballUrl(repo, version);
   const digest = await fetchTarballSha256(url);
   const rendered = renderPkgbuild(template, { version, sha256: digest });
-  assertPkgbuild(rendered, { version });
+  check(rendered, { version });
   write(rendered, args);
+}
+
+function recipeKind(args, templatePath) {
+  if (args.kind === "bin" || args.kind === "source") return args.kind;
+  if (args.kind) throw new Error(`--kind must be source or bin, got ${args.kind}`);
+  return templatePath.split(path.sep).includes("rustbox-bin") ? "bin" : "source";
 }
 
 function write(rendered, args) {

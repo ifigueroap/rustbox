@@ -137,6 +137,9 @@ jobs:
           test -x "$BIN"
           chmod +x "$BIN"
           tar -C "src-tauri/target/${{ matrix.target }}/release" -czf rustbox-linux-x64.tar.gz rustbox
+          # The unpatched release binary, plus desktop metadata. Not the AppImage:
+          # that copy is bundle-patched and is the updater target.
+          bash scripts/package-linux-bin-tarball.sh "$BIN" rustbox-linux-x64-bin.tar.gz
           APPIMAGE=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/appimage" -type f -name '*.AppImage' | head -n 1)
           if [ -z "$APPIMAGE" ]; then
             echo "AppImage was not produced"
@@ -171,6 +174,7 @@ jobs:
             rustbox-linux-x64.AppImage
             rustbox-linux-x64.AppImage.sig
             rustbox-linux-x64.tar.gz
+            rustbox-linux-x64-bin.tar.gz
           if-no-files-found: error
 
   build-macos:
@@ -313,7 +317,44 @@ jobs:
           # The source line interpolates $pkgver, so the tag appears as
           # `v${pkgver}` in the file rather than as the literal version.
           grep -qF '/archive/refs/tags/v$pkgver.tar.gz' artifacts/PKGBUILD
+          # The source recipe must stay a source recipe.
+          if grep -q 'rustbox-linux-x64-bin.tar.gz' artifacts/PKGBUILD; then
+            echo "source PKGBUILD points at the prebuilt tarball"
+            exit 1
+          fi
           cat artifacts/PKGBUILD
+
+      # The bin tarball is produced by the Linux build, which is already in
+      # artifacts/. Render the prebuilt recipe against those bytes and upload
+      # it as PKGBUILD-bin. The in-repo checksum is a placeholder.
+      - name: Render Arch rustbox-bin PKGBUILD
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.name }}"
+          VERSION="${TAG#v}"
+          test -s artifacts/rustbox-linux-x64-bin.tar.gz
+          node scripts/render-arch-pkgbuild.mjs \
+            --version "$VERSION" \
+            --sha256-file artifacts/rustbox-linux-x64-bin.tar.gz \
+            --template packaging/arch/rustbox-bin/PKGBUILD \
+            --kind bin \
+            --out artifacts/PKGBUILD-bin
+          bash -n artifacts/PKGBUILD-bin
+          grep -qx "pkgver=${VERSION} # x-release-please-version" artifacts/PKGBUILD-bin
+          grep -qx "pkgrel=1" artifacts/PKGBUILD-bin
+          DIGEST=$(sha256sum artifacts/rustbox-linux-x64-bin.tar.gz | awk '{print $1}')
+          grep -qx "sha256sums=('${DIGEST}')" artifacts/PKGBUILD-bin
+          grep -q '^pkgname=rustbox-bin$' artifacts/PKGBUILD-bin
+          grep -q '^provides=(rustbox)$' artifacts/PKGBUILD-bin
+          grep -q '^conflicts=(rustbox)$' artifacts/PKGBUILD-bin
+          grep -qF '/releases/download/v$pkgver/rustbox-linux-x64-bin.tar.gz' artifacts/PKGBUILD-bin
+          grep -q '/usr/bin/rustbox' artifacts/PKGBUILD-bin
+          grep -q '/usr/share/applications/rustbox.desktop' artifacts/PKGBUILD-bin
+          if grep -q '^build()' artifacts/PKGBUILD-bin; then
+            echo "rustbox-bin PKGBUILD must not compile"
+            exit 1
+          fi
+          cat artifacts/PKGBUILD-bin
 
       - name: Check the repo PKGBUILD matches the tag
         # Advisory only: the release asset is already authoritative, and an
@@ -325,6 +366,17 @@ jobs:
             echo "packaging/arch/PKGBUILD matches the rendered release asset"
           else
             echo "::warning::packaging/arch/PKGBUILD differs from the rendered release asset"
+          fi
+          # The bin recipe's checksum is only known after the binary exists, so
+          # compare everything except sha256sums. A pkgver or install-layout
+          # drift still warns; the placeholder checksum does not.
+          if diff -u \
+            <(grep -v '^sha256sums=' packaging/arch/rustbox-bin/PKGBUILD) \
+            <(grep -v '^sha256sums=' artifacts/PKGBUILD-bin)
+          then
+            echo "packaging/arch/rustbox-bin/PKGBUILD matches the rendered release asset aside from sha256sums"
+          else
+            echo "::warning::packaging/arch/rustbox-bin/PKGBUILD differs from the rendered release asset"
           fi
 
       # latest.json is uploaded only from this job, which needs every platform
@@ -355,6 +407,46 @@ jobs:
             --tag "${{ steps.tag.outputs.name }}" \
             --out artifacts/latest.json
           node scripts/generate-latest-json.mjs --check artifacts/latest.json
+          if grep -Eq 'rustbox-linux-x64-bin|PKGBUILD' artifacts/latest.json; then
+            echo "latest.json must keep pointing at the AppImage, not the Arch package assets"
+            exit 1
+          fi
+
+      # Every file named below is uploaded. The count fails the job when a
+      # platform artifact is missing or an extra file landed in artifacts/.
+      # Keep the list in step with both `files:` blocks.
+      - name: Check release assets
+        run: |
+          set -euo pipefail
+          expected=(
+            rustbox-windows-x64.exe
+            rustbox-windows-x64-setup.exe
+            rustbox-windows-x64-setup.exe.sig
+            rustbox-linux-x64.AppImage
+            rustbox-linux-x64.AppImage.sig
+            rustbox-linux-x64.tar.gz
+            rustbox-linux-x64-bin.tar.gz
+            rustbox-macos-universal.dmg
+            rustbox-macos-universal.app.tar.gz
+            rustbox-macos-universal.app.tar.gz.sig
+            latest.json
+            PKGBUILD
+            PKGBUILD-bin
+          )
+          missing=0
+          for file in "${expected[@]}"; do
+            if [ ! -s "artifacts/$file" ]; then
+              echo "missing release asset artifacts/$file"
+              missing=1
+            fi
+          done
+          count=$(find artifacts -maxdepth 1 -type f | wc -l)
+          if [ "$count" -ne "${#expected[@]}" ]; then
+            echo "expected ${#expected[@]} release assets, found $count"
+            find artifacts -maxdepth 1 -type f | sort
+            missing=1
+          fi
+          [ "$missing" -eq 0 ]
 
       # Release Please writes the changelog into the GitHub Release before this
       # job runs. Leave those notes in place and only upload the build assets.
@@ -373,11 +465,13 @@ jobs:
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.AppImage.sig
             artifacts/rustbox-linux-x64.tar.gz
+            artifacts/rustbox-linux-x64-bin.tar.gz
             artifacts/rustbox-macos-universal.dmg
             artifacts/rustbox-macos-universal.app.tar.gz
             artifacts/rustbox-macos-universal.app.tar.gz.sig
             artifacts/latest.json
             artifacts/PKGBUILD
+            artifacts/PKGBUILD-bin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -396,11 +490,13 @@ jobs:
             artifacts/rustbox-linux-x64.AppImage
             artifacts/rustbox-linux-x64.AppImage.sig
             artifacts/rustbox-linux-x64.tar.gz
+            artifacts/rustbox-linux-x64-bin.tar.gz
             artifacts/rustbox-macos-universal.dmg
             artifacts/rustbox-macos-universal.app.tar.gz
             artifacts/rustbox-macos-universal.app.tar.gz.sig
             artifacts/latest.json
             artifacts/PKGBUILD
+            artifacts/PKGBUILD-bin
           body: |
             Rustbox ${{ steps.tag.outputs.name }} builds.
 
@@ -413,8 +509,10 @@ jobs:
             ### Linux
             - `rustbox-linux-x64.AppImage` — `chmod +x rustbox-linux-x64.AppImage` and run it.
             - `rustbox-linux-x64.tar.gz` — contains the `rustbox` binary.
+            - `rustbox-linux-x64-bin.tar.gz` — binary, desktop file, hicolor icons, and LICENSE for the Arch `rustbox-bin` package.
+            - `PKGBUILD` — Arch source recipe. `PKGBUILD-bin` — Arch prebuilt recipe.
 
-            Both Linux artifacts need WebKitGTK 4.1 installed (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit.
+            Linux artifacts need WebKitGTK 4.1 installed (`libwebkit2gtk-4.1-0`). The AppImage does not vendor WebKit. The bin tarball does not either: it is the dynamically linked release binary.
 
             ### macOS
             - `rustbox-macos-universal.dmg` — open the disk image and drag Rustbox to Applications. One build covers Apple Silicon and Intel.
