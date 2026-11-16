@@ -224,8 +224,10 @@ describe("update dialog", () => {
       "installed by your system package manager",
     );
     const command = document.querySelector("#update-package-command")?.textContent ?? "";
-    expect(command).toContain("releases/latest/download/PKGBUILD");
+    expect(command).toContain("releases/latest/download/PKGBUILD-bin");
+    expect(command).toContain("curl -fsSL -o PKGBUILD ");
     expect(command).toContain("makepkg -si");
+    expect(command).not.toContain("download/PKGBUILD &&");
     expect(command).not.toContain("\n");
 
     // Clicking around cannot reach the updater.

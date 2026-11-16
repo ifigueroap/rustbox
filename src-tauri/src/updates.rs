@@ -159,9 +159,12 @@ pub fn detect_bundle_kind() -> BundleKind {
 
 /// A Linux copy that is neither an AppImage nor a `.deb`/`.rpm` bundle was put
 /// on the system by a package manager (or untarred by hand), and pacman owns
-/// the files. Replacing `/usr/bin/rustbox` behind the package database's back
-/// would leave pacman believing it owns a binary it no longer has, so these
-/// installs are told to update the package instead of patching themselves.
+/// the files. `rustbox` and `rustbox-bin` both install that unpatched binary
+/// to `/usr/bin/rustbox`: the source recipe builds with `--no-bundle`, and the
+/// prebuilt tarball is `target/release/rustbox` before the AppImage bundler
+/// patches its own copy. Replacing that path behind the package database's
+/// back would leave pacman believing it owns a binary it no longer has, so
+/// these installs are told to update the package instead of patching themselves.
 pub fn package_managed(os: &str, kind: BundleKind) -> bool {
     os == "linux" && matches!(kind, BundleKind::Unknown)
 }

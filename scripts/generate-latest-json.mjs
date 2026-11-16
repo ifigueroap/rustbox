@@ -116,6 +116,10 @@ export function selfTest() {
   if (manifest.platforms["linux-x86_64"].url.endsWith(".tar.gz")) {
     throw new Error("linux tar.gz must not be an updater target");
   }
+  const encoded = JSON.stringify(manifest);
+  if (encoded.includes("rustbox-linux-x64-bin") || encoded.includes("PKGBUILD")) {
+    throw new Error("arch package assets must not be updater targets");
+  }
   if (manifest.platforms["darwin-x86_64"].signature !== "mac-sig") {
     throw new Error("intel signature");
   }

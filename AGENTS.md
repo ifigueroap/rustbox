@@ -19,10 +19,10 @@ Before changing behavior, read the relevant README section and inspect both side
 
 ## Releases
 
-- Keep app versions aligned across `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `packaging/arch/PKGBUILD`, and the Rustbox package entry in `src-tauri/Cargo.lock`.
-- Preserve the `x-release-please-version` markers in the Cargo manifests/lockfile and on `pkgver` in `packaging/arch/PKGBUILD`. `cargo update` can remove the lockfile marker.
+- Keep app versions aligned across `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `packaging/arch/PKGBUILD`, `packaging/arch/rustbox-bin/PKGBUILD`, and the Rustbox package entry in `src-tauri/Cargo.lock`.
+- Preserve the `x-release-please-version` markers in the Cargo manifests/lockfile and on `pkgver` in both Arch PKGBUILDs. `cargo update` can remove the lockfile marker.
 - Pull request titles must use the Conventional Commit types configured in `.github/workflows/pull-request.yml`; release automation uses squash-merge commit titles.
-- `packaging/arch/PKGBUILD` is the source of truth for the Arch package. The release Publish job renders it for the tag with `scripts/render-arch-pkgbuild.mjs` (pkgver, pkgrel, tag-tarball checksum) and uploads the result as the `PKGBUILD` release asset, which is what the README one-liner downloads. Change the recipe, not the rendered output, and keep `build()` producing a binary at `src-tauri/target/release/rustbox` because `package()` installs that path.
+- `packaging/arch/PKGBUILD` is the source of truth for the Arch source package. The release Publish job renders it for the tag with `scripts/render-arch-pkgbuild.mjs` (pkgver, pkgrel, tag-tarball checksum) and uploads the result as the `PKGBUILD` release asset. `packaging/arch/rustbox-bin/PKGBUILD` is the prebuilt recipe: the Linux job packs the unpatched `target/release/rustbox` (not the AppImage) with `scripts/package-linux-bin-tarball.sh` into `rustbox-linux-x64-bin.tar.gz`, and the Publish job renders the recipe against that archive and uploads it as `PKGBUILD-bin`. Both packages install `/usr/bin/rustbox`, `rustbox.desktop`, and the same hicolor icon names, and they conflict with each other. The in-app update command installs `rustbox-bin`. Change the recipes, not the rendered output. Keep the source `build()` producing a binary at `src-tauri/target/release/rustbox` because `package()` installs that path. Do not point `latest.json` at the bin tarball.
 
 ## Checks
 

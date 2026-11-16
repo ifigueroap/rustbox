@@ -27,6 +27,10 @@
         {
           "type": "generic",
           "path": "packaging/arch/PKGBUILD"
+        },
+        {
+          "type": "generic",
+          "path": "packaging/arch/rustbox-bin/PKGBUILD"
         }
       ]
     }

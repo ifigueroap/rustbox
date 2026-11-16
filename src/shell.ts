@@ -24,12 +24,14 @@ const RELEASES_PAGE = "https://github.com/ifigueroap/rustbox/releases";
 
 /**
  * What a pacman install runs to get the new version. The release workflow
- * publishes the rendered PKGBUILD as a release asset, and `makepkg -si`
- * rebuilds it against the system WebKitGTK. Kept as one line so it can be
- * copied out of the dialog.
+ * publishes the rendered prebuilt recipe as `PKGBUILD-bin`. makepkg only reads
+ * a file named `PKGBUILD`, so the one-liner saves the asset under that name.
+ * `makepkg -si` installs the ubuntu-22.04 binary; it does not compile. On a
+ * source `rustbox` install, pacman asks to replace it because the packages
+ * conflict. Kept as one line so it can be copied out of the dialog.
  */
 const PACKAGE_UPDATE_COMMAND =
-  "d=$(mktemp -d) && cd \"$d\" && curl -fsSLO https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD && makepkg -si";
+  "d=$(mktemp -d) && cd \"$d\" && curl -fsSL -o PKGBUILD https://github.com/ifigueroap/rustbox/releases/latest/download/PKGBUILD-bin && makepkg -si";
 
 type PermissionKind = "media" | "screen" | "location" | "clipboard";
 type PermissionDecision = "ask" | "allow" | "deny";
