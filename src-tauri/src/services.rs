@@ -1271,8 +1271,14 @@ pub fn apply_sound_policy(app: &AppHandle) {
 fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
     // Native handles and the GTK host belong to the event-loop thread. In
     // particular, callers outside the UI thread cannot use linux_host's thread local.
-    #[cfg(target_os = "windows")]
-    let fallback_webview = webview.clone();
+    //
+    // Never call back into Tauri's webview dispatcher (eval, set_zoom, hide,
+    // ...) from inside this closure. When `apply_webview_sound` runs on the UI
+    // thread (e.g. from `on_page_load`), `with_webview` executes the closure
+    // inline while tauri-runtime-wry still holds the webview's `window_id`
+    // mutex; a nested dispatcher call locks that same mutex again and the UI
+    // thread deadlocks (the v0.14.1/v0.15.0 Windows startup freeze). Scripts
+    // are therefore run through WebView2's own ExecuteScript below.
     #[cfg(target_os = "linux")]
     let label = webview.label().to_string();
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -1290,38 +1296,36 @@ fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
         }
         #[cfg(target_os = "windows")]
         {
-            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
-            use windows_core::Interface;
-            let result = unsafe {
-                platform
-                    .controller()
-                    .CoreWebView2()
-                    .and_then(|view| view.cast::<ICoreWebView2_8>())
-                    .and_then(|view| {
-                        view.SetIsMuted(muted)?;
-                        if std::env::var_os("RUSTBOX_AUDIO_TRACE").is_some() {
-                            let mut actual = Default::default();
-                            view.IsMuted(&mut actual)?;
-                            eprintln!("rustbox: engine audio muted={}", actual.as_bool());
-                        }
-                        Ok(())
-                    })
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                ICoreWebView2_8, ICoreWebView2ExecuteScriptCompletedHandler,
             };
-            if result.is_ok() {
-                // Recover if a transient native failure previously activated
-                // the fallback; the engine now owns muting again.
-                let _ = fallback_webview.eval("window.__rustboxSetSound?.(true);");
-            }
-            if let Err(err) = result {
+            use windows_core::Interface;
+            let Ok(view) = (unsafe { platform.controller().CoreWebView2() }) else {
+                eprintln!("rustbox: could not reach the service engine for sound");
+                return;
+            };
+            let result = unsafe {
+                view.cast::<ICoreWebView2_8>().and_then(|view| {
+                    view.SetIsMuted(muted)?;
+                    if std::env::var_os("RUSTBOX_AUDIO_TRACE").is_some() {
+                        let mut actual = Default::default();
+                        view.IsMuted(&mut actual)?;
+                        eprintln!("rustbox: engine audio muted={}", actual.as_bool());
+                    }
+                    Ok(())
+                })
+            };
+            if let Err(err) = &result {
                 // Older WebView2 runtimes may not expose ICoreWebView2_8.
                 // Install the reversible fallback only when native mute fails.
                 eprintln!("rustbox: engine mute unavailable, using script sound: {err}");
-                let enabled = if muted { "false" } else { "true" };
-                if let Err(err) = fallback_webview.eval(format!(
-                    "window.__rustboxInstallSound?.(); window.__rustboxSetSound?.({enabled});"
-                )) {
-                    eprintln!("rustbox: could not update fallback sound: {err}");
-                }
+            }
+            let script = windows_sound_script(result.is_ok(), muted);
+            let script = windows_core::HSTRING::from(script);
+            if let Err(err) = unsafe {
+                view.ExecuteScript(&script, None::<&ICoreWebView2ExecuteScriptCompletedHandler>)
+            } {
+                eprintln!("rustbox: could not update fallback sound: {err}");
             }
         }
     }) {
@@ -1333,6 +1337,20 @@ fn apply_webview_sound(webview: &tauri::Webview, muted: bool) {
         if let Err(err) = webview.eval(format!("window.__rustboxSetSound?.({enabled});")) {
             eprintln!("rustbox: could not update service sound: {err}");
         }
+    }
+}
+
+/// Script run in a Windows service after an engine mute attempt. When the
+/// engine mutes natively, any script fallback a transient failure installed is
+/// switched back on so the engine alone owns muting; otherwise the reversible
+/// script fallback is installed and told the wanted state.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_sound_script(native_ok: bool, muted: bool) -> String {
+    if native_ok {
+        "window.__rustboxSetSound?.(true);".to_string()
+    } else {
+        let enabled = if muted { "false" } else { "true" };
+        format!("window.__rustboxInstallSound?.(); window.__rustboxSetSound?.({enabled});")
     }
 }
 
@@ -1664,6 +1682,58 @@ pub fn validate_external_url(raw: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::config::{NewService, NewWorkspace};
+
+    /// Regression guard for the v0.14.1/v0.15.0 Windows startup freeze: the
+    /// `with_webview` closure in `apply_webview_sound` runs inline on the UI
+    /// thread from `on_page_load` while tauri-runtime-wry holds the webview's
+    /// `window_id` mutex. Any Tauri webview dispatcher call made inside it
+    /// (eval, set_zoom, show, hide, ...) re-locks that mutex and deadlocks.
+    #[test]
+    fn apply_webview_sound_never_reenters_the_tauri_dispatcher() {
+        let source = include_str!("services.rs");
+        let start = source
+            .find("fn apply_webview_sound(")
+            .expect("apply_webview_sound exists");
+        let rest = &source[start..];
+        let closure_end = rest
+            .find("could not queue engine sound update")
+            .expect("with_webview closure end marker");
+        let closure = &rest[..closure_end];
+        for call in [
+            ".eval(",
+            ".set_zoom(",
+            ".show(",
+            ".hide(",
+            ".reload(",
+            ".close(",
+            "fallback_webview",
+        ] {
+            assert!(
+                !closure.contains(call),
+                "apply_webview_sound must not call `{call}` on a Tauri webview inside with_webview"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_sound_script_restores_or_installs_the_fallback() {
+        assert_eq!(
+            windows_sound_script(true, true),
+            "window.__rustboxSetSound?.(true);"
+        );
+        assert_eq!(
+            windows_sound_script(true, false),
+            "window.__rustboxSetSound?.(true);"
+        );
+        assert_eq!(
+            windows_sound_script(false, true),
+            "window.__rustboxInstallSound?.(); window.__rustboxSetSound?.(false);"
+        );
+        assert_eq!(
+            windows_sound_script(false, false),
+            "window.__rustboxInstallSound?.(); window.__rustboxSetSound?.(true);"
+        );
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
