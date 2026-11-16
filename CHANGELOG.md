@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/ifigueroap/rustbox/compare/v0.15.1...v0.15.2) (2026-11-16)
+
+
+### Miscellaneous Chores
+
+* release 0.15.2 ([#67](https://github.com/ifigueroap/rustbox/issues/67)) ([431277a](https://github.com/ifigueroap/rustbox/commit/431277a4782dc55c28e3572311a21196852e5c8d))
+
 ## [0.15.1](https://github.com/ifigueroap/rustbox/compare/v0.15.0...v0.15.1) (2026-11-16)
 
 
