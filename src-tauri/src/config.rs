@@ -286,6 +286,14 @@ pub struct Service {
     /// shortcut cycling. Off by default so old configs keep every service enabled.
     #[serde(default)]
     pub disabled: bool,
+    /// The last page the user navigated to inside this service (e.g. a Slack
+    /// workspace/channel URL), restored instead of `url` the next time its
+    /// webview is created. Only ever set to a same-origin, non-auth-provider
+    /// http(s) URL; see `policy::is_restorable_last_url`. `None` on older
+    /// files and whenever it would not be safe to restore, which means `url`
+    /// is used instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -344,6 +352,8 @@ struct ServiceWire {
     /// shortcut cycling. Off by default so old configs keep every service enabled.
     #[serde(default)]
     pub disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_url: Option<String>,
 }
 
 impl From<ServiceWire> for Service {
@@ -372,6 +382,7 @@ impl From<ServiceWire> for Service {
             never_hibernate: wire.never_hibernate,
             permissions: wire.permissions,
             disabled: wire.disabled,
+            last_url: wire.last_url,
         }
     }
 }
@@ -828,6 +839,7 @@ impl Config {
             never_hibernate: false,
             permissions: Default::default(),
             disabled: false,
+            last_url: None,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -856,6 +868,7 @@ impl Config {
             never_hibernate: false,
             permissions: Default::default(),
             disabled: false,
+            last_url: None,
         };
         self.services.push(service.clone());
         Ok(service)
@@ -878,6 +891,17 @@ impl Config {
         let reload = service.url != url
             || service.user_agent != user_agent
             || service.use_chrome_user_agent != input.use_chrome_user_agent;
+        // A remembered page only makes sense under the origin it was saved
+        // for; a new origin (editing the server URL, switching presets)
+        // drops it so the next webview opens on the freshly configured URL
+        // instead of a stale cross-origin page.
+        let same_origin = match (Url::parse(&service.url), Url::parse(&url)) {
+            (Ok(previous), Ok(next)) => previous.origin() == next.origin(),
+            _ => false,
+        };
+        if !same_origin {
+            service.last_url = None;
+        }
         service.name = name;
         service.url = url;
         service.icon = icon;
@@ -2383,6 +2407,79 @@ mod tests {
             })
             .unwrap();
         assert_eq!(config.services[0].workspaces, vec![teaching]);
+    }
+
+    #[test]
+    fn last_url_round_trips_and_defaults_to_none_on_old_configs() {
+        let mut config = sample_config();
+        assert!(config.services[0].last_url.is_none());
+        config.services[0].last_url = Some("https://whatsapp.example.com/chat/123".into());
+
+        let reloaded: Config =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(
+            reloaded.services[0].last_url.as_deref(),
+            Some("https://whatsapp.example.com/chat/123")
+        );
+        // Untouched service has no remembered page, and it is left out of
+        // the saved file rather than serialized as `null`.
+        assert!(reloaded.services[1].last_url.is_none());
+        let json = serde_json::to_string(&reloaded.services[1]).unwrap();
+        assert!(!json.contains("lastUrl"));
+
+        // A config written before this field existed has no `lastUrl` key at
+        // all; it must still load instead of being rejected or defaulted to
+        // something unsafe.
+        let old: Config = serde_json::from_str(
+            r#"{"version":1,"services":[{"id":"s1","name":"Old","url":"https://example.com/"}]}"#,
+        )
+        .unwrap();
+        assert!(old.services[0].last_url.is_none());
+    }
+
+    #[test]
+    fn update_service_clears_last_url_only_when_the_origin_changes() {
+        let mut config = Config::default();
+        let service = add_service(&mut config, "Slack", &[]);
+        config.services[0].last_url = Some("https://slack.example.com/client/T0/C0".into());
+
+        // The configured URL's path changes but the origin does not: the
+        // remembered page survives.
+        config
+            .update_service(ServiceUpdate {
+                id: service.id.clone(),
+                name: "Slack".into(),
+                url: "https://slack.example.com/other".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: None,
+            })
+            .unwrap();
+        assert_eq!(
+            config.services[0].last_url.as_deref(),
+            Some("https://slack.example.com/client/T0/C0")
+        );
+
+        // Editing the server URL to a different origin drops the now-stale
+        // remembered page, so the next webview opens on the new URL instead
+        // of a cross-origin page that no longer belongs to this service.
+        config
+            .update_service(ServiceUpdate {
+                id: service.id,
+                name: "Slack".into(),
+                url: "https://other.example.com/".into(),
+                icon: None,
+                color: None,
+                user_agent: None,
+                use_chrome_user_agent: true,
+                workspaces: None,
+                all_workspaces: None,
+            })
+            .unwrap();
+        assert!(config.services[0].last_url.is_none());
     }
 
     #[test]

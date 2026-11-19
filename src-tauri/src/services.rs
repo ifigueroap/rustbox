@@ -45,6 +45,11 @@ pub struct RuntimeState {
     pub page_tools: Mutex<crate::page_tools::PageToolsState>,
     pub permission_requests: Mutex<HashMap<String, crate::permissions::PendingPermissionRequest>>,
     hibernation: Mutex<HibernationState>,
+    /// Set whenever a service's remembered last page changes in memory;
+    /// cleared by `spawn_last_url_flush`/`flush_last_url` once the config
+    /// file on disk catches up. Keeps rapid SPA navigation from writing the
+    /// config file on every history change.
+    last_url_dirty: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Serialize)]
@@ -218,6 +223,7 @@ impl RuntimeState {
             page_tools: Mutex::new(Default::default()),
             permission_requests: Mutex::new(HashMap::new()),
             hibernation: Mutex::new(HibernationState::default()),
+            last_url_dirty: std::sync::atomic::AtomicBool::new(false),
         })
     }
 }
@@ -1180,6 +1186,87 @@ pub fn report_workspace_icon(
     Ok(())
 }
 
+/// Remembers the page a service's webview actually navigated to, so the next
+/// `ensure_webview` call can reopen it there instead of the configured home
+/// URL. Only ever accepts a same-origin, non-auth-provider http(s) URL (see
+/// `policy::is_restorable_last_url`); anything else, including a parse
+/// failure or a removed service, is silently ignored rather than treated as
+/// an error, since this is best-effort bookkeeping, not a user action.
+pub fn report_service_location(app: &AppHandle, label: &str, raw_href: &str) -> Result<(), String> {
+    let Some(service_id) = label.strip_prefix("svc-").filter(|id| !id.is_empty()) else {
+        return Err("the last page is only accepted from service webviews".into());
+    };
+    let Ok(href) = Url::parse(raw_href) else {
+        return Ok(());
+    };
+    let state = app.state::<RuntimeState>();
+    let mut config = lock(&state.config);
+    let Some(service) = config
+        .services
+        .iter_mut()
+        .find(|service| service.id == service_id)
+    else {
+        return Ok(());
+    };
+    let Ok(home) = Url::parse(&service.url) else {
+        return Ok(());
+    };
+    if !policy::is_restorable_last_url(&home, &href) {
+        return Ok(());
+    }
+    let href = href.to_string();
+    if service.last_url.as_deref() == Some(href.as_str()) {
+        return Ok(());
+    }
+    service.last_url = Some(href);
+    drop(config);
+    state
+        .last_url_dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Unconditional save of the in-memory config, bypassing the debounce
+/// window. Used right before the process exits so a page change just before
+/// quitting is not lost to the periodic flush interval.
+pub fn flush_last_url(app: &AppHandle) {
+    let state = app.state::<RuntimeState>();
+    state
+        .last_url_dirty
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    let config = lock(&state.config).clone();
+    if let Err(err) = save_if_changed(&state.config_path, &config) {
+        eprintln!("rustbox: could not persist the last page before exiting: {err}");
+    }
+}
+
+/// Periodically flushes a changed last-page URL to disk. SPA navigation can
+/// report a new page every few hundred milliseconds; writing the config file
+/// on each one would thrash disk and the file's mtime for no benefit.
+pub fn spawn_last_url_flush(app: AppHandle) {
+    if std::thread::Builder::new()
+        .name("rustbox-lasturl".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(2));
+                let state = app.state::<RuntimeState>();
+                if state
+                    .last_url_dirty
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+                {
+                    let config = lock(&state.config).clone();
+                    if let Err(err) = save_if_changed(&state.config_path, &config) {
+                        eprintln!("rustbox: could not persist the last page: {err}");
+                    }
+                }
+            }
+        })
+        .is_err()
+    {
+        eprintln!("rustbox: the last-page save was not scheduled");
+    }
+}
+
 pub fn refresh_title_if_active(app: &AppHandle, id: &str) {
     let state = app.state::<RuntimeState>();
     let active = lock(&state.active_id).clone();
@@ -1411,14 +1498,24 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
     }
     let window = main_window(app)?;
     let (position, size) = content_bounds(app, &window)?;
-    let url = Url::parse(&service.url).map_err(|err| err.to_string())?;
-    let popup_home = url.clone();
+    let home_url = Url::parse(&service.url).map_err(|err| err.to_string())?;
+    let popup_home = home_url.clone();
+    // Reopen on the page the user was actually on (e.g. a Slack
+    // workspace/channel) instead of always bouncing back to the configured
+    // home URL. Falls back to `home_url` when there is nothing saved, or the
+    // saved page is no longer same-origin with the configured URL.
+    let initial_url = service
+        .last_url
+        .as_deref()
+        .and_then(|raw| Url::parse(raw).ok())
+        .filter(|candidate| policy::is_restorable_last_url(&home_url, candidate))
+        .unwrap_or_else(|| home_url.clone());
     let service_id = service.id.clone();
     let title_app = app.clone();
     let load_app = app.clone();
 
     let muted = service_sound_muted(app, &service.id);
-    let mut builder = WebviewBuilder::new(label, WebviewUrl::External(url))
+    let mut builder = WebviewBuilder::new(label, WebviewUrl::External(initial_url))
         .disable_drag_drop_handler()
         .initialization_script(initialization_script(muted, service.preset.as_deref()))
         .initialization_script_for_all_frames(include_str!("page_shortcuts.js"))
@@ -1443,6 +1540,13 @@ fn ensure_webview(app: &AppHandle, service: &Service) -> Result<(), String> {
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 crate::page_tools::restore_zoom(&load_app, &webview);
                 let _ = load_app.emit_to("main", "find-page-loaded", webview.label());
+                // Covers a full top-level navigation (initial load, hard
+                // reload, a real link click). SPA history changes within the
+                // same document are reported separately by inject.js, since
+                // they never fire a page-load event here.
+                if let Ok(url) = webview.url() {
+                    let _ = report_service_location(&load_app, webview.label(), url.as_str());
+                }
             }
         })
         .background_color(Color(20, 18, 16, 255))
@@ -1615,6 +1719,45 @@ fn close_webview(app: &AppHandle, id: &str) -> Result<(), String> {
         webview.close().map_err(|err| err.to_string())?;
     }
     Ok(())
+}
+
+/// Best-effort teardown for quit, a trapped SIGTERM/SIGINT, or session end:
+/// closing each webview gives WebKitGTK/WebView2/WKWebView a chance to flush
+/// cookies, localStorage, and IndexedDB before the process exits, instead of
+/// the engine's in-memory state (and any pending disk write) being dropped by
+/// a hard kill. Bypasses the `ops` lock, same as the maintenance teardown
+/// path, since nothing should still be mutating services while the app is on
+/// its way out. Bounded per webview so one stuck close cannot hang shutdown.
+pub fn close_all_webviews_for_shutdown(app: &AppHandle) {
+    let ids: Vec<String> = {
+        let state = app.state::<RuntimeState>();
+        lock(&state.config)
+            .services
+            .iter()
+            .map(|service| service.id.clone())
+            .collect()
+    };
+    for id in ids {
+        if app.get_webview(&label_for(&id)).is_none() {
+            continue;
+        }
+        if close_webview(app, &id).is_err() {
+            continue;
+        }
+        // close() queues destruction on the dispatcher; wait for a later
+        // main-thread tick so the engine has actually dropped the view
+        // before moving on, the same way `maintenance_native::wait_closed`
+        // confirms a close before reusing a profile.
+        let (tx, rx) = std::sync::mpsc::channel();
+        if app
+            .run_on_main_thread(move || {
+                let _ = tx.send(());
+            })
+            .is_ok()
+        {
+            let _ = rx.recv_timeout(Duration::from_secs(2));
+        }
+    }
 }
 
 fn content_bounds(
