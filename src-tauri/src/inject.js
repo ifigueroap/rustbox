@@ -88,6 +88,48 @@
     invoke("open_external", { url: String(url) });
   }
 
+  // Remember the page actually navigated to (e.g. a Slack workspace/channel)
+  // so the shell can reopen it instead of always bouncing back to the
+  // configured home URL. The Rust side re-validates same-origin and rejects
+  // auth-provider hosts before saving anything; this just reports changes.
+  // A single-page app often switches "pages" with history.pushState, which
+  // never fires a real navigation/page-load event, so the History API and
+  // popstate/hashchange are hooked directly instead of relying on those.
+  let lastReportedHref = "";
+  function reportLocation() {
+    const href = window.location.href;
+    if (href === lastReportedHref) return;
+    lastReportedHref = href;
+    invoke("report_service_location", { href });
+  }
+  let locationTimer = 0;
+  function scheduleLocationReport() {
+    if (locationTimer) window.clearTimeout(locationTimer);
+    locationTimer = window.setTimeout(() => {
+      locationTimer = 0;
+      reportLocation();
+    }, 600);
+  }
+  try {
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    history.pushState = function rustboxPushState(...args) {
+      const result = originalPushState.apply(this, args);
+      scheduleLocationReport();
+      return result;
+    };
+    history.replaceState = function rustboxReplaceState(...args) {
+      const result = originalReplaceState.apply(this, args);
+      scheduleLocationReport();
+      return result;
+    };
+  } catch (_error) {
+    /* A frozen History prototype still gets the popstate/hashchange hooks below. */
+  }
+  window.addEventListener("popstate", scheduleLocationReport);
+  window.addEventListener("hashchange", scheduleLocationReport);
+  scheduleLocationReport();
+
   function workspaceKey() {
     if (window.__rustboxServicePreset === "slack") {
       return window.location.pathname.match(/\/client\/([^/]+)/)?.[1] || "";

@@ -54,6 +54,7 @@ fn main() {
             "relaunch_app",
             "forward_notification",
             "report_workspace_icon",
+            "report_service_location",
             "import_local_icon",
             "read_local_icon",
         ]),
