@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.3](https://github.com/ifigueroap/rustbox/compare/v0.15.2...v0.15.3) (2026-11-24)
+
+
+### Bug Fixes
+
+* remember each service's last page and persist sessions across shutdown ([#69](https://github.com/ifigueroap/rustbox/issues/69)) ([e488795](https://github.com/ifigueroap/rustbox/commit/e488795512b166e1783d65ffbb9ce0f3a61c93e0))
+
 ## [0.15.2](https://github.com/ifigueroap/rustbox/compare/v0.15.1...v0.15.2) (2026-11-16)
 
 
