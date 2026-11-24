@@ -283,6 +283,21 @@ pub fn is_auth_host(host: &str) -> bool {
         .any(|suffix| host_matches_suffix(&host, suffix))
 }
 
+/// Whether `candidate` is safe to remember as the page to restore the next
+/// time this service's webview is created. Same-site is not enough: an auth
+/// bounce such as `https://slack.com/signin` is same-site with
+/// `https://app.slack.com/` but must never become the restored URL, so this
+/// requires an exact origin (scheme, host, and port) match, not just a
+/// shared registrable domain. Login-provider hosts are rejected outright
+/// even if they somehow shared an origin with the service.
+pub fn is_restorable_last_url(service_url: &Url, candidate: &Url) -> bool {
+    matches!(candidate.scheme(), "http" | "https")
+        && candidate.origin() == service_url.origin()
+        && candidate
+            .host_str()
+            .is_some_and(|host| !is_auth_host(host))
+}
+
 fn host_matches_suffix(host: &str, suffix: &str) -> bool {
     host == suffix
         || host
@@ -582,5 +597,41 @@ mod tests {
             script.contains("isSettingsShortcut"),
             "inject.js must forward the settings shortcut"
         );
+    }
+
+    #[test]
+    fn restorable_last_url_requires_the_exact_service_origin() {
+        let home = url("https://app.slack.com/");
+        assert!(is_restorable_last_url(
+            &home,
+            &url("https://app.slack.com/client/T0/C0")
+        ));
+        // Same-site is not enough: slack.com and app.slack.com share a
+        // registrable domain but are different origins, and `slack.com` is
+        // exactly the kind of auth/marketing bounce that must not stick.
+        assert!(!is_restorable_last_url(&home, &url("https://slack.com/signin")));
+        // Different scheme or port is a different origin too.
+        assert!(!is_restorable_last_url(&home, &url("http://app.slack.com/")));
+        assert!(!is_restorable_last_url(
+            &home,
+            &url("https://app.slack.com:8443/")
+        ));
+        // Non-http(s) schemes are never restorable, even same-host.
+        assert!(!is_restorable_last_url(
+            &home,
+            &url("about:blank")
+        ));
+    }
+
+    #[test]
+    fn restorable_last_url_rejects_login_provider_hosts() {
+        let home = url("https://app.slack.com/");
+        for suffix in AUTH_SUFFIXES {
+            let candidate = url(&format!("https://{suffix}/"));
+            assert!(
+                !is_restorable_last_url(&home, &candidate),
+                "{suffix} must never be restored, even if it somehow shared an origin"
+            );
+        }
     }
 }

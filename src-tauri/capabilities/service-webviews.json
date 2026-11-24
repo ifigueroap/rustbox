@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "service-webviews",
-  "description": "Hosted service pages may forward shortcuts, notifications, icons and find counts, and open validated external links.",
+  "description": "Hosted service pages may forward shortcuts, notifications, icons, find counts and their current page, and open validated external links.",
   "windows": ["main"],
   "webviews": ["svc-*"],
   "remote": {
@@ -12,6 +12,7 @@
     "allow-forward-notification",
     "allow-report-find-result",
     "allow-report-workspace-icon",
+    "allow-report-service-location",
     "allow-open-external",
     "allow-apply-service-shortcut"
   ]

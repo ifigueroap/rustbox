@@ -17,6 +17,7 @@ mod policy;
 mod service_notifications;
 mod services;
 mod shortcuts;
+mod shutdown;
 mod tray;
 mod updates;
 mod zoom;
@@ -535,6 +536,18 @@ fn report_workspace_icon(
     services::report_workspace_icon(&app, webview.label(), &icon_url)
 }
 
+/// Called by `inject.js` on History API navigation (SPA channel/workspace
+/// switches that never load a new document) and by `on_page_load` for a real
+/// navigation; see `services::report_service_location`.
+#[tauri::command]
+fn report_service_location(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    href: String,
+) -> Result<(), String> {
+    services::report_service_location(&app, webview.label(), &href)
+}
+
 #[tauri::command]
 fn import_local_icon(
     app: tauri::AppHandle,
@@ -551,6 +564,10 @@ fn read_local_icon(app: tauri::AppHandle, token: String) -> Result<String, Strin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Trap SIGTERM/SIGINT as early as possible so a session-end signal
+    // arriving before `setup` still gets the clean-exit path once the event
+    // loop is up; see `shutdown::install_signal_handlers`.
+    shutdown::install_signal_handlers();
     // WebKitGTK reads its DMA-BUF switch when the first web process starts, so
     // this has to happen before any window or webview exists.
     #[cfg(target_os = "linux")]
@@ -671,6 +688,8 @@ pub fn run() {
                 }
             });
             services::spawn_hibernation_schedule(app.handle().clone());
+            services::spawn_last_url_flush(app.handle().clone());
+            shutdown::spawn_signal_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -728,12 +747,30 @@ pub fn run() {
             relaunch_app,
             forward_notification,
             report_workspace_icon,
+            report_service_location,
             import_local_icon,
             read_local_icon,
         ])
         .build(context)
         .expect("error while building rustbox")
         .run(|app_handle, event| {
+            // Quit (tray, Ctrl+Q, a trapped SIGTERM/SIGINT) and a window
+            // close with no tray to hide to both land here. Close every
+            // service webview before the process actually exits so the
+            // platform engine gets a chance to flush cookies, localStorage,
+            // and IndexedDB; see `shutdown`. `begin_cleanup_once` guards
+            // against the teardown's own `exit()` re-entering this handler.
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event
+                && shutdown::begin_cleanup_once()
+            {
+                api.prevent_exit();
+                let handle = app_handle.clone();
+                std::thread::spawn(move || {
+                    services::flush_last_url(&handle);
+                    services::close_all_webviews_for_shutdown(&handle);
+                    handle.exit(0);
+                });
+            }
             // A hidden window leaves the Dock icon. Clicking it asks the app
             // to reopen; show the same window instead of leaving it hidden.
             #[cfg(target_os = "macos")]
@@ -744,8 +781,6 @@ pub fn run() {
             {
                 let _ = tray::reveal(app_handle);
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app_handle, event);
         });
 }
 
