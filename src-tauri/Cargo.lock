@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "rustbox"
-version = "0.15.2" # x-release-please-version
+version = "0.15.3" # x-release-please-version
 dependencies = [
  "auto-launch",
  "block2",
