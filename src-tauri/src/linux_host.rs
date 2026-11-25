@@ -52,11 +52,7 @@ fn dmabuf_fallback(configured: Option<&OsStr>, appimage: Option<&OsStr>) -> Opti
     if configured.is_some() {
         return None;
     }
-    if appimage.is_some() {
-        Some("1")
-    } else {
-        None
-    }
+    if appimage.is_some() { Some("1") } else { None }
 }
 
 // GtkFixed's default allocation uses each child's preferred size (WebKit can

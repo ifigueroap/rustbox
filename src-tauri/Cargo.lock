@@ -3181,6 +3181,7 @@ dependencies = [
  "auto-launch",
  "block2",
  "chrono",
+ "dunce",
  "gtk",
  "libc",
  "notify-rust",

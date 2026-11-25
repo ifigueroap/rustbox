@@ -288,14 +288,48 @@ pub fn is_auth_host(host: &str) -> bool {
 /// bounce such as `https://slack.com/signin` is same-site with
 /// `https://app.slack.com/` but must never become the restored URL, so this
 /// requires an exact origin (scheme, host, and port) match, not just a
-/// shared registrable domain. Login-provider hosts are rejected outright
-/// even if they somehow shared an origin with the service.
+/// shared registrable domain. Login-provider hosts and sign-in routes on the
+/// service origin are also excluded: reopening straight onto a login page
+/// shows a signed-in user a login form, and some sites treat it as a
+/// request to sign in again.
 pub fn is_restorable_last_url(service_url: &Url, candidate: &Url) -> bool {
     matches!(candidate.scheme(), "http" | "https")
         && candidate.origin() == service_url.origin()
         && candidate
             .host_str()
-            .is_some_and(|host| !is_auth_host(host))
+            .is_some_and(|host| !is_auth_host(host) && !is_sign_in_route(host, candidate))
+}
+
+/// Path segments that mark a sign-in, sign-out, or account-auth page.
+/// Matched case-insensitively against whole segments of the path and of a
+/// hash route (`#/login`), so `/accounts/login/` and `/auth/login` match but
+/// `/channels/login-help` does not.
+const SIGN_IN_SEGMENTS: &[&str] = &[
+    "login", "log-in", "logout", "log-out", "signin", "sign-in", "sign_in", "signout", "sign-out",
+    "sign_out", "signup", "sign-up", "auth", "oauth", "oauth2", "sso", "saml",
+];
+
+fn is_sign_in_route(host: &str, candidate: &Url) -> bool {
+    let hash_route = candidate
+        .fragment()
+        .map(|fragment| fragment.split(['?', '#']).next().unwrap_or(""))
+        .unwrap_or("");
+    let mut segments = candidate
+        .path()
+        .split('/')
+        .chain(hash_route.split('/'))
+        .filter(|segment| !segment.is_empty());
+    // Slack's `/ssb/...` routes are desktop sign-in/redirect hand-offs
+    // (e.g. `/ssb/redirect?entry_point=workspace_signin`), never a page.
+    let slack = host_matches_suffix(&host.to_ascii_lowercase(), "slack.com");
+    if slack && candidate.path().trim_start_matches('/').starts_with("ssb/") {
+        return true;
+    }
+    segments.any(|segment| {
+        SIGN_IN_SEGMENTS
+            .iter()
+            .any(|word| segment.eq_ignore_ascii_case(word))
+    })
 }
 
 fn host_matches_suffix(host: &str, suffix: &str) -> bool {
@@ -408,7 +442,11 @@ mod tests {
         // counts simply do not know about Do not disturb.
         assert_eq!(informational_unread(5, true), 5);
         assert_eq!(informational_unread(0, true), 0);
-        assert_eq!(informational_unread(5, false), 0, "Badges off still hides Home's count");
+        assert_eq!(
+            informational_unread(5, false),
+            0,
+            "Badges off still hides Home's count"
+        );
 
         // Confirm it diverges from the attention-badge rule while Do not
         // disturb is active and Badges are on: the badge is hidden, but the
@@ -609,18 +647,78 @@ mod tests {
         // Same-site is not enough: slack.com and app.slack.com share a
         // registrable domain but are different origins, and `slack.com` is
         // exactly the kind of auth/marketing bounce that must not stick.
-        assert!(!is_restorable_last_url(&home, &url("https://slack.com/signin")));
+        assert!(!is_restorable_last_url(
+            &home,
+            &url("https://slack.com/signin")
+        ));
         // Different scheme or port is a different origin too.
-        assert!(!is_restorable_last_url(&home, &url("http://app.slack.com/")));
+        assert!(!is_restorable_last_url(
+            &home,
+            &url("http://app.slack.com/")
+        ));
         assert!(!is_restorable_last_url(
             &home,
             &url("https://app.slack.com:8443/")
         ));
         // Non-http(s) schemes are never restorable, even same-host.
-        assert!(!is_restorable_last_url(
-            &home,
-            &url("about:blank")
-        ));
+        assert!(!is_restorable_last_url(&home, &url("about:blank")));
+    }
+
+    #[test]
+    fn restorable_last_url_rejects_sign_in_routes_on_the_service_origin() {
+        for (home, page) in [
+            (
+                "https://web.whatsapp.com/",
+                "https://web.whatsapp.com/login?next=web",
+            ),
+            ("https://app.slack.com/", "https://app.slack.com/signin/"),
+            (
+                "https://acme.slack.com/",
+                "https://acme.slack.com/ssb/redirect?entry_point=workspace_signin",
+            ),
+            ("https://claude.ai/", "https://claude.ai/login"),
+            ("https://chatgpt.com/", "https://chatgpt.com/auth/login"),
+            (
+                "https://pleiad.zulipchat.com/",
+                "https://pleiad.zulipchat.com/accounts/login/",
+            ),
+            ("https://grok.com/", "https://grok.com/sign-in?redirect=%2F"),
+            ("https://discord.com/app", "https://discord.com/LOGIN"),
+            ("https://example.com/", "https://example.com/app#/logout"),
+        ] {
+            assert!(!is_restorable_last_url(&url(home), &url(page)), "{page}");
+        }
+    }
+
+    #[test]
+    fn restorable_last_url_keeps_ordinary_pages() {
+        for (home, page) in [
+            ("https://web.whatsapp.com/", "https://web.whatsapp.com/"),
+            (
+                "https://acme.slack.com/",
+                "https://acme.slack.com/archives/C0",
+            ),
+            (
+                "https://app.slack.com/",
+                "https://app.slack.com/client/T0/C0",
+            ),
+            (
+                "https://discord.com/app",
+                "https://discord.com/channels/1345041609573535775/1401997812006125700",
+            ),
+            (
+                "https://pleiad.zulipchat.com/",
+                "https://pleiad.zulipchat.com/#narrow/channel/422737-general",
+            ),
+            ("https://claude.ai/", "https://claude.ai/chat/0f1e"),
+            (
+                "https://example.com/",
+                "https://example.com/docs/login-help",
+            ),
+            ("https://example.com/", "https://example.com/ssb/page"),
+        ] {
+            assert!(is_restorable_last_url(&url(home), &url(page)), "{page}");
+        }
     }
 
     #[test]

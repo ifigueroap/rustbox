@@ -346,14 +346,23 @@ mod tests {
     fn overrides_expire_at_the_minute_not_seconds_after_it() {
         let sched = schedule(vec![rule(&[Day::Mon], 540, 1020)]);
         let now = Now::new(moment(Day::Mon, 600), 36037);
-        assert_eq!(make_override(&sched, now, false).unwrap().expires_at_unix, 61200);
+        assert_eq!(
+            make_override(&sched, now, false).unwrap().expires_at_unix,
+            61200
+        );
     }
 
     #[test]
     fn overlapping_rule_boundaries_still_end_an_override() {
-        let sched = schedule(vec![rule(&[Day::Mon], 540, 1020), rule(&[Day::Mon], 660, 720)]);
+        let sched = schedule(vec![
+            rule(&[Day::Mon], 540, 1020),
+            rule(&[Day::Mon], 660, 720),
+        ]);
         let now = Now::new(moment(Day::Mon, 600), 36000);
-        assert_eq!(next_boundary(&sched, now.moment), Some(moment(Day::Mon, 660)));
+        assert_eq!(
+            next_boundary(&sched, now.moment),
+            Some(moment(Day::Mon, 660))
+        );
         let off = make_override(&sched, now, false).unwrap();
         let boundary = Now::new(moment(Day::Mon, 660), off.expires_at_unix);
         assert!(effective_dnd(false, Some(&off), &sched, boundary));
