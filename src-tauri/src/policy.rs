@@ -442,7 +442,11 @@ mod tests {
         // counts simply do not know about Do not disturb.
         assert_eq!(informational_unread(5, true), 5);
         assert_eq!(informational_unread(0, true), 0);
-        assert_eq!(informational_unread(5, false), 0, "Badges off still hides Home's count");
+        assert_eq!(
+            informational_unread(5, false),
+            0,
+            "Badges off still hides Home's count"
+        );
 
         // Confirm it diverges from the attention-badge rule while Do not
         // disturb is active and Badges are on: the badge is hidden, but the
@@ -643,18 +647,21 @@ mod tests {
         // Same-site is not enough: slack.com and app.slack.com share a
         // registrable domain but are different origins, and `slack.com` is
         // exactly the kind of auth/marketing bounce that must not stick.
-        assert!(!is_restorable_last_url(&home, &url("https://slack.com/signin")));
+        assert!(!is_restorable_last_url(
+            &home,
+            &url("https://slack.com/signin")
+        ));
         // Different scheme or port is a different origin too.
-        assert!(!is_restorable_last_url(&home, &url("http://app.slack.com/")));
+        assert!(!is_restorable_last_url(
+            &home,
+            &url("http://app.slack.com/")
+        ));
         assert!(!is_restorable_last_url(
             &home,
             &url("https://app.slack.com:8443/")
         ));
         // Non-http(s) schemes are never restorable, even same-host.
-        assert!(!is_restorable_last_url(
-            &home,
-            &url("about:blank")
-        ));
+        assert!(!is_restorable_last_url(&home, &url("about:blank")));
     }
 
     #[test]
