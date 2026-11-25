@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.4](https://github.com/ifigueroap/rustbox/compare/v0.15.3...v0.15.4) (2026-11-25)
+
+
+### Bug Fixes
+
+* keep service logins across restarts on Windows ([#71](https://github.com/ifigueroap/rustbox/issues/71)) ([b07b17c](https://github.com/ifigueroap/rustbox/commit/b07b17c2bbc8e9bdf14777a9ddb14f0b54efc7e8))
+
 ## [0.15.3](https://github.com/ifigueroap/rustbox/compare/v0.15.2...v0.15.3) (2026-11-24)
 
 
