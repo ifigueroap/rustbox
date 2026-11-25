@@ -35,7 +35,7 @@ pub fn unique_macos_store<'a>(id: &str, ids: impl Iterator<Item = &'a str>) -> b
 
 fn redirected(path: &Path) -> io::Result<bool> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) => Ok(metadata.file_type().is_symlink() || path.canonicalize()? != path),
+        Ok(metadata) => Ok(metadata.file_type().is_symlink() || dunce::canonicalize(path)? != path),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(err),
     }
@@ -48,7 +48,10 @@ pub fn session_dir(root: &Path, id: &str) -> io::Result<PathBuf> {
             "invalid service id",
         ));
     }
-    let root = root.canonicalize()?;
+    // Not std canonicalize: on Windows it yields a `\\?\` verbatim path, and
+    // WebView2 given such a user data folder never opens its cookie store, so
+    // every service silently loses its login on restart.
+    let root = dunce::canonicalize(root)?;
     let dir = root.join(id);
     // Refuse redirected profiles; never follow a symlink/junction outside the root.
     if redirected(&dir)? {
@@ -121,7 +124,16 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("rustbox-maintenance-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        dunce::canonicalize(dir).unwrap()
+    }
+    #[test]
+    fn session_dir_is_never_a_verbatim_path() {
+        let root = root();
+        let dir = session_dir(&root, "one").unwrap();
+        let text = dir.to_string_lossy();
+        assert!(!text.starts_with(r"\\?\"), "{text}");
+        assert_eq!(dir, root.join("one"));
+        std::fs::remove_dir_all(&root).unwrap();
     }
     #[test]
     fn rejects_unsafe_ids() {
